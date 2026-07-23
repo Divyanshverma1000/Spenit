@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  --font-inter: "Inter", sans-serif;
+  --bg: #0a0a12;
+  --bg-card: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
+  --violet: #7c3aed;
+  --fuchsia: #a21caf;
+  --emerald: #10b981;
+  --rose: #f43f5e;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  overscroll-behavior: none;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: var(--bg);
+  color: #fff;
+  /* Push content above bottom nav on mobile */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Bottom nav safe area */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Page content — leave room for fixed bottom nav */
+.page-content {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+
+/* Scrollable content areas */
+.scroll-content {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Smooth animations */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-in {
+    animation: fadeUp 0.2s ease-out both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* Glassmorphism card utility */
+.glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, #a78bfa, #c084fc, #e879f9);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Gradient button */
+.btn-primary {
+  background: linear-gradient(135deg, #7c3aed, #a21caf);
+  color: white;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:active { opacity: 0.85; transform: scale(0.98); }
+
+/* Remove scrollbar in webkit for cleaner mobile look */
+::-webkit-scrollbar { width: 0; height: 0; }
