@@ -127,7 +127,7 @@ export function useAIExpense(): AIExpenseResult {
         setIsListening(true);
       };
 
-      rec.onresult = (event: SpeechRecognitionEvent) => {
+      rec.onresult = (event: any) => {
         let interim = "";
         let final = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -144,7 +144,7 @@ export function useAIExpense(): AIExpenseResult {
         setLiveTranscript((finalTranscriptRef.current + " " + interim).trim());
       };
 
-      rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+      rec.onerror = (event: any) => {
         console.warn("[voice] error:", event.error);
         setIsListening(false);
         setState("idle");
