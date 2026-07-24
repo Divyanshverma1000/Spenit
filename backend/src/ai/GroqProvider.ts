@@ -205,7 +205,7 @@ export class GroqProvider implements AIProvider {
         return this.fallback("network", input);
       }
 
-      const json = await response.json();
+      const json = await response.json() as any;
       rawResponse = json.choices?.[0]?.message?.content || "";
 
       const parsed = JSON.parse(rawResponse);
@@ -311,7 +311,7 @@ No markdown fences, just the raw JSON.`;
         throw new Error(`Groq API error ${response.status}: ${await response.text().catch(() => "")}`);
       }
 
-      const json = await response.json();
+      const json = await response.json() as any;
       const rawText = json.choices?.[0]?.message?.content || "{}";
       const parsed = JSON.parse(rawText);
       return {
