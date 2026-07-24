@@ -4,8 +4,8 @@
   "description": "Split expenses effortlessly. Share a link. Settle with UPI.",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#0a0a12",
-  "theme_color": "#0a0a12",
+  "background_color": "#F9FAFB",
+  "theme_color": "#F9FAFB",
   "orientation": "portrait",
   "icons": [
     {
