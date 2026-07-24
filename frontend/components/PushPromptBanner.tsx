@@ -2,25 +2,13 @@
 
 import { useState } from "react";
 import { usePushNotifications, needsIOSInstall } from "@/hooks/usePushNotifications";
+import { Bell, BellOff, Smartphone, X } from "lucide-react";
 
 interface PushPromptBannerProps {
   /** Rendered inline — shown at a contextual moment, never on page load */
   onDismiss?: () => void;
 }
 
-/**
- * PushPromptBanner — context-sensitive push permission prompt.
- *
- * When to show this (per ProductDetailIDEA.md §6 and Stage 7 spec):
- *   - After a user successfully adds their FIRST expense, or
- *   - After they successfully join a group for the first time.
- *   NOT on page load — users on iOS/Android reflexively dismiss those.
- *
- * Handles three cases:
- *   1. iOS, not installed to home screen → explains the iOS constraint
- *   2. Push already denied → short explanation, browser settings link
- *   3. Push available → "Enable notifications" button
- */
 export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
   const { state, loading, subscribe } = usePushNotifications();
   const [dismissed, setDismissed] = useState(false);
@@ -41,26 +29,25 @@ export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
   // ── iOS: app not installed to home screen ──────────────────────────────────
   if (state === "ios-not-installed" || needsIOSInstall()) {
     return (
-      <div className="mx-5 my-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+      <div className="mx-5 my-3 p-5 card">
         <div className="flex items-start gap-3">
-          <span className="text-2xl flex-shrink-0">📱</span>
+          <Smartphone className="h-6 w-6 flex-shrink-0 text-[var(--text-primary)]" strokeWidth={1.5} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-amber-300 mb-1">
+            <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
               Install Spenit to get notifications
             </p>
-            <p className="text-xs text-amber-200/70 leading-relaxed">
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               iOS requires the app to be installed to your home screen before push
-              notifications work (iOS 16.4+ requirement). Tap{" "}
-              <span className="font-semibold">Share →</span>{" "}
-              <span className="font-semibold">Add to Home Screen</span> in Safari, then
-              re-open the app from the home screen icon.
+              notifications work. Tap{" "}
+              <span className="font-semibold text-[var(--text-primary)]">Share → Add to Home Screen</span>{" "}
+              in Safari, then re-open the app from the home screen icon.
             </p>
           </div>
           <button
             onClick={dismiss}
-            className="text-amber-400/60 hover:text-amber-300 text-lg leading-none ml-1 flex-shrink-0"
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] ml-1 flex-shrink-0 transition-colors"
           >
-            ×
+            <X className="h-5 w-5" strokeWidth={1.5} />
           </button>
         </div>
       </div>
@@ -70,20 +57,20 @@ export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
   // ── Permission denied ──────────────────────────────────────────────────────
   if (state === "denied") {
     return (
-      <div className="mx-5 my-3 rounded-2xl border border-slate-700 bg-slate-900/50 p-4">
+      <div className="mx-5 my-3 p-5 card">
         <div className="flex items-start gap-3">
-          <span className="text-2xl flex-shrink-0">🔕</span>
+          <BellOff className="h-6 w-6 flex-shrink-0 text-[var(--negative)]" strokeWidth={1.5} />
           <div className="flex-1">
-            <p className="text-sm font-semibold text-slate-300 mb-1">
+            <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
               Notifications blocked
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--text-secondary)]">
               You&apos;ve blocked notifications for this site. To re-enable, click the
               lock icon in your browser&apos;s address bar and allow notifications.
             </p>
           </div>
-          <button onClick={dismiss} className="text-slate-600 hover:text-slate-400 text-lg leading-none flex-shrink-0">
-            ×
+          <button onClick={dismiss} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] flex-shrink-0 transition-colors">
+            <X className="h-5 w-5" strokeWidth={1.5} />
           </button>
         </div>
       </div>
@@ -93,14 +80,14 @@ export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
   // ── Already granted / just enabled ────────────────────────────────────────
   if (state === "granted" || justEnabled) {
     return (
-      <div className="mx-5 my-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+      <div className="mx-5 my-3 p-5 card">
         <div className="flex items-center gap-3">
-          <span className="text-xl">🔔</span>
-          <p className="flex-1 text-sm text-emerald-300 font-medium">
+          <Bell className="h-5 w-5 text-[var(--positive)]" strokeWidth={1.5} />
+          <p className="flex-1 text-sm text-[var(--text-primary)] font-medium">
             Notifications enabled — you&apos;ll be notified about new expenses and settlements.
           </p>
-          <button onClick={dismiss} className="text-emerald-500/60 hover:text-emerald-400 text-lg leading-none flex-shrink-0">
-            ×
+          <button onClick={dismiss} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] flex-shrink-0 transition-colors">
+            <X className="h-5 w-5" strokeWidth={1.5} />
           </button>
         </div>
       </div>
@@ -109,14 +96,14 @@ export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
 
   // ── Prompt to enable ──────────────────────────────────────────────────────
   return (
-    <div className="mx-5 my-3 rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4 animate-in">
+    <div className="mx-5 my-3 border-l-[3px] border-l-[var(--accent)] p-5 card animate-in">
       <div className="flex items-start gap-3">
-        <span className="text-2xl flex-shrink-0">🔔</span>
+        <Bell className="h-6 w-6 flex-shrink-0 text-[var(--accent)]" strokeWidth={1.5} />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-violet-200 mb-1">
+          <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
             Get notified instantly
           </p>
-          <p className="text-xs text-slate-400 mb-3">
+          <p className="text-xs text-[var(--text-secondary)] mb-3">
             Know the moment someone adds an expense or confirms your settlement —
             without refreshing the app.
           </p>
@@ -131,7 +118,7 @@ export default function PushPromptBanner({ onDismiss }: PushPromptBannerProps) {
             </button>
             <button
               onClick={dismiss}
-              className="text-xs text-slate-500 hover:text-slate-400 px-2"
+              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2 transition-colors"
             >
               Not now
             </button>

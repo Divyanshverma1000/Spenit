@@ -45,7 +45,7 @@ export function useAIExpense(): AIExpenseResult {
   const [isListening, setIsListening] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<any>(null);
   const pendingGroupId = useRef<string>("");
   const finalTranscriptRef = useRef("");
 
@@ -109,8 +109,8 @@ export function useAIExpense(): AIExpenseResult {
       if (!voiceSupported) return;
 
       const SpeechRecognitionClass =
-        (window as typeof window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition ||
-        window.SpeechRecognition;
+        (window as any).webkitSpeechRecognition ||
+        (window as any).SpeechRecognition;
 
       const rec = new SpeechRecognitionClass();
       rec.lang = "en-IN";

@@ -5,6 +5,11 @@ import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
+import { Card } from "@/components/ui/Card";
+import { BalanceAmount } from "@/components/ui/BalanceAmount";
+import { SectionLabel } from "@/components/ui/SectionLabel";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Plus, Users, ChevronRight, TrendingUp, TrendingDown, Check } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -19,10 +24,6 @@ interface CrossGroupBalance {
   netAmount: string;
   direction: "owed" | "owes" | "settled";
   breakdown: GroupBreakdown[];
-}
-
-function Spinner() {
-  return <div className="h-6 w-6 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />;
 }
 
 export default function DashboardPage() {
@@ -59,79 +60,77 @@ export default function DashboardPage() {
   if (!authed) return null;
 
   const direction = balance?.direction ?? "settled";
-  const netNum = parseFloat(balance?.netAmount ?? "0");
 
   return (
     <>
-      <main className="min-h-screen bg-[#0a0a12] page-content">
+      <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb">
         {/* Header */}
         <div className="px-5 pt-14 pb-4">
-          <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Overview</p>
-          <h1 className="text-2xl font-bold text-white mt-0.5">
-            Hi, {user?.name?.split(" ")[0] || "there"} 👋
+          <h1 className="text-[14px] font-[var(--font-body)] text-[var(--text-muted)]">
+            Hi, {user?.name?.split(" ")[0] || "there"}
           </h1>
         </div>
 
         {/* ── Hero balance card ──────────────────────────────────────────────── */}
         <div className="px-5 mb-5">
-          <div className={`relative overflow-hidden rounded-3xl p-6 ${
-            direction === "owed"
-              ? "bg-gradient-to-br from-emerald-950/80 to-emerald-900/30 border border-emerald-500/20"
-              : direction === "owes"
-                ? "bg-gradient-to-br from-rose-950/80 to-rose-900/30 border border-rose-500/20"
-                : "bg-gradient-to-br from-slate-900 to-slate-800/50 border border-white/10"
-          }`}>
-            {/* Ambient glow */}
-            <div className={`absolute -top-8 -right-8 h-32 w-32 rounded-full blur-2xl opacity-30 ${
-              direction === "owed" ? "bg-emerald-400" : direction === "owes" ? "bg-rose-400" : "bg-slate-400"
-            }`} />
-
-            <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
-              Your overall balance
-            </p>
+          <Card 
+            accentEdge={direction === "owed" ? "positive" : direction === "owes" ? "negative" : "none"}
+            padding="lg"
+            className="balance-reveal"
+          >
+            <SectionLabel>YOUR OVERALL BALANCE</SectionLabel>
 
             {loading ? (
-              <div className="flex items-center gap-3 py-2"><Spinner /><span className="text-slate-500 text-sm">Calculating…</span></div>
+              <div className="flex items-center gap-3 py-2">
+                <div className="spinner w-5 h-5" />
+                <span className="text-[var(--text-secondary)] text-sm font-[var(--font-body)]">Calculating...</span>
+              </div>
             ) : (
               <>
-                <div className="flex items-end gap-1 mb-2">
-                  <span className="text-slate-400 text-xl font-light">₹</span>
-                  <span id="dashboard-hero-amount" className={`text-5xl font-bold tracking-tight ${
-                    direction === "owed" ? "text-emerald-400" : direction === "owes" ? "text-rose-400" : "text-slate-400"
-                  }`}>
-                    {netNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+                <div className="mb-2">
+                  <BalanceAmount 
+                    variant="hero" 
+                    direction={direction} 
+                    amount={balance?.netAmount || "0"} 
+                  />
                 </div>
-                <p className={`text-sm font-medium ${
-                  direction === "owed" ? "text-emerald-400/80" : direction === "owes" ? "text-rose-400/80" : "text-slate-500"
-                }`}>
-                  {direction === "owed"
-                    ? "You are owed across all groups"
-                    : direction === "owes"
-                      ? "You owe across all groups"
-                      : "All settled up everywhere 🎉"}
-                </p>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {direction === "owed" && <TrendingUp size={14} className="text-[var(--positive)]" />}
+                  {direction === "owes" && <TrendingDown size={14} className="text-[var(--negative)]" />}
+                  <p className={`text-[13px] font-[var(--font-body)] ${
+                    direction === "owed" ? "text-[var(--positive)]" : 
+                    direction === "owes" ? "text-[var(--negative)]" : 
+                    "text-[var(--text-secondary)]"
+                  }`}>
+                    {direction === "owed"
+                      ? "You are owed across all groups"
+                      : direction === "owes"
+                        ? "You owe across all groups"
+                        : "All settled"}
+                  </p>
+                </div>
               </>
             )}
-          </div>
+          </Card>
         </div>
 
         {/* ── Quick actions ─────────────────────────────────────────────────── */}
         <div className="px-5 mb-6">
-          <div className="grid grid-cols-2 gap-3">
-            <Link href="/groups/new" className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 hover:bg-white/8 transition-colors active:scale-95">
-              <span className="h-10 w-10 rounded-xl bg-violet-500/20 flex items-center justify-center text-xl flex-shrink-0">+</span>
-              <div>
-                <p className="text-sm font-semibold text-white">New Group</p>
-                <p className="text-xs text-slate-500">Create & invite</p>
-              </div>
+          <div className="grid grid-cols-2 gap-[12px]">
+            <Link href="/groups/new" className="block outline-none">
+              <Card padding="md" className="hover:bg-[var(--paper-dim)] transition-colors h-full flex flex-col justify-center gap-2">
+                <Plus size={20} className="text-[var(--text-primary)]" />
+                <span className="text-[14px] font-semibold font-[var(--font-body)] text-[var(--text-primary)]">New Group</span>
+              </Card>
             </Link>
-            <Link href="/groups" className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 hover:bg-white/8 transition-colors active:scale-95">
-              <span className="h-10 w-10 rounded-xl bg-fuchsia-500/20 flex items-center justify-center text-xl flex-shrink-0">👥</span>
-              <div>
-                <p className="text-sm font-semibold text-white">My Groups</p>
-                <p className="text-xs text-slate-500">{balance?.breakdown.length ?? 0} active</p>
-              </div>
+            <Link href="/groups" className="block outline-none">
+              <Card padding="md" className="hover:bg-[var(--paper-dim)] transition-colors h-full flex flex-col justify-center gap-2">
+                <div className="flex justify-between items-center w-full">
+                  <Users size={20} className="text-[var(--text-primary)]" />
+                  <ChevronRight size={16} className="text-[var(--text-muted)]" />
+                </div>
+                <span className="text-[14px] font-semibold font-[var(--font-body)] text-[var(--text-primary)]">All Groups</span>
+              </Card>
             </Link>
           </div>
         </div>
@@ -139,48 +138,56 @@ export default function DashboardPage() {
         {/* ── Per-group breakdown ───────────────────────────────────────────── */}
         {balance && balance.breakdown.length > 0 && (
           <div className="px-5">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">By Group</p>
-            <div className="space-y-2">
-              {balance.breakdown.map((g) => (
-                <Link key={g.groupId} href={`/groups/${g.groupId}`}
-                  className="flex items-center gap-3 rounded-2xl border border-white/8 bg-white/4 p-4 hover:bg-white/8 transition-colors active:scale-[0.98]">
-                  <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 border border-violet-500/10 flex items-center justify-center text-lg flex-shrink-0">
-                    👥
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-white truncate">{g.groupName}</p>
-                    <p className="text-xs text-slate-500">
-                      {g.direction === "settled" ? "Settled" : g.direction === "owed" ? "You are owed" : "You owe"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {g.direction !== "settled" && (
-                      <span className={`text-sm font-bold ${g.direction === "owed" ? "text-emerald-400" : "text-rose-400"}`}>
-                        {g.direction === "owes" ? "−" : "+"}₹{parseFloat(g.netAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
-                    )}
-                    {g.direction === "settled" && <span className="text-xs text-slate-500">✓</span>}
-                    <svg className="h-3.5 w-3.5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            <SectionLabel>By Group</SectionLabel>
+            <Card padding="none" className="overflow-hidden">
+              <div className="flex flex-col">
+                {balance.breakdown.map((g, idx) => (
+                  <Link 
+                    key={g.groupId} 
+                    href={`/groups/${g.groupId}`}
+                    className={`flex items-center gap-3 p-4 hover:bg-[var(--paper-dim)] transition-colors ${
+                      idx !== balance.breakdown.length - 1 ? "border-b border-[var(--border)]" : ""
+                    }`}
+                  >
+                    <div className="h-[36px] w-[36px] rounded-[var(--radius-sm)] bg-[var(--paper-dim)] text-[var(--accent)] flex items-center justify-center text-[16px] font-semibold flex-shrink-0 font-[var(--font-body)]">
+                      {g.groupName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[14px] font-semibold text-[var(--text-primary)] truncate font-[var(--font-body)]">
+                        {g.groupName}
+                      </p>
+                      <p className="text-[12px] text-[var(--text-secondary)] font-[var(--font-body)]">
+                        {g.direction === "settled" ? "Settled" : g.direction === "owed" ? "You are owed" : "You owe"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {g.direction !== "settled" ? (
+                        <BalanceAmount 
+                          variant="default" 
+                          direction={g.direction} 
+                          amount={g.netAmount} 
+                        />
+                      ) : (
+                        <Check size={16} className="text-[var(--positive)]" />
+                      )}
+                      <ChevronRight size={16} className="text-[var(--text-muted)]" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </Card>
           </div>
         )}
 
         {/* Empty state */}
         {balance && balance.breakdown.length === 0 && !loading && (
           <div className="px-5">
-            <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center">
-              <p className="text-4xl mb-3">🏕️</p>
-              <p className="text-white font-semibold mb-1">No groups yet</p>
-              <p className="text-slate-500 text-sm mb-5">Create a group and invite your friends</p>
-              <Link href="/groups/new" className="btn-primary inline-flex px-5 py-2.5 text-sm">
-                + Create First Group
-              </Link>
-            </div>
+            <EmptyState 
+              type="no-groups" 
+              title="No groups yet" 
+              description="Create a group and invite your friends" 
+              action={{ label: "Create First Group", href: "/groups/new" }} 
+            />
           </div>
         )}
       </main>

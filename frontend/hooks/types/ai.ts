@@ -17,16 +17,16 @@ export const EXPENSE_CATEGORIES = [
 
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
-export const CATEGORY_EMOJI: Record<ExpenseCategory, string> = {
-  Food: "🍽️",
-  Travel: "✈️",
-  Shopping: "🛍️",
-  Stay: "🏨",
-  Fuel: "⛽",
-  Medical: "💊",
-  Utilities: "💡",
-  Entertainment: "🎬",
-  Misc: "📦",
+export const CATEGORY_ICONS: Record<ExpenseCategory, string> = {
+  Food: "UtensilsCrossed",
+  Travel: "Plane",
+  Shopping: "ShoppingBag",
+  Stay: "Building2",
+  Fuel: "Fuel",
+  Medical: "Pill",
+  Utilities: "Lightbulb",
+  Entertainment: "Film",
+  Misc: "Package",
 };
 
 export interface ParsedPayer {

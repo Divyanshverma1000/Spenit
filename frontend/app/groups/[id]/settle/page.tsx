@@ -2,11 +2,24 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  RefreshCw,
+  Sparkles,
+  CreditCard,
+  Banknote,
+  CheckCircle2,
+  Clock,
+  Check,
+  X
+} from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import PushPromptBanner from "@/components/PushPromptBanner";
 import DebtSimplificationGraph from "@/components/DebtSimplificationGraph";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { BalanceAmount } from "@/components/ui/BalanceAmount";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -35,12 +48,7 @@ interface Settlement {
   isOutgoing: boolean;
 }
 
-type Screen = "overview" | "pay" | "cash" | "pending";
-
-function buildUpiDeepLink(upiId: string, name: string, amount: string): string {
-  const params = new URLSearchParams({ pa: upiId, pn: name, am: parseFloat(amount).toFixed(2), cu: "INR", tn: "Spenit settlement" });
-  return `upi://pay?${params.toString()}`;
-}
+type Screen = "overview" | "pending";
 
 export default function SettleUpPage() {
   const { id: groupId } = useParams<{ id: string }>();
@@ -67,16 +75,13 @@ export default function SettleUpPage() {
     setLoading(false);
   }, [accessToken, groupId]);
 
-  // Initial load
   useEffect(() => { load(); }, [load]);
 
-  // 30-second polling so data stays live without requiring a hard refresh
   useEffect(() => {
     const interval = setInterval(() => { load(); }, 30_000);
     return () => clearInterval(interval);
   }, [load]);
 
-  // Visibility-based refresh: reload when tab becomes active again
   useEffect(() => {
     function onVisible() {
       if (document.visibilityState === "visible") load();
@@ -93,11 +98,10 @@ export default function SettleUpPage() {
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ groupId, toUserId: transfer.to, amount: transfer.amount, method }),
       });
-      const data = await res.json();
+      const resData = await res.json();
       if (res.ok) {
-        if (method === "upi" && data.upiDeepLink) {
-          // Open UPI app
-          window.location.href = data.upiDeepLink;
+        if (method === "upi" && resData.upiDeepLink) {
+          window.location.href = resData.upiDeepLink;
         }
         await load();
         setScreen("pending");
@@ -113,7 +117,7 @@ export default function SettleUpPage() {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      await load(); // balance cache is invalidated server-side; reload shows updated balance
+      await load(); 
     } catch (e) { console.error(e); }
     finally { setConfirming(null); }
   }
@@ -141,8 +145,7 @@ export default function SettleUpPage() {
 
   return (
     <>
-      <main className="min-h-screen bg-[#0a0a12] page-content">
-        {/* Push prompt — settle page is perfect context: user is actively managing money */}
+      <main className="min-h-screen page-content safe-area-pb">
         {typeof window !== "undefined" &&
           !localStorage.getItem("push-prompt-dismissed") &&
           Notification.permission === "default" && (
@@ -154,36 +157,42 @@ export default function SettleUpPage() {
             />
           </div>
         )}
-        {/* Header */}
-        <div className="px-5 pt-14 pb-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="text-slate-500 hover:text-slate-300">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
+        <div className="px-5 pt-14 pb-4 flex items-center gap-3">
+          <button
+            onClick={() => router.back()}
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            aria-label="Back"
+          >
+            <ArrowLeft className="h-6 w-6" strokeWidth={1.5} />
           </button>
           <div className="flex-1">
-            <h1 className="text-xl font-bold text-white">Settle Up</h1>
-            {data && <p className="text-slate-500 text-xs">{data.groupName}</p>}
+            <h1 className="text-2xl" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>Settle Up</h1>
+            {data && <p className="text-sm font-medium text-[var(--text-secondary)]">{data.groupName}</p>}
           </div>
-          {/* Manual refresh button */}
           <button
             onClick={load}
-            className="text-slate-500 hover:text-slate-300 transition-colors p-1.5"
+            className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors rounded-full hover:bg-[var(--paper-dim)]"
             title="Refresh"
+            aria-label="Refresh"
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <RefreshCw className="h-5 w-5" strokeWidth={1.5} />
           </button>
         </div>
 
-        {/* Tab pills */}
-        <div className="px-5 flex gap-2 mb-5">
+        {/* ── Tab pills ───────────────────────────────────────────────────── */}
+        <div className="px-5 flex gap-2 mb-6">
           {(["overview", "pending"] as Screen[]).map((s) => (
-            <button key={s} onClick={() => setScreen(s)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-                screen === s ? "bg-violet-600 text-white" : "border border-white/10 text-slate-400"
-              }`}>
+            <button
+              key={s}
+              onClick={() => setScreen(s)}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors border ${
+                screen === s
+                  ? "bg-[var(--accent)] border-[var(--accent)] text-[var(--paper)]"
+                  : "bg-transparent border-[var(--border-dark)] text-[var(--text-muted)] hover:border-[var(--text-secondary)]"
+              }`}
+            >
               {s === "overview" ? "Transfers" : `Pending${pendingSettlements.length > 0 ? ` (${pendingSettlements.length})` : ""}`}
             </button>
           ))}
@@ -191,11 +200,10 @@ export default function SettleUpPage() {
 
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="h-8 w-8 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+            <div className="spinner" />
           </div>
         ) : screen === "overview" ? (
-          <div className="px-5 space-y-4">
-            {/* Debt Simplification Graph */}
+          <div className="px-5 space-y-6 animate-in pb-8">
             {data && data.memberBalances.length > 0 && (
               <DebtSimplificationGraph
                 transfers={allTransfers}
@@ -205,58 +213,58 @@ export default function SettleUpPage() {
               />
             )}
 
-            {/* Plain-language explanation */}
             {allTransfers.length > 0 && naiveCount > allTransfers.length && (
-              <div className="glass-card p-4 border-violet-500/20 bg-violet-500/5">
-                <p className="text-sm text-violet-300 font-medium">
-                  ✨ Instead of {naiveCount}+ individual payments, only{" "}
-                  <span className="text-violet-200 font-bold">{allTransfers.length}</span>{" "}
-                  {allTransfers.length === 1 ? "payment is" : "payments are"} needed.
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Debt simplification algorithm reduces the number of transfers.
-                </p>
+              <div className="card p-4 flex gap-3 border-l-[3px] border-l-[var(--accent)]">
+                <Sparkles className="h-5 w-5 flex-shrink-0 text-[var(--accent)] mt-0.5" strokeWidth={1.5} />
+                <div>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                    Instead of {naiveCount}+ individual payments, only{" "}
+                    <span className="tabular-nums">{allTransfers.length}</span>{" "}
+                    {allTransfers.length === 1 ? "payment is" : "payments are"} needed.
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">
+                    Debt simplification reduces the number of transfers across the group.
+                  </p>
+                </div>
               </div>
             )}
 
             {allTransfers.length === 0 ? (
-              <div className="glass-card p-10 text-center">
-                <p className="text-4xl mb-3">🎉</p>
-                <p className="text-white font-bold text-lg mb-1">All settled up!</p>
-                <p className="text-slate-500 text-sm">No outstanding debts in this group.</p>
-              </div>
+              <EmptyState type="all-settled" title="All Settled Up" description="There are no pending transfers in this group." />
             ) : (
               <>
-                {/* My payments */}
                 {myOutgoing.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">You need to pay</p>
-                    <div className="space-y-2">
+                    <h2 className="section-label mb-3">You need to pay</h2>
+                    <div className="space-y-3">
                       {myOutgoing.map((t, i) => (
-                        <div key={i} className="glass-card p-4">
-                          <div className="flex items-center justify-between mb-3">
+                        <div key={i} className="card card-accent-negative p-4">
+                          <div className="flex items-center justify-between mb-4">
                             <div>
-                              <p className="font-semibold text-white">
-                                You → <span className="text-emerald-400">{t.toName}</span>
+                              <p className="font-semibold text-[var(--text-primary)]">
+                                You <span className="text-[var(--text-muted)] mx-1">→</span>{" "}
+                                <span className="text-[var(--text-primary)]">{t.toName}</span>
                               </p>
-                              <p className="text-xs text-slate-500 mt-0.5">To settle your share</p>
+                              <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">To settle your share</p>
                             </div>
-                            <p className="text-xl font-bold text-white">₹{parseFloat(t.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                            <BalanceAmount amount={t.amount} direction="owes" variant="hero" />
                           </div>
                           <div className="flex gap-2">
                             <button
                               onClick={() => { setSelectedTransfer(t); initiateSettlement(t, "upi"); }}
                               disabled={submitting}
-                              className="flex-1 btn-primary py-2.5 text-sm text-center disabled:opacity-50"
+                              className="btn-primary flex-1 flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-50"
                             >
-                              {submitting && selectedTransfer === t ? "Opening UPI…" : "💳 Pay via UPI"}
+                              <CreditCard className="h-4 w-4" strokeWidth={1.5} />
+                              {submitting && selectedTransfer === t ? "Opening UPI…" : "Pay via UPI"}
                             </button>
                             <button
                               onClick={() => { setSelectedTransfer(t); initiateSettlement(t, "cash"); }}
                               disabled={submitting}
-                              className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm text-slate-300 disabled:opacity-50"
+                              className="btn-secondary flex-1 flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-50"
                             >
-                              💵 Log Cash
+                              <Banknote className="h-4 w-4" strokeWidth={1.5} />
+                              Log Cash
                             </button>
                           </div>
                         </div>
@@ -265,22 +273,27 @@ export default function SettleUpPage() {
                   </div>
                 )}
 
-                {/* Others' payments */}
                 {othersTransfers.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Others need to pay</p>
-                    <div className="space-y-2">
+                    <h2 className="section-label mb-3">Others need to pay</h2>
+                    <div className="space-y-3">
                       {othersTransfers.map((t, i) => (
-                        <div key={i} className="glass-card p-4 flex items-center justify-between">
+                        <div key={i} className="card p-4 flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-white">
-                              <span className="text-rose-400">{t.fromName}</span> → {t.to === user?.id ? <span className="text-emerald-400">You</span> : t.toName}
+                            <p className="text-sm font-semibold text-[var(--text-primary)]">
+                              <span className="text-[var(--text-primary)]">{t.fromName}</span>{" "}
+                              <span className="text-[var(--text-muted)] mx-1">→</span>{" "}
+                              {t.to === user?.id ? (
+                                <span className="text-[var(--text-primary)]">You</span>
+                              ) : (
+                                <span className="text-[var(--text-primary)]">{t.toName}</span>
+                              )}
                             </p>
-                            <p className="text-xs text-slate-500 mt-0.5">
+                            <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">
                               {t.to === user?.id ? "They owe you — you'll confirm when received" : "This doesn't involve you"}
                             </p>
                           </div>
-                          <p className="text-sm font-bold text-white">₹{parseFloat(t.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                          <BalanceAmount amount={t.amount} direction={t.to === user?.id ? "owed" : "settled"} />
                         </div>
                       ))}
                     </div>
@@ -289,17 +302,18 @@ export default function SettleUpPage() {
               </>
             )}
 
-            {/* Recent confirmed */}
             {confirmedSettlements.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Settled</p>
+                <h2 className="section-label mb-3">Settled</h2>
                 <div className="space-y-2">
                   {confirmedSettlements.slice(0, 3).map((s) => (
-                    <div key={s.id} className="flex items-center gap-3 px-4 py-3 glass-card">
-                      <span className="text-emerald-400 text-lg">✓</span>
-                      <p className="text-sm text-slate-400 flex-1">
-                        {s.fromUser.name} paid {s.toUser.name}{" "}
-                        <span className="text-white font-semibold">₹{parseFloat(s.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                    <div key={s.id} className="card p-4 flex items-center gap-3">
+                      <Check className="h-5 w-5 flex-shrink-0 text-[var(--positive)]" strokeWidth={1.5} />
+                      <p className="text-sm flex-1 font-medium text-[var(--text-secondary)]">
+                        <span className="text-[var(--text-primary)]">{s.fromUser.name}</span> paid <span className="text-[var(--text-primary)]">{s.toUser.name}</span>{" "}
+                        <span className="font-semibold text-[var(--text-primary)] ml-1 tabular-nums">
+                          ₹{parseFloat(s.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </span>
                       </p>
                     </div>
                   ))}
@@ -308,57 +322,61 @@ export default function SettleUpPage() {
             )}
           </div>
         ) : (
-          /* ── Pending settlements tab ─────────────────────────────────────── */
-          <div className="px-5 space-y-3">
+          <div className="px-5 space-y-4 animate-in pb-8">
             {pendingSettlements.length === 0 ? (
-              <div className="glass-card p-10 text-center">
-                <p className="text-3xl mb-3">✓</p>
-                <p className="text-white font-semibold">No pending settlements</p>
-                <p className="text-slate-500 text-sm mt-1">All payments have been confirmed or rejected.</p>
-              </div>
+              <EmptyState type="all-settled" title="No Pending Settlements" description="There are no pending settlements for this group." />
             ) : pendingSettlements.map((s) => (
-              <div key={s.id} className={`glass-card p-5 ${s.isIncoming ? "border-amber-500/20 bg-amber-500/5" : ""}`}>
-                <div className="flex items-start justify-between mb-3">
+              <div
+                key={s.id}
+                className={`card p-5 ${s.isIncoming ? "card-accent-positive" : ""}`}
+              >
+                <div className="flex items-start justify-between mb-4">
                   <div>
-                    <p className="text-sm font-semibold text-white">
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">
                       {s.isOutgoing ? (
-                        <>You → <span className="text-emerald-400">{s.toUser.name}</span></>
+                        <>You <span className="text-[var(--text-muted)] mx-1">→</span> <span className="text-[var(--text-primary)]">{s.toUser.name}</span></>
                       ) : s.isIncoming ? (
-                        <><span className="text-violet-400">{s.fromUser.name}</span> → You</>
+                        <><span className="text-[var(--text-primary)]">{s.fromUser.name}</span> <span className="text-[var(--text-muted)] mx-1">→</span> You</>
                       ) : (
-                        <>{s.fromUser.name} → {s.toUser.name}</>
+                        <>{s.fromUser.name} <span className="text-[var(--text-muted)] mx-1">→</span> {s.toUser.name}</>
                       )}
                     </p>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium flex items-center gap-1.5">
+                      {s.method === "upi" ? <CreditCard className="h-3 w-3" strokeWidth={1.5} /> : s.method === "cash" ? <Banknote className="h-3 w-3" strokeWidth={1.5} /> : <CheckCircle2 className="h-3 w-3" strokeWidth={1.5} />}
                       {s.method === "upi" ? "UPI transfer" : s.method === "cash" ? "Cash payment" : "Manual log"}
                       {" · "}{new Date(s.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                     </p>
                   </div>
-                  <p className="text-lg font-bold text-white">
-                    ₹{parseFloat(s.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </p>
+                  <BalanceAmount amount={s.amount} direction={s.isOutgoing ? "owes" : s.isIncoming ? "owed" : "settled"} variant="hero" />
                 </div>
 
-                <div className="rounded-xl bg-amber-500/10 border border-amber-500/15 px-3 py-2 text-xs text-amber-400 mb-3">
-                  ⏳ Awaiting confirmation from {s.isOutgoing ? s.toUser.name : "the recipient"}
-                  {s.isIncoming && " (that's you!)"}
+                <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-xs font-medium bg-[var(--paper-dim)] text-[var(--text-secondary)] mb-4">
+                  <Clock className="h-4 w-4 flex-shrink-0" strokeWidth={1.5} />
+                  Awaiting confirmation from {s.isOutgoing ? s.toUser.name : "the recipient"}
+                  {s.isIncoming && " (that's you)"}
                 </div>
 
-                {/* The recipient (toUser) must confirm — two-way confirmation enforced */}
                 {s.isIncoming && (
                   <div className="flex gap-2">
-                    <button onClick={() => confirmSettlement(s.id)} disabled={confirming === s.id}
-                      className="flex-1 btn-primary py-2.5 text-sm disabled:opacity-50">
-                      {confirming === s.id ? "Confirming…" : "✓ I received this payment"}
+                    <button
+                      onClick={() => confirmSettlement(s.id)}
+                      disabled={confirming === s.id}
+                      className="btn-primary flex-1 flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-50 bg-[var(--positive)] hover:bg-[var(--positive)]/90"
+                    >
+                      <Check className="h-4 w-4" strokeWidth={1.5} />
+                      {confirming === s.id ? "Confirming…" : "I received this"}
                     </button>
-                    <button onClick={() => rejectSettlement(s.id)} disabled={confirming === s.id}
-                      className="flex-shrink-0 rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-2.5 text-sm text-rose-400 disabled:opacity-50">
-                      Reject
+                    <button
+                      onClick={() => rejectSettlement(s.id)}
+                      disabled={confirming === s.id}
+                      className="btn-secondary flex-shrink-0 flex items-center justify-center py-3 px-4 text-sm disabled:opacity-50 text-[var(--negative)] border-[var(--negative)]/30 hover:bg-[var(--negative)]/10"
+                    >
+                      <X className="h-4 w-4" strokeWidth={1.5} />
                     </button>
                   </div>
                 )}
                 {s.isOutgoing && (
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-[var(--text-secondary)] font-medium text-center">
                     Balance will clear once {s.toUser.name} confirms they received it.
                   </p>
                 )}

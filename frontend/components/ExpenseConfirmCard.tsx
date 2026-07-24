@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import type { ParsedExpenseDraft, ExpenseCategory } from "@/hooks/types/ai";
 import CategoryBadge from "./CategoryBadge";
+import { Sparkles, AlertTriangle, Equal, Hash, Target, Check } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -40,14 +41,6 @@ function formatAmount(n: number | null): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-/**
- * ExpenseConfirmCard — the AI-to-manual bridge.
- *
- * Architecture §2: This card pre-fills the Stage 3 form with AI data.
- * The user can edit EVERYTHING. Pressing Confirm calls POST /expenses via
- * the onSubmit callback — never through a new endpoint.
- * This is literally the same data structure POST /expenses expects.
- */
 export default function ExpenseConfirmCard({
   draft,
   members,
@@ -65,7 +58,6 @@ export default function ExpenseConfirmCard({
   const [participants, setParticipants] = useState(draft.participants);
   const [error, setError] = useState<string | null>(null);
 
-  // Re-sync if draft changes (e.g., user re-parsed)
   useEffect(() => {
     setDescription(draft.description);
     setAmount(formatAmount(draft.amount));
@@ -76,7 +68,6 @@ export default function ExpenseConfirmCard({
     setError(null);
   }, [draft]);
 
-  // ── Participant toggle ────────────────────────────────────────────────────
   function toggleParticipant(userId: string) {
     setParticipants((prev) => {
       const exists = prev.find((p) => p.userId === userId);
@@ -91,7 +82,6 @@ export default function ExpenseConfirmCard({
     return participants.some((p) => p.userId === userId);
   }
 
-  // ── Payer amount change ───────────────────────────────────────────────────
   function updatePayerAmount(userId: string, val: string) {
     setPayers((prev) =>
       prev.map((p) =>
@@ -108,7 +98,6 @@ export default function ExpenseConfirmCard({
     });
   }
 
-  // ── Exact share amount ────────────────────────────────────────────────────
   function updateShareAmount(userId: string, val: string) {
     setParticipants((prev) =>
       prev.map((p) =>
@@ -117,7 +106,6 @@ export default function ExpenseConfirmCard({
     );
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────
   async function handleConfirm() {
     setError(null);
     const numAmount = parseFloat(amount);
@@ -126,7 +114,6 @@ export default function ExpenseConfirmCard({
     if (payers.length === 0) { setError("At least one payer is required"); return; }
     if (participants.length === 0) { setError("At least one participant is required"); return; }
 
-    // Auto-fill single payer
     const finalPayers = payers.map((p) => ({
       ...p,
       amountPaid: payers.length === 1 ? numAmount : p.amountPaid,
@@ -154,73 +141,74 @@ export default function ExpenseConfirmCard({
   const isLowConfidence = draft.confidence < 0.4;
 
   return (
-    <div className="space-y-4">
+    <div className="card p-5 space-y-4">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs text-violet-400 font-medium mb-0.5 flex items-center gap-1.5">
-            <span>✨</span> AI parsed your expense
+          <p className="text-sm text-[var(--accent)] font-semibold mb-0.5 flex items-center gap-1.5">
+            <Sparkles className="h-4 w-4" strokeWidth={1.5} /> AI parsed your expense
           </p>
-          <p className="text-xs text-slate-500 leading-relaxed max-w-xs">
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed max-w-xs italic">
             &ldquo;{draft.rawText}&rdquo;
           </p>
         </div>
         <button
           onClick={onCancel}
-          className="text-slate-600 hover:text-slate-400 text-xl leading-none flex-shrink-0"
+          className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors p-1"
         >
-          ×
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
       </div>
 
       {/* ── Low-confidence warning ─────────────────────────────────────────── */}
       {isLowConfidence && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
-          <p className="text-xs text-amber-300 font-medium">
-            ⚠ Low confidence — please review carefully before confirming
+        <div className="rounded-[var(--radius-md)] bg-amber-500/10 border border-amber-500/20 p-3 flex gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+          <p className="text-xs text-amber-600 font-medium">
+            Low confidence — please review carefully before confirming
           </p>
         </div>
       )}
 
       {/* ── Duplicate warning ─────────────────────────────────────────────── */}
       {draft.possibleDuplicate && (
-        <div className="rounded-xl bg-orange-500/10 border border-orange-500/20 p-3">
-          <p className="text-xs text-orange-300 font-medium">
-            🔁 Possible duplicate — a similar expense was added in the last 24h. Continue?
+        <div className="rounded-[var(--radius-md)] bg-orange-500/10 border border-orange-500/20 p-3 flex gap-2">
+          <AlertTriangle className="h-4 w-4 text-orange-500 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+          <p className="text-xs text-orange-600 font-medium">
+            Possible duplicate — a similar expense was added in the last 24h. Continue?
           </p>
         </div>
       )}
 
       {/* ── Ambiguities ───────────────────────────────────────────────────── */}
       {draft.ambiguities.length > 0 && (
-        <div className="rounded-xl bg-slate-800/50 border border-slate-700 p-3 space-y-1">
+        <div className="rounded-[var(--radius-md)] bg-[var(--paper-dim)] border border-[var(--border)] p-3 space-y-2">
           {draft.ambiguities.map((a, i) => (
-            <p key={i} className="text-xs text-slate-400">
-              ⚠ {a}
-            </p>
+            <div key={i} className="flex gap-2 text-xs text-[var(--text-secondary)]">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" strokeWidth={1.5} />
+              <p>{a}</p>
+            </div>
           ))}
         </div>
       )}
 
       {/* ── Description ───────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">
-          Description
-        </label>
+        <label className="section-label mb-1.5 block">Description</label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What was this expense for?"
-          className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-violet-500/50"
+          className="input-field"
         />
       </div>
 
       {/* ── Amount ────────────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">
-          Total Amount (₹)
-        </label>
+        <label className="section-label mb-1.5 block">Total Amount (₹)</label>
         <input
           type="number"
           value={amount}
@@ -228,55 +216,60 @@ export default function ExpenseConfirmCard({
           placeholder="0.00"
           min="0"
           step="0.01"
-          className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-violet-500/50"
+          className="input-field tabular-nums font-medium"
         />
       </div>
 
       {/* ── Category ─────────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-2">
-          Category
-        </label>
+        <label className="section-label mb-2 block">Category</label>
         <CategoryBadge value={category} onChange={setCategory} />
       </div>
 
       {/* ── Split type ───────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">
-          Split type
-        </label>
+        <label className="section-label mb-1.5 block">Split type</label>
         <div className="flex gap-2">
-          {(["equal", "exact", "fairshare"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setSplitType(mode)}
-              className={`flex-1 rounded-xl py-2 text-xs font-medium transition-colors border ${splitType === mode ? "border-violet-500/50 bg-violet-500/15 text-violet-300" : "border-white/5 text-slate-500 hover:bg-white/5"}`}
-            >
-              {mode === "equal" ? "⚡ Equal" : mode === "exact" ? "🔢 Exact" : "🎯 Fairshare"}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() => setSplitType("equal")}
+            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "equal" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
+          >
+            <Equal className="h-4 w-4" strokeWidth={1.5} /> Equal
+          </button>
+          <button
+            type="button"
+            onClick={() => setSplitType("exact")}
+            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "exact" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
+          >
+            <Hash className="h-4 w-4" strokeWidth={1.5} /> Exact
+          </button>
+          <button
+            type="button"
+            onClick={() => setSplitType("fairshare")}
+            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "fairshare" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
+          >
+            <Target className="h-4 w-4" strokeWidth={1.5} /> Fairshare
+          </button>
         </div>
       </div>
 
       {/* ── Payers ───────────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-2">
-          Who paid?
-        </label>
+        <label className="section-label mb-2 block">Who paid?</label>
         <div className="space-y-2">
           {members.map((m) => {
             const payer = payers.find((p) => p.userId === m.id);
             return (
-              <div key={m.id} className="flex items-center gap-2">
+              <div key={m.id} className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => togglePayer(m.id)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors flex-shrink-0 ${payer ? "bg-violet-600 text-white" : "bg-white/5 text-slate-600 border border-white/10"}`}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors flex-shrink-0 ${payer ? "bg-[var(--accent)] text-[var(--paper)]" : "bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]"}`}
                 >
                   {m.name.charAt(0).toUpperCase()}
                 </button>
-                <span className="flex-1 text-sm text-slate-300">{m.name}</span>
+                <span className="flex-1 text-sm font-medium text-[var(--text-primary)]">{m.name}</span>
                 {payer && payers.length > 1 && (
                   <input
                     type="number"
@@ -285,11 +278,11 @@ export default function ExpenseConfirmCard({
                     placeholder="Amount"
                     min="0"
                     step="0.01"
-                    className="w-24 rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-white placeholder-slate-600 text-right focus:outline-none focus:border-violet-500/50"
+                    className="input-field w-24 px-2 py-1.5 text-xs text-right tabular-nums"
                   />
                 )}
                 {payer && payers.length === 1 && (
-                  <span className="text-xs text-slate-500">₹{numAmount.toFixed(2)}</span>
+                  <span className="text-sm font-medium tabular-nums text-[var(--text-secondary)]">₹{numAmount.toFixed(2)}</span>
                 )}
               </div>
             );
@@ -299,9 +292,7 @@ export default function ExpenseConfirmCard({
 
       {/* ── Participants ─────────────────────────────────────────────────── */}
       <div>
-        <label className="block text-xs font-medium text-slate-400 mb-2">
-          Split between
-        </label>
+        <label className="section-label mb-2 block">Split between</label>
         <div className="space-y-2">
           {members.map((m) => {
             const included = isParticipant(m.id);
@@ -310,15 +301,15 @@ export default function ExpenseConfirmCard({
               participants.length > 0 ? numAmount / participants.length : 0;
 
             return (
-              <div key={m.id} className="flex items-center gap-2">
+              <div key={m.id} className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => toggleParticipant(m.id)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors flex-shrink-0 ${included ? "bg-emerald-600 text-white" : "bg-white/5 text-slate-600 border border-white/10"}`}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors flex-shrink-0 ${included ? "bg-[var(--positive)] text-[var(--paper)]" : "bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]"}`}
                 >
                   {m.name.charAt(0).toUpperCase()}
                 </button>
-                <span className="flex-1 text-sm text-slate-300">{m.name}</span>
+                <span className={`flex-1 text-sm font-medium ${included ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"}`}>{m.name}</span>
                 {included && splitType === "exact" && (
                   <input
                     type="number"
@@ -327,23 +318,19 @@ export default function ExpenseConfirmCard({
                     placeholder="Share"
                     min="0"
                     step="0.01"
-                    className="w-24 rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-white placeholder-slate-600 text-right focus:outline-none focus:border-violet-500/50"
+                    className="input-field w-24 px-2 py-1.5 text-xs text-right tabular-nums"
                   />
                 )}
-                {/* Show calculated share for equal + fairshare modes */}
                 {included && (splitType === "equal" || splitType === "fairshare") && (
-                  <span className="text-xs font-medium text-emerald-400">
+                  <span className="text-sm font-medium text-[var(--positive)] tabular-nums">
                     ₹{equalShare.toFixed(2)}
                   </span>
                 )}
-                {/* Exact: show existing shareAmount if already filled */}
                 {included && splitType === "exact" && participant?.shareAmount !== undefined && participant.shareAmount > 0 && (
-                  <span className="text-xs text-violet-400 ml-1">
-                    ✓
-                  </span>
+                  <Check className="h-4 w-4 text-[var(--accent)] ml-2" strokeWidth={2} />
                 )}
                 {!included && (
-                  <span className="text-xs text-slate-700">excluded</span>
+                  <span className="text-xs text-[var(--text-muted)]">excluded</span>
                 )}
               </div>
             );
@@ -352,17 +339,17 @@ export default function ExpenseConfirmCard({
 
         {/* ── Split summary ─────────────────────────────────────────────── */}
         {participants.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-white/5 flex justify-between text-xs">
-            <span className="text-slate-500">
+          <div className="mt-3 pt-3 border-t border-[var(--border)] flex justify-between text-xs">
+            <span className="text-[var(--text-secondary)] font-medium">
               {participants.length} {participants.length === 1 ? "person" : "people"}
               {splitType === "fairshare" ? " sharing" : " splitting equally"}
             </span>
-            <span className={`font-medium ${
+            <span className={`font-semibold tabular-nums ${
               splitType === "exact"
                 ? Math.abs(participants.reduce((s, p) => s + (p.shareAmount || 0), 0) - numAmount) < 0.01
-                  ? "text-emerald-400"
-                  : "text-amber-400"
-                : "text-slate-400"
+                  ? "text-[var(--positive)]"
+                  : "text-amber-600"
+                : "text-[var(--text-secondary)]"
             }`}>
               {splitType === "exact"
                 ? `₹${participants.reduce((s, p) => s + (p.shareAmount || 0), 0).toFixed(2)} / ₹${numAmount.toFixed(2)}`
@@ -375,17 +362,28 @@ export default function ExpenseConfirmCard({
 
       {/* ── Error ────────────────────────────────────────────────────────── */}
       {error && (
-        <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3">
-          <p className="text-xs text-rose-400">{error}</p>
+        <div className="rounded-[var(--radius-md)] bg-[var(--negative)]/10 border border-[var(--negative)]/20 p-3">
+          <p className="text-xs text-[var(--negative)] font-medium">{error}</p>
         </div>
       )}
 
+      {/* ── Small confidence indicator ───────────────────────────────────── */}
+      <div className="flex items-center justify-between text-xs font-medium text-[var(--text-secondary)] pt-2">
+        <span>AI confidence: {Math.round(draft.confidence * 100)}%</span>
+        <div className="w-24 h-1.5 rounded-full bg-[var(--paper-dim)] overflow-hidden">
+          <div
+            className={`h-full rounded-full ${draft.confidence > 0.7 ? "bg-[var(--positive)]" : draft.confidence > 0.4 ? "bg-amber-500" : "bg-[var(--negative)]"}`}
+            style={{ width: `${draft.confidence * 100}%` }}
+          />
+        </div>
+      </div>
+
       {/* ── Actions ──────────────────────────────────────────────────────── */}
-      <div className="flex gap-3 pt-2">
+      <div className="flex gap-3 pt-3">
         <button
           type="button"
           onClick={onManual}
-          className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-medium text-slate-400 hover:bg-white/10 transition-colors"
+          className="btn-secondary flex-1 py-3 text-sm font-semibold"
         >
           Edit manually
         </button>
@@ -394,28 +392,17 @@ export default function ExpenseConfirmCard({
           onClick={handleConfirm}
           disabled={isSubmitting}
           id="ai-confirm-btn"
-          className="flex-1 btn-primary py-3 text-sm font-semibold disabled:opacity-50"
+          className="btn-primary flex-1 py-3 text-sm font-semibold disabled:opacity-50"
         >
           {isSubmitting ? (
             <span className="flex items-center justify-center gap-2">
-              <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              <span className="spinner" />
               Saving…
             </span>
           ) : (
-            "✓ Confirm"
+            "Confirm"
           )}
         </button>
-      </div>
-
-      {/* ── Small confidence indicator ───────────────────────────────────── */}
-      <div className="flex items-center justify-between text-xs text-slate-700">
-        <span>AI confidence: {Math.round(draft.confidence * 100)}%</span>
-        <div className="w-24 h-1 rounded-full bg-white/5 overflow-hidden">
-          <div
-            className={`h-full rounded-full ${draft.confidence > 0.7 ? "bg-emerald-500" : draft.confidence > 0.4 ? "bg-amber-500" : "bg-rose-500"}`}
-            style={{ width: `${draft.confidence * 100}%` }}
-          />
-        </div>
       </div>
     </div>
   );
