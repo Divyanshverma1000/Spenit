@@ -76,15 +76,21 @@ OUTPUT JSON SCHEMA:
   "category": string or null,
   "payers": [{"userId": "uuid", "amountPaid": number}],
   "participants": [{"userId": "uuid", "shareAmount": number_or_null}],
+  "receiptData": [{"id": "uuid", "label": "string", "amount": string, "sharedBy": ["uuid"]}],
   "confidence": number,
   "ambiguities": ["string"]
 }
 
+EXPLANATION OF RECEIPT_DATA:
+If the user mentions specific items (e.g. "Pizza for 400 for John and me, and coke for 100 for me"), this is a True Universal Fairshare expense!
+1. Set splitType to "exact".
+2. Generate an array for receiptData. Assign a unique UUID for each item's "id".
+3. "sharedBy" MUST be an array of the exact userIds who shared that specific item.
+4. Calculate the final exact "shareAmount" for each participant in the "participants" array by splitting the items among the sharedBy users, and splitting any remaining amount equally among all mentioned participants.
+
 EXAMPLES:
-- "Dinner 900 Rahul paid" → payers:[{Rahul,900}], participants:all, splitType:equal
-- "Cab 450 between Rahul and me" → payers:[{me,450}], participants:[Rahul,me], splitType:equal
-- "Pizza 1400 everyone except Mohit" → payers:[{me,1400}], participants:all except Mohit, splitType:equal
-- "I paid 1000, only I ate the icecream others didn't" → payers:[{me,1000}], participants:[{me,1000}], splitType:exact, confidence:0.9
+- "Dinner 900 Rahul paid" → payers:[{Rahul,900}], participants:all, splitType:equal, receiptData:null
+- "I paid 1000, 400 was for wine that Rahul and I drank" → payers:[{me,1000}], participants:[all], splitType:exact, receiptData:[{id:"...", label:"wine", amount:"400", sharedBy:[me, Rahul]}] (Calculate exactly: remaining 600 split equally)
 - "paid by me 500" → payers:[{me,500}], participants:all, splitType:equal`;
 }
 

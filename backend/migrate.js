@@ -1,10 +1,12 @@
 const { Client } = require('pg');
-const client = new Client('postgresql://spenit:spenit@localhost:5432/spenit');
+require('dotenv').config();
+
+const client = new Client(process.env.DATABASE_URL || 'postgresql://spenituser:spenit_password_123@localhost:5432/spenit');
 
 client.connect()
-  .then(() => client.query('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS groq_api_key text;'))
+  .then(() => client.query('ALTER TABLE "Expense" ADD COLUMN IF NOT EXISTS receipt_data jsonb;'))
   .then(() => {
-    console.log('Column groq_api_key added to User table');
+    console.log('Column receipt_data added to Expense table');
     process.exit(0);
   })
   .catch(e => {

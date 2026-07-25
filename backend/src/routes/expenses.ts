@@ -44,6 +44,8 @@ interface CreateExpenseBody {
   participants: SplitInput[]; // for 'exact': must include shareAmount; for 'equal'/'fairshare': list of userId + optional personalAmount
   /** Optional — AI-inferred or user-selected category. Stored in Expense.category (Tier 1 column, now active). */
   category?: string | null;
+  /** Optional — JSON data representing itemized receipt details for Universal Fairshare */
+  receiptData?: any;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -224,10 +226,10 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     // Insert Expense row
     const expenseRow = await client.query(
       `INSERT INTO "Expense"
-         (group_id, description, amount, currency, split_type, category, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, group_id, description, amount, currency, split_type, category, created_by, created_at`,
-      [groupId, description.trim(), amount.toFixed(2), currency, splitType, category || null, userId]
+         (group_id, description, amount, currency, split_type, category, receipt_data, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, group_id, description, amount, currency, split_type, category, receipt_data, created_by, created_at`,
+      [groupId, description.trim(), amount.toFixed(2), currency, splitType, category || null, body.receiptData ? JSON.stringify(body.receiptData) : null, userId]
     );
     const expense = expenseRow.rows[0];
 
@@ -339,7 +341,7 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
 
   // Fetch expenses with payers and splits in a single query set
   const expenses = await pool.query(
-    `SELECT e.id, e.description, e.amount, e.currency, e.split_type,
+    `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data,
             e.created_by, e.created_at,
             u.name AS created_by_name, u.username AS created_by_username
      FROM "Expense" e

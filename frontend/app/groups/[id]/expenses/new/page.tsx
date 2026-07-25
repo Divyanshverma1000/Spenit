@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Equal, Hash, Target } from "lucide-react";
+import { Plus, X, Receipt } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-
-type SplitMode = "equal" | "fairshare" | "exact";
 
 interface Member {
   id: string;
@@ -20,46 +18,18 @@ interface Member {
   avatarUrl: string | null;
 }
 
-interface PersonalItem {
+interface SpecificItem {
   id: string;
   label: string;
   amount: string;
-}
-
-const SPLIT_MODES: { key: SplitMode; label: string; icon: any; desc: string }[] = [
-  {
-    key: "equal",
-    label: "Equal split",
-    icon: Equal,
-    desc: "Everyone pays the same amount",
-  },
-  {
-    key: "fairshare",
-    label: "Fairshare",
-    icon: Target,
-    desc: "Add personal items — shared costs split equally",
-  },
-  {
-    key: "exact",
-    label: "Custom amounts",
-    icon: Hash,
-    desc: "Specify exact shares",
-  },
-];
-
-function newItem(): PersonalItem {
-  return { id: crypto.randomUUID(), label: "", amount: "" };
-}
-
-function sumItems(items: PersonalItem[]): number {
-  return items.reduce((a, it) => a + (parseFloat(it.amount) || 0), 0);
+  sharedBy: string[]; // array of userIds who share this item
 }
 
 function fmt(n: number) {
   return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function NewExpensePage() {
+export default function UniversalExpensePage() {
   const { id: groupId } = useParams<{ id: string }>();
   const authed = useRequireAuth();
   const { accessToken, user } = useAuth();
@@ -71,12 +41,15 @@ export default function NewExpensePage() {
 
   const [description, setDescription] = useState("");
   const [totalAmount, setTotalAmount] = useState(searchParams?.get("amount") || "");
-  const [splitMode, setSplitMode] = useState<SplitMode>("equal");
-
+  
+  // Payers (Simplifying to single payer for 99% of use cases, but can be expanded later)
   const [payerId, setPayerId] = useState<string>("");
-  const [participants, setParticipants] = useState<Set<string>>(new Set());
-  const [fairshare, setFairshare] = useState<Record<string, PersonalItem[]>>({});
-  const [exactAmounts, setExactAmounts] = useState<Record<string, string>>({});
+
+  // Shared Pool Participants (Who splits the remainder?)
+  const [sharedPoolParticipants, setSharedPoolParticipants] = useState<Set<string>>(new Set());
+
+  // Specific Items (The Receipt Data)
+  const [items, setItems] = useState<SpecificItem[]>([]);
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,59 +64,93 @@ export default function NewExpensePage() {
         const mems: Member[] = data.members || [];
         setMembers(mems);
         if (user) setPayerId(user.id);
+        
+        // By default, everyone is in the shared pool
         const all = new Set(mems.map((m) => m.id));
-        setParticipants(all);
-        const fs: Record<string, PersonalItem[]> = {};
-        mems.forEach((m) => { fs[m.id] = [newItem()]; });
-        setFairshare(fs);
-        const ex: Record<string, string> = {};
-        mems.forEach((m) => { ex[m.id] = ""; });
-        setExactAmounts(ex);
+        setSharedPoolParticipants(all);
       })
       .catch(console.error)
       .finally(() => setMembersLoading(false));
   }, [accessToken, groupId, user]);
 
-  const getMemberName = useCallback(
-    (uid: string) => members.find((m) => m.id === uid)?.name || uid,
-    [members]
-  );
-
   const amountNum = parseFloat(totalAmount) || 0;
-  const fairsharePersonalTotals = Object.fromEntries(
-    Array.from(participants).map((uid) => [uid, sumItems(fairshare[uid] || [])])
-  );
-  const totalPersonal = Object.values(fairsharePersonalTotals).reduce((a, b) => a + b, 0);
-  const sharedPool = Math.max(0, amountNum - totalPersonal);
-  const participantCount = participants.size;
-  const sharedPerPerson = participantCount > 0 ? sharedPool / participantCount : 0;
-  const fairsharePreview = Object.fromEntries(
-    Array.from(participants).map((uid) => [
-      uid,
-      (fairsharePersonalTotals[uid] || 0) + sharedPerPerson,
-    ])
-  );
 
-  const exactTotal = Array.from(participants).reduce(
-    (a, uid) => a + (parseFloat(exactAmounts[uid] || "0") || 0),
-    0
-  );
+  // --- Math Engine ---
+  const itemTotal = items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+  const sharedPool = Math.max(0, amountNum - itemTotal);
 
-  function addFairshareItem(uid: string) {
-    setFairshare((prev) => ({ ...prev, [uid]: [...(prev[uid] || []), newItem()] }));
-  }
-  function removeFairshareItem(uid: string, itemId: string) {
-    setFairshare((prev) => ({
+  // Calculate EXACT shares per person
+  const exactShares = useMemo(() => {
+    const shares: Record<string, number> = {};
+    members.forEach(m => shares[m.id] = 0);
+
+    // 1. Distribute Specific Items
+    items.forEach(item => {
+      const itemAmt = parseFloat(item.amount) || 0;
+      if (itemAmt > 0 && item.sharedBy.length > 0) {
+        // We do precise integer math internally to prevent 1/3 rounding bugs
+        const cents = Math.round(itemAmt * 100);
+        const baseCents = Math.floor(cents / item.sharedBy.length);
+        let remainderCents = cents - (baseCents * item.sharedBy.length);
+        
+        item.sharedBy.forEach((uid) => {
+          const extra = remainderCents > 0 ? 1 : 0;
+          remainderCents--;
+          shares[uid] += (baseCents + extra) / 100;
+        });
+      }
+    });
+
+    // 2. Distribute Shared Pool
+    if (sharedPool > 0 && sharedPoolParticipants.size > 0) {
+      const cents = Math.round(sharedPool * 100);
+      const poolArray = Array.from(sharedPoolParticipants);
+      const baseCents = Math.floor(cents / poolArray.length);
+      let remainderCents = cents - (baseCents * poolArray.length);
+
+      poolArray.forEach((uid) => {
+        const extra = remainderCents > 0 ? 1 : 0;
+        remainderCents--;
+        shares[uid] += (baseCents + extra) / 100;
+      });
+    }
+
+    return shares;
+  }, [members, items, sharedPool, sharedPoolParticipants]);
+
+  const toggleSharedPool = (uid: string) => {
+    setSharedPoolParticipants(prev => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  };
+
+  const addItem = () => {
+    setItems(prev => [
       ...prev,
-      [uid]: (prev[uid] || []).filter((it) => it.id !== itemId),
+      { id: crypto.randomUUID(), label: "", amount: "", sharedBy: Array.from(sharedPoolParticipants) }
+    ]);
+  };
+
+  const removeItem = (id: string) => {
+    setItems(prev => prev.filter(it => it.id !== id));
+  };
+
+  const updateItem = (id: string, field: keyof SpecificItem, value: any) => {
+    setItems(prev => prev.map(it => it.id === id ? { ...it, [field]: value } : it));
+  };
+
+  const toggleItemSharer = (itemId: string, uid: string) => {
+    setItems(prev => prev.map(it => {
+      if (it.id !== itemId) return it;
+      const newSharedBy = it.sharedBy.includes(uid) 
+        ? it.sharedBy.filter(u => u !== uid) 
+        : [...it.sharedBy, uid];
+      return { ...it, sharedBy: newSharedBy };
     }));
-  }
-  function updateFairshareItem(uid: string, itemId: string, field: "label" | "amount", val: string) {
-    setFairshare((prev) => ({
-      ...prev,
-      [uid]: (prev[uid] || []).map((it) => (it.id === itemId ? { ...it, [field]: val } : it)),
-    }));
-  }
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -152,35 +159,19 @@ export default function NewExpensePage() {
     if (!description.trim()) { setError("Description is required"); return; }
     if (!amountNum || amountNum <= 0) { setError("Enter a valid total amount"); return; }
     if (!payerId) { setError("Select who paid"); return; }
-    if (participants.size === 0) { setError("At least one participant required"); return; }
-
-    if (splitMode === "fairshare" && totalPersonal > amountNum) {
-      setError(`Personal items total (${fmt(totalPersonal)}) exceeds bill total (${fmt(amountNum)})`);
+    if (itemTotal > amountNum) {
+      setError(`Specific items (${fmt(itemTotal)}) cannot exceed the total bill (${fmt(amountNum)})`);
       return;
     }
-    if (splitMode === "exact") {
-      const diff = Math.abs(exactTotal - amountNum);
-      if (diff > 0.01) {
-        setError(`Shares sum to ${fmt(exactTotal)} but total is ${fmt(amountNum)}. Difference: ${fmt(diff)}`);
-        return;
-      }
-    }
+    
+    // We send EXACT shares to backend for perfect accuracy
+    const participantsPayload = Object.entries(exactShares)
+      .filter(([_, amt]) => amt > 0)
+      .map(([userId, amt]) => ({ userId, shareAmount: parseFloat(amt.toFixed(2)) }));
 
-    const participantArray = Array.from(participants);
-    let participantsPayload;
-
-    if (splitMode === "equal") {
-      participantsPayload = participantArray.map((uid) => ({ userId: uid }));
-    } else if (splitMode === "fairshare") {
-      participantsPayload = participantArray.map((uid) => ({
-        userId: uid,
-        personalAmount: parseFloat(fairsharePersonalTotals[uid].toFixed(2)),
-      }));
-    } else {
-      participantsPayload = participantArray.map((uid) => ({
-        userId: uid,
-        shareAmount: parseFloat(exactAmounts[uid] || "0"),
-      }));
+    if (participantsPayload.length === 0) {
+      setError("Nobody owes anything. Please include participants.");
+      return;
     }
 
     setLoading(true);
@@ -197,9 +188,10 @@ export default function NewExpensePage() {
           description: description.trim(),
           amount: amountNum,
           currency: "INR",
-          splitType: splitMode,
-          payers: [{ userId: payerId }],
+          splitType: "exact", // Always exact for Universal Fairshare mathematically
+          payers: [{ userId: payerId, amountPaid: amountNum }],
           participants: participantsPayload,
+          receiptData: items.length > 0 ? items : null // Save the items for future reference!
         }),
       });
 
@@ -220,40 +212,44 @@ export default function NewExpensePage() {
 
   return (
     <>
-      <main className="min-h-screen page-content pb-24" style={{ backgroundColor: "var(--ink)" }}>
-        <PageHeader 
-          title="Add Expense" 
-          onBack={() => router.back()} 
-        />
+      <main className="min-h-screen bg-[#F9FAFB] pb-24 font-[var(--font-inter)]">
+        <PageHeader title="Add Expense" onBack={() => router.back()} />
 
         {membersLoading ? (
           <div className="flex justify-center py-20">
-            <div className="spinner" />
+            <div className="spinner border-[var(--brand-primary)]" />
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="px-4 space-y-4">
-            <Card padding="md">
-              <div className="space-y-4">
+          <form onSubmit={handleSubmit} className="px-4 space-y-6 mt-4 max-w-md mx-auto">
+            {error && (
+              <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm font-medium border border-red-100">
+                {error}
+              </div>
+            )}
+
+            {/* Top Card: Basics */}
+            <Card padding="lg" className="shadow-sm border-gray-100">
+              <div className="space-y-5">
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-secondary)" }}>
-                    Description
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                    What was this for?
                   </label>
                   <input
                     type="text"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="e.g. Dinner"
+                    placeholder="e.g. Dinner at Cafe"
                     autoFocus
-                    className="input-field w-full"
+                    className="w-full bg-gray-50 border-none rounded-xl p-3.5 text-base font-medium text-gray-900 focus:ring-2 focus:ring-[var(--brand-primary)] focus:bg-white transition-all"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-secondary)" }}>
-                    Amount
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                    Total Amount
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold" style={{ color: "var(--text-muted)" }}>₹</span>
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-400">₹</span>
                     <input
                       type="number"
                       value={totalAmount}
@@ -261,226 +257,165 @@ export default function NewExpensePage() {
                       placeholder="0.00"
                       step="0.01"
                       min="0.01"
-                      className="input-field w-full pl-8 font-bold text-lg tabular-nums"
-                      style={{ fontFamily: "var(--font-display)" }}
+                      className="w-full bg-gray-50 border-none rounded-xl pl-10 pr-4 py-4 text-2xl font-black text-gray-900 focus:ring-2 focus:ring-[var(--brand-primary)] focus:bg-white transition-all font-[var(--font-display)] tracking-tight"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-secondary)" }}>
-                    Paid by
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                    Paid By
                   </label>
                   <div className="flex flex-wrap gap-2">
-                    {members.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setPayerId(m.id)}
-                        className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-sm font-medium transition-colors border"
-                        style={{
-                          backgroundColor: payerId === m.id ? "var(--paper-dim)" : "transparent",
-                          borderColor: payerId === m.id ? "var(--border-dark)" : "var(--border)",
-                          color: "var(--text-primary)"
-                        }}
-                      >
-                        <span className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: "var(--accent)", color: "var(--paper)" }}>
-                          {m.name.charAt(0).toUpperCase()}
-                        </span>
-                        {m.id === user?.id ? "You" : m.name}
-                      </button>
-                    ))}
+                    {members.map((m) => {
+                      const isSelected = payerId === m.id;
+                      return (
+                        <button
+                          key={`payer-${m.id}`}
+                          type="button"
+                          onClick={() => setPayerId(m.id)}
+                          className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all border ${
+                            isSelected
+                              ? "bg-[var(--brand-primary)] text-white border-[var(--brand-primary)] shadow-md shadow-orange-500/20"
+                              : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                            isSelected ? "bg-white text-[var(--brand-primary)]" : "bg-gray-100 text-gray-500"
+                          }`}>
+                            {m.name.charAt(0).toUpperCase()}
+                          </span>
+                          {m.id === user?.id ? "You" : m.name}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
             </Card>
 
-            <Card padding="md">
-              <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-secondary)" }}>
-                Split mode
-              </label>
-              <div className="space-y-2 mb-4">
-                {SPLIT_MODES.map((mode) => {
-                  const Icon = mode.icon;
-                  return (
-                    <button
-                      key={mode.key}
-                      type="button"
-                      onClick={() => setSplitMode(mode.key)}
-                      className="w-full flex items-center gap-3 rounded-[var(--radius-sm)] p-3 transition-colors text-left border"
-                      style={{
-                        backgroundColor: splitMode === mode.key ? "var(--paper-dim)" : "transparent",
-                        borderColor: splitMode === mode.key ? "var(--border-dark)" : "var(--border)"
-                      }}
-                    >
-                      <Icon className="h-5 w-5" strokeWidth={1.5} style={{ color: splitMode === mode.key ? "var(--accent)" : "var(--text-secondary)" }} />
-                      <div>
-                        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{mode.label}</p>
-                        <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>{mode.desc}</p>
-                      </div>
-                    </button>
-                  );
-                })}
+            {/* Middle Card: Group (Equal Split Foundation) */}
+            <Card padding="lg" className="shadow-sm border-gray-100">
+              <div className="flex items-center justify-between mb-4">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  Split Among
+                </label>
+                {sharedPool > 0 && (
+                  <span className="text-xs font-bold text-[var(--brand-primary)] bg-orange-50 px-2 py-1 rounded-md">
+                    {fmt(sharedPool)} remaining
+                  </span>
+                )}
               </div>
-
-              <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-secondary)" }}>
-                Participants
-              </label>
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-1">
                 {members.map((m) => {
-                  const on = participants.has(m.id);
+                  const isChecked = sharedPoolParticipants.has(m.id);
+                  const finalShare = exactShares[m.id] || 0;
                   return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        setParticipants((prev) => {
-                          const next = new Set(prev);
-                          if (on) next.delete(m.id); else next.add(m.id);
-                          return next;
-                        });
-                      }}
-                      className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-xs font-medium transition-colors border"
-                      style={{
-                        backgroundColor: on ? "var(--paper-dim)" : "transparent",
-                        borderColor: on ? "var(--border-dark)" : "var(--border)",
-                        color: on ? "var(--text-primary)" : "var(--text-muted)"
-                      }}
+                    <div 
+                      key={`split-${m.id}`}
+                      className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors"
+                      onClick={() => toggleSharedPool(m.id)}
                     >
-                      {m.id === user?.id ? "You" : m.name}
-                    </button>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
+                          isChecked ? "bg-[var(--brand-primary)] border-[var(--brand-primary)]" : "bg-white border-gray-300"
+                        }`}>
+                          {isChecked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                        </div>
+                        <span className="font-semibold text-gray-900">{m.id === user?.id ? "You" : m.name}</span>
+                      </div>
+                      <span className="font-mono font-medium text-gray-500">{fmt(finalShare)}</span>
+                    </div>
                   );
                 })}
               </div>
             </Card>
 
-            {splitMode === "fairshare" && participants.size > 0 && (
-              <div className="space-y-3">
-                {amountNum > 0 && (
-                  <Card padding="sm" style={{ backgroundColor: "var(--paper-dim)" }}>
-                    <div className="flex justify-between text-sm mb-1 text-secondary">
-                      <span>Total bill</span>
-                      <span className="font-medium" style={{ color: "var(--text-primary)" }}>{fmt(amountNum)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm mb-1 text-secondary">
-                      <span>Personal items</span>
-                      <span className="font-medium" style={{ color: totalPersonal > amountNum ? "var(--negative)" : "var(--text-primary)" }}>− {fmt(totalPersonal)}</span>
-                    </div>
-                    <div className="border-t pt-2 mt-2 flex justify-between text-sm" style={{ borderColor: "var(--border)" }}>
-                      <span style={{ color: "var(--text-secondary)" }}>Shared pool ÷ {participantCount} =</span>
-                      <span className="font-semibold" style={{ color: "var(--accent)" }}>{fmt(sharedPerPerson)} each</span>
-                    </div>
-                  </Card>
-                )}
-
-                {Array.from(participants).map((uid) => {
-                  const memberName = getMemberName(uid);
-                  const items = fairshare[uid] || [];
-                  const myTotal = sumItems(items);
-                  const myShare = fairsharePreview[uid] || 0;
-                  return (
-                    <Card key={uid} padding="sm">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                          {uid === user?.id ? "You" : memberName}
-                        </span>
-                        {amountNum > 0 && (
-                          <span className="text-xs font-bold" style={{ color: "var(--positive)" }}>
-                            Total: {fmt(myShare)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        {items.map((item) => (
-                          <div key={item.id} className="flex gap-2">
-                            <input
-                              type="text"
-                              placeholder="Item (optional)"
-                              value={item.label}
-                              onChange={(e) => updateFairshareItem(uid, item.id, "label", e.target.value)}
-                              className="input-field flex-1 text-xs px-2 py-1.5"
-                            />
-                            <input
-                              type="number"
-                              placeholder="0"
-                              value={item.amount}
-                              onChange={(e) => updateFairshareItem(uid, item.id, "amount", e.target.value)}
-                              step="0.01"
-                              min="0"
-                              className="input-field w-20 text-xs px-2 py-1.5 tabular-nums"
-                            />
-                            {items.length > 1 && (
-                              <button type="button" onClick={() => removeFairshareItem(uid, item.id)} className="px-2" style={{ color: "var(--text-muted)" }}>×</button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                      <button type="button" onClick={() => addFairshareItem(uid)} className="text-xs mt-2 font-medium" style={{ color: "var(--accent)" }}>
-                        + Add item
-                      </button>
-                    </Card>
-                  );
-                })}
+            {/* Bottom Card: Specific Items */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Receipt size={14} />
+                  Specific Items
+                </label>
               </div>
-            )}
 
-            {splitMode === "exact" && participants.size > 0 && (
-              <Card padding="md">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>Exact shares</span>
-                  {amountNum > 0 && (
-                    <span className="text-xs font-semibold" style={{ color: Math.abs(exactTotal - amountNum) < 0.01 ? "var(--positive)" : "var(--negative)" }}>
-                      {fmt(exactTotal)} / {fmt(amountNum)}
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {Array.from(participants).map((uid) => (
-                    <div key={uid} className="flex items-center gap-3">
-                      <span className="flex-1 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                        {uid === user?.id ? "You" : getMemberName(uid)}
-                      </span>
-                      <div className="w-24">
+              {items.map((item, idx) => (
+                <Card key={item.id} padding="md" className="shadow-sm border-gray-100 border-l-4 border-l-[var(--brand-primary)] relative overflow-hidden group">
+                  <button 
+                    type="button" 
+                    onClick={() => removeItem(item.id)}
+                    className="absolute top-3 right-3 text-gray-400 hover:text-red-500 transition-colors p-1"
+                  >
+                    <X size={16} />
+                  </button>
+                  
+                  <div className="space-y-4 pr-6">
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={item.label}
+                          onChange={(e) => updateItem(item.id, "label", e.target.value)}
+                          placeholder="Item name (e.g. Wine)"
+                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--brand-primary)] py-1 text-sm font-medium outline-none transition-colors"
+                        />
+                      </div>
+                      <div className="w-24 relative">
+                        <span className="absolute left-0 top-1 text-sm font-semibold text-gray-400">₹</span>
                         <input
                           type="number"
+                          value={item.amount}
+                          onChange={(e) => updateItem(item.id, "amount", e.target.value)}
                           placeholder="0.00"
-                          value={exactAmounts[uid] || ""}
-                          onChange={(e) => setExactAmounts((prev) => ({ ...prev, [uid]: e.target.value }))}
-                          step="0.01"
-                          min="0"
-                          className="input-field w-full px-2 py-1.5 text-sm tabular-nums"
+                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--brand-primary)] py-1 pl-3 text-sm font-bold text-right outline-none transition-colors tabular-nums"
                         />
                       </div>
                     </div>
-                  ))}
-                </div>
-              </Card>
-            )}
+                    
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {members.map(m => {
+                        const sharesThis = item.sharedBy.includes(m.id);
+                        return (
+                          <button
+                            key={`item-${item.id}-${m.id}`}
+                            type="button"
+                            onClick={() => toggleItemSharer(item.id, m.id)}
+                            className={`h-8 px-3 rounded-full text-xs font-bold transition-all ${
+                              sharesThis 
+                                ? "bg-orange-100 text-[var(--brand-primary)] ring-1 ring-orange-200" 
+                                : "bg-gray-100 text-gray-400 hover:bg-gray-200"
+                            }`}
+                          >
+                            {m.name.split(" ")[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </Card>
+              ))}
 
-            {splitMode === "equal" && amountNum > 0 && participants.size > 0 && (
-              <Card padding="sm" style={{ backgroundColor: "var(--paper-dim)" }}>
-                <div className="flex justify-between items-center text-sm">
-                  <span style={{ color: "var(--text-secondary)" }}>Each person pays</span>
-                  <span className="font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
-                    {fmt(amountNum / participants.size)}
-                  </span>
-                </div>
-              </Card>
-            )}
+              <button
+                type="button"
+                onClick={addItem}
+                className="w-full py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 font-semibold text-sm flex items-center justify-center gap-2 hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)] hover:bg-orange-50/50 transition-all"
+              >
+                <Plus size={18} strokeWidth={2.5} />
+                Add specific item
+              </button>
+            </div>
 
-            {error && (
-              <div className="p-3 text-sm rounded-[var(--radius-sm)]" style={{ backgroundColor: "var(--paper-dim)", color: "var(--negative)" }}>
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading || !description.trim() || !amountNum}
-              className="btn-primary w-full py-3 mt-4"
-            >
-              {loading ? "Saving..." : "Add Expense"}
-            </button>
+            {/* Save Button */}
+            <div className="pt-6">
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full btn-primary py-4 rounded-2xl text-lg font-bold shadow-lg shadow-orange-500/25 flex items-center justify-center gap-2"
+              >
+                {loading ? <div className="spinner border-white" style={{ width: 24, height: 24 }} /> : `Save ${fmt(amountNum)}`}
+              </button>
+            </div>
           </form>
         )}
       </main>

@@ -66,6 +66,7 @@ create table if not exists "Expense" (
   split_type      text           not null,                  -- 'equal' | 'exact'
   category        text           null,                      -- [TIER 1 — PLANNED]
   receipt_url     text           null,                      -- [TIER 1 — PLANNED]
+  receipt_data    jsonb          null,                      -- Stores Universal Fairshare itemized data
   is_recurring    boolean        not null default false,    -- [TIER 1 — PLANNED]
   recurrence_rule jsonb          null,                      -- [TIER 1 — PLANNED]
   created_by      uuid           not null references "User"(id),
