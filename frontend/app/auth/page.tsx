@@ -7,6 +7,8 @@ import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/Card";
 import { Link, Zap, Bot, CheckCircle } from "lucide-react";
 
+import Image from "next/image";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export default function AuthPage() {
@@ -45,15 +47,29 @@ export default function AuthPage() {
 
   return (
     <main className="min-h-screen bg-[var(--ink)] flex flex-col items-center justify-center p-6 page-content relative overflow-hidden">
+      {/* Decorative background blur */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[var(--brand-primary)] opacity-10 rounded-full blur-[100px] pointer-events-none" />
+
       <div className="relative z-10 w-full max-w-sm space-y-8">
-        {/* Logo */}
-        <div className="text-center space-y-2">
-          <h1 className="text-[32px] font-bold tracking-tight text-[var(--text-primary)] font-[var(--font-display)]">
-            Spenit
-          </h1>
-          <p className="text-[var(--text-muted)] text-sm font-[var(--font-body)]">
-            Split expenses · Settle with UPI · Zero friction
-          </p>
+        {/* Logo and Brand */}
+        <div className="flex flex-col items-center space-y-4">
+          <div className="relative w-24 h-24 sm:w-28 sm:h-28 drop-shadow-xl bg-white rounded-3xl p-2 shadow-sm border border-black/5">
+            <Image
+              src="/icon-512.png"
+              alt="Spenit Logo"
+              fill
+              className="object-contain p-1"
+              priority
+            />
+          </div>
+          <div className="text-center space-y-1.5">
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[var(--text-primary)] font-[var(--font-display)]">
+              Spenit
+            </h1>
+            <p className="text-[var(--text-muted)] text-sm sm:text-base font-[var(--font-body)] max-w-[250px] mx-auto leading-relaxed">
+              Split expenses effortlessly. Settle with UPI.
+            </p>
+          </div>
         </div>
 
         {/* Feature pills */}

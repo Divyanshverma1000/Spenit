@@ -3,7 +3,6 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 import { PageTransition } from "@/components/ui/PageTransition";
-import SplashScreen from "@/components/ui/SplashScreen";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -51,12 +50,11 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <head>
-        <link rel="apple-touch-icon" href="/Spenit-apple-icon.png" />
+        <link rel="apple-touch-icon" href="/apple-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="min-h-full">
         <Providers>
-          <SplashScreen />
           <PageTransition>
             {children}
           </PageTransition>
