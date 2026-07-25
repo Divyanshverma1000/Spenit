@@ -42,8 +42,10 @@ export default function UniversalExpensePage() {
   const [description, setDescription] = useState("");
   const [totalAmount, setTotalAmount] = useState(searchParams?.get("amount") || "");
   
-  // Payers (Simplifying to single payer for 99% of use cases, but can be expanded later)
+  // Payers
+  const [isMultiPayer, setIsMultiPayer] = useState(false);
   const [payerId, setPayerId] = useState<string>("");
+  const [multiPayers, setMultiPayers] = useState<Record<string, string>>({});
 
   // Shared Pool Participants (Who splits the remainder?)
   const [sharedPoolParticipants, setSharedPoolParticipants] = useState<Set<string>>(new Set());
@@ -63,7 +65,13 @@ export default function UniversalExpensePage() {
       .then((data) => {
         const mems: Member[] = data.members || [];
         setMembers(mems);
-        if (user) setPayerId(user.id);
+        if (user) {
+          setPayerId(user.id);
+          const initialMulti: Record<string, string> = {};
+          mems.forEach(m => initialMulti[m.id] = "");
+          initialMulti[user.id] = searchParams?.get("amount") || "";
+          setMultiPayers(initialMulti);
+        }
         
         // By default, everyone is in the shared pool
         const all = new Set(mems.map((m) => m.id));
@@ -174,6 +182,26 @@ export default function UniversalExpensePage() {
       return;
     }
 
+    let finalPayers = [];
+    if (isMultiPayer) {
+      let sum = 0;
+      for (const [uid, amtStr] of Object.entries(multiPayers)) {
+        const amt = parseFloat(amtStr);
+        if (amt > 0) {
+          sum += amt;
+          finalPayers.push({ userId: uid, amountPaid: amt });
+        }
+      }
+      if (Math.abs(sum - amountNum) > 0.01) {
+        setError(`Total paid (${fmt(sum)}) must equal total amount (${fmt(amountNum)})`);
+        return;
+      }
+      if (finalPayers.length === 0) { setError("Please specify who paid"); return; }
+    } else {
+      if (!payerId) { setError("Select who paid"); return; }
+      finalPayers = [{ userId: payerId, amountPaid: amountNum }];
+    }
+
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/expenses`, {
@@ -188,10 +216,10 @@ export default function UniversalExpensePage() {
           description: description.trim(),
           amount: amountNum,
           currency: "INR",
-          splitType: "exact", // Always exact for Universal Fairshare mathematically
-          payers: [{ userId: payerId, amountPaid: amountNum }],
+          splitType: "exact",
+          payers: finalPayers,
           participants: participantsPayload,
-          receiptData: items.length > 0 ? items : null // Save the items for future reference!
+          receiptData: items.length > 0 ? items : null 
         }),
       });
 
@@ -217,7 +245,7 @@ export default function UniversalExpensePage() {
 
         {membersLoading ? (
           <div className="flex justify-center py-20">
-            <div className="spinner border-[var(--brand-primary)]" />
+            <div className="spinner border-[var(--accent)]" />
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="px-4 space-y-6 mt-4 max-w-md mx-auto">
@@ -240,7 +268,7 @@ export default function UniversalExpensePage() {
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="e.g. Dinner at Cafe"
                     autoFocus
-                    className="w-full bg-gray-50 border-none rounded-xl p-3.5 text-base font-medium text-gray-900 focus:ring-2 focus:ring-[var(--brand-primary)] focus:bg-white transition-all"
+                    className="w-full bg-gray-50 border-none rounded-xl p-3.5 text-base font-medium text-gray-900 focus:ring-2 focus:ring-[var(--accent)] focus:bg-white transition-all"
                   />
                 </div>
 
@@ -257,39 +285,74 @@ export default function UniversalExpensePage() {
                       placeholder="0.00"
                       step="0.01"
                       min="0.01"
-                      className="w-full bg-gray-50 border-none rounded-xl pl-10 pr-4 py-4 text-2xl font-black text-gray-900 focus:ring-2 focus:ring-[var(--brand-primary)] focus:bg-white transition-all font-[var(--font-display)] tracking-tight"
+                      className="w-full bg-gray-50 border-none rounded-xl pl-10 pr-4 py-4 text-2xl font-black text-gray-900 focus:ring-2 focus:ring-[var(--accent)] focus:bg-white transition-all font-[var(--font-display)] tracking-tight"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-                    Paid By
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {members.map((m) => {
-                      const isSelected = payerId === m.id;
-                      return (
-                        <button
-                          key={`payer-${m.id}`}
-                          type="button"
-                          onClick={() => setPayerId(m.id)}
-                          className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all border ${
-                            isSelected
-                              ? "bg-[var(--brand-primary)] text-white border-[var(--brand-primary)] shadow-md shadow-orange-500/20"
-                              : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-                          }`}
-                        >
-                          <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                            isSelected ? "bg-white text-[var(--brand-primary)]" : "bg-gray-100 text-gray-500"
-                          }`}>
-                            {m.name.charAt(0).toUpperCase()}
-                          </span>
-                          {m.id === user?.id ? "You" : m.name}
-                        </button>
-                      );
-                    })}
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                      Paid By
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsMultiPayer(!isMultiPayer)}
+                      className="text-xs font-bold text-[var(--accent)] hover:underline"
+                    >
+                      {isMultiPayer ? "Single Payer" : "Multiple Payers"}
+                    </button>
                   </div>
+                  
+                  {!isMultiPayer ? (
+                    <div className="flex flex-wrap gap-2">
+                      {members.map((m) => {
+                        const isSelected = payerId === m.id;
+                        return (
+                          <button
+                            key={`payer-${m.id}`}
+                            type="button"
+                            onClick={() => setPayerId(m.id)}
+                            className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all border ${
+                              isSelected
+                                ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-md shadow-orange-500/20"
+                                : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                              isSelected ? "bg-white text-[var(--accent)]" : "bg-gray-100 text-gray-500"
+                            }`}>
+                              {m.name.charAt(0).toUpperCase()}
+                            </span>
+                            {m.id === user?.id ? "You" : m.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-3 mt-3">
+                      {members.map((m) => (
+                        <div key={`mpayer-${m.id}`} className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 flex-1">
+                            <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-gray-100 text-gray-500">
+                              {m.name.charAt(0).toUpperCase()}
+                            </span>
+                            <span className="text-sm font-semibold text-gray-900">{m.id === user?.id ? "You" : m.name}</span>
+                          </div>
+                          <div className="w-28 relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-gray-400">₹</span>
+                            <input
+                              type="number"
+                              value={multiPayers[m.id]}
+                              onChange={(e) => setMultiPayers({ ...multiPayers, [m.id]: e.target.value })}
+                              placeholder="0.00"
+                              className="w-full bg-gray-50 border-none rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-gray-900 focus:ring-2 focus:ring-[var(--accent)] focus:bg-white outline-none tabular-nums"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -301,7 +364,7 @@ export default function UniversalExpensePage() {
                   Split Among
                 </label>
                 {sharedPool > 0 && (
-                  <span className="text-xs font-bold text-[var(--brand-primary)] bg-orange-50 px-2 py-1 rounded-md">
+                  <span className="text-xs font-bold text-[var(--accent)] bg-orange-50 px-2 py-1 rounded-md">
                     {fmt(sharedPool)} remaining
                   </span>
                 )}
@@ -318,7 +381,7 @@ export default function UniversalExpensePage() {
                     >
                       <div className="flex items-center gap-3">
                         <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
-                          isChecked ? "bg-[var(--brand-primary)] border-[var(--brand-primary)]" : "bg-white border-gray-300"
+                          isChecked ? "bg-[var(--accent)] border-[var(--accent)]" : "bg-white border-gray-300"
                         }`}>
                           {isChecked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                         </div>
@@ -341,7 +404,7 @@ export default function UniversalExpensePage() {
               </div>
 
               {items.map((item, idx) => (
-                <Card key={item.id} padding="md" className="shadow-sm border-gray-100 border-l-4 border-l-[var(--brand-primary)] relative overflow-hidden group">
+                <Card key={item.id} padding="md" className="shadow-sm border-gray-100 border-l-4 border-l-[var(--accent)] relative overflow-hidden group">
                   <button 
                     type="button" 
                     onClick={() => removeItem(item.id)}
@@ -358,7 +421,7 @@ export default function UniversalExpensePage() {
                           value={item.label}
                           onChange={(e) => updateItem(item.id, "label", e.target.value)}
                           placeholder="Item name (e.g. Wine)"
-                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--brand-primary)] py-1 text-sm font-medium outline-none transition-colors"
+                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--accent)] py-1 text-sm font-medium outline-none transition-colors"
                         />
                       </div>
                       <div className="w-24 relative">
@@ -368,7 +431,7 @@ export default function UniversalExpensePage() {
                           value={item.amount}
                           onChange={(e) => updateItem(item.id, "amount", e.target.value)}
                           placeholder="0.00"
-                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--brand-primary)] py-1 pl-3 text-sm font-bold text-right outline-none transition-colors tabular-nums"
+                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--accent)] py-1 pl-3 text-sm font-bold text-right outline-none transition-colors tabular-nums"
                         />
                       </div>
                     </div>
@@ -383,7 +446,7 @@ export default function UniversalExpensePage() {
                             onClick={() => toggleItemSharer(item.id, m.id)}
                             className={`h-8 px-3 rounded-full text-xs font-bold transition-all ${
                               sharesThis 
-                                ? "bg-orange-100 text-[var(--brand-primary)] ring-1 ring-orange-200" 
+                                ? "bg-orange-100 text-[var(--accent)] ring-1 ring-orange-200" 
                                 : "bg-gray-100 text-gray-400 hover:bg-gray-200"
                             }`}
                           >
@@ -399,7 +462,7 @@ export default function UniversalExpensePage() {
               <button
                 type="button"
                 onClick={addItem}
-                className="w-full py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 font-semibold text-sm flex items-center justify-center gap-2 hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)] hover:bg-orange-50/50 transition-all"
+                className="w-full py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 font-semibold text-sm flex items-center justify-center gap-2 hover:border-[var(--accent)] hover:text-[var(--accent)] hover:bg-orange-50/50 transition-all"
               >
                 <Plus size={18} strokeWidth={2.5} />
                 Add specific item

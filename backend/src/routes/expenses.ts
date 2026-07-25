@@ -341,9 +341,9 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
 
   // Fetch expenses with payers and splits in a single query set
   const expenses = await pool.query(
-    `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data,
-            e.created_by, e.created_at,
-            u.name AS created_by_name, u.username AS created_by_username
+      `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data, e.category,
+              e.created_by, e.created_at,
+              u.name AS created_by_name, u.username AS created_by_username
      FROM "Expense" e
      JOIN "User" u ON u.id = e.created_by
      WHERE e.group_id = $1 AND e.deleted_at IS NULL
@@ -393,6 +393,8 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
       amount: e.amount,
       currency: e.currency,
       splitType: e.split_type,
+      category: e.category,
+      receiptData: e.receipt_data,
       createdBy: { id: e.created_by, name: e.created_by_name, username: e.created_by_username },
       createdAt: e.created_at,
       payers: (payersByExpense[e.id] || []).map((p) => ({

@@ -12,7 +12,7 @@ function issueAccessToken(userId: string, username: string): string {
   return jwt.sign(
     { userId, username },
     process.env.JWT_ACCESS_SECRET as string,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m" } as any
+    { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "7d" } as any
   );
 }
 

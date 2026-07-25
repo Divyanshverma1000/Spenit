@@ -28,6 +28,7 @@ import { SectionLabel } from "@/components/ui/SectionLabel";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
+import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -44,6 +45,8 @@ interface Expense {
   id: string; description: string; amount: string; currency: string;
   splitType: string; createdAt: string; payers: Payer[]; splits: Split[];
   category?: string;
+  receiptData?: any;
+  createdBy: { id: string; name: string; username: string; };
 }
 interface GroupDetail {
   id: string; name: string; icon: string | null; inviteToken: string;
@@ -61,6 +64,7 @@ export default function GroupDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
 
   const [aiQuery, setAiQuery] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -345,7 +349,12 @@ export default function GroupDetailPage() {
             <Card padding="none">
               <div className="flex flex-col">
                 {filteredExpenses.map((exp, i) => (
-                  <div key={exp.id} className="p-3 flex items-start gap-3" style={{ borderBottom: i < filteredExpenses.length - 1 ? "1px solid var(--border)" : "none" }}>
+                  <button 
+                    key={exp.id} 
+                    onClick={() => setSelectedExpense(exp)}
+                    className="w-full text-left p-3 flex items-start gap-3 hover:bg-[var(--paper-dim)] transition-colors active:bg-[var(--border)]" 
+                    style={{ borderBottom: i < filteredExpenses.length - 1 ? "1px solid var(--border)" : "none" }}
+                  >
                     <div className="mt-0.5 flex-shrink-0">
                       <CategoryIcon category={exp.category ?? null} />
                     </div>
@@ -362,7 +371,7 @@ export default function GroupDetailPage() {
                             <span
                               key={s.userId}
                               className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)]"
-                              style={{ backgroundColor: "var(--paper-dim)", color: "var(--text-secondary)" }}
+                              style={{ backgroundColor: "var(--paper)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
                             >
                               {s.name} ₹{parseFloat(s.shareAmount).toFixed(0)}
                             </span>
@@ -372,17 +381,8 @@ export default function GroupDetailPage() {
                     </div>
                     <div className="flex flex-col items-end gap-2 flex-shrink-0">
                       <BalanceAmount amount={exp.amount} direction="settled" variant="compact" />
-                      <button
-                        onClick={() => deleteExpense(exp.id)}
-                        disabled={deletingId === exp.id}
-                        className="p-1 transition-colors disabled:opacity-30"
-                        style={{ color: "var(--text-muted)" }}
-                        aria-label="Delete expense"
-                      >
-                        <Trash2 className="h-4 w-4" strokeWidth={1.5} />
-                      </button>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </Card>
@@ -426,6 +426,20 @@ export default function GroupDetailPage() {
           </Card>
         </div>
       </main>
+
+      {selectedExpense && (
+        <ExpenseDetailModal
+          expense={selectedExpense}
+          currentUserId={user?.id}
+          onClose={() => setSelectedExpense(null)}
+          onDelete={async (id) => {
+            await deleteExpense(id);
+            setSelectedExpense(null);
+          }}
+          isDeleting={deletingId === selectedExpense.id}
+        />
+      )}
+
       <BottomNav />
     </>
   );
