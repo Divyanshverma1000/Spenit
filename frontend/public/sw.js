@@ -39,8 +39,8 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "Spenit";
   const options = {
     body: payload.body || "",
-    icon: payload.icon || "/icon-192.png",
-    badge: "/icon-192.png",
+    icon: payload.icon || "/Spenit-icon-192.png",
+    badge: "/Spenit-icon-192.png",
     tag: payload.tag || "spenit",
     data: { url: payload.url || "/dashboard" },
     requireInteraction: false,

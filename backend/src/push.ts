@@ -72,7 +72,7 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
     title: payload.title,
     body: payload.body,
     url: payload.url || "/dashboard",
-    icon: payload.icon || "/icon-192.png",
+    icon: payload.icon || "/Spenit-icon-192.png",
     tag: payload.tag,
   });
 

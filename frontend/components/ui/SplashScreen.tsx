@@ -32,7 +32,7 @@ export default function SplashScreen() {
             className="relative w-48 h-48 sm:w-64 sm:h-64 drop-shadow-2xl"
           >
             <Image
-              src="/icon-512.png"
+              src="/Spenit-icon-512.png"
               alt="Spenit Logo"
               fill
               className="object-contain"

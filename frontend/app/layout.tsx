@@ -51,7 +51,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <head>
-        <link rel="apple-touch-icon" href="/apple-icon.png" />
+        <link rel="apple-touch-icon" href="/Spenit-apple-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="min-h-full">

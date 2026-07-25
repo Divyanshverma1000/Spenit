@@ -236,7 +236,7 @@ rewrite types/constraints).
 - `components/PushPromptBanner.tsx` — three modes: iOS-not-installed (install instructions), denied (browser settings), prompt (Enable button) ✅
 - Prompt placement: group detail page (after data loads, only if expenses.length > 0 and permission === 'default'), settle-up page (when actively managing money) — NOT on first page load ✅
 - Profile page — Notifications section: enable/disable toggle, iOS guidance inline, current status shown ✅
-- App icon `icon-192.png` generated and copied to `/public` (fixes 404 in notification badge and manifest) ✅
+- App icon `Spenit-icon-192.png` generated and copied to `/public` (fixes 404 in notification badge and manifest) ✅
 
 **Definition of Done:**
 - [x] A user receives a push notification when another group member adds an expense (💸 New expense added)
@@ -572,7 +572,7 @@ the end of that session, following the template below.)*
 - `components/PushPromptBanner.tsx`: three rendered states (iOS not installed, denied, prompt). Amber warning with step-by-step iOS install instructions. Dismissible, persists dismissal in `localStorage`.
 - Push prompt injected into group detail page (shows when expenses.length > 0 and permission not yet decided) and settle-up page.
 - Profile page: Notifications card with enable/disable toggle, status display, iOS guidance.
-- `public/icon-192.png` and `icon-512.png` generated and placed (fixes 404 in manifest, notification badge, and browser tab).
+- `public/Spenit-icon-192.png` and `Spenit-icon-512.png` generated and placed (fixes 404 in manifest, notification badge, and browser tab).
 
 **Deviations / Decisions:**
 - **No smart/contextual reminders**: explicitly NOT built per ProductDetailIDEA.md §6 and ProgressTracker Tier 1 cut list.
