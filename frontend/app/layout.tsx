@@ -59,6 +59,17 @@ export default function RootLayout({
             {children}
           </PageTransition>
         </Providers>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js', { scope: '/' });
+                });
+              }
+            `,
+          }}
+        />
       </body>
     </html>
   );

@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Plus, Users, ChevronRight } from "lucide-react";
+import { GroupCard } from "@/components/ui/GroupCard";
+import { Plus, Search } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -27,6 +26,7 @@ export default function GroupsPage() {
   const { accessToken } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
 
   function loadGroups() {
     if (!accessToken) return;
@@ -48,22 +48,39 @@ export default function GroupsPage() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [accessToken]); // eslint-disable-line
 
+  const filteredGroups = useMemo(() => {
+    return groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [groups, searchQuery]);
+
   if (!authed) return null;
 
   return (
     <>
       <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb">
-        <PageHeader
-          title="Groups"
-          rightAction={
-            <Link href="/groups/new" className="btn-primary flex items-center gap-1.5 px-4 py-2">
-              <Plus size={16} strokeWidth={1.5} />
-              <span>New</span>
+        {/* ── Sticky Premium Header ────────────────────────────────────────── */}
+        <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-6 pt-14 pb-4 border-b border-[rgba(0,0,0,0.03)]">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
+              Groups
+            </h1>
+            <Link href="/groups/new" className="h-10 w-10 bg-[var(--accent)] text-white rounded-full flex items-center justify-center shadow-[0_4px_14px_rgba(245,158,11,0.3)] hover:scale-105 transition-transform">
+              <Plus size={20} strokeWidth={2.5} />
             </Link>
-          }
-        />
+          </div>
+          
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
+            <input 
+              type="text"
+              placeholder="Search groups..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-white rounded-xl pl-10 pr-4 py-3 text-[15px] font-medium text-[var(--text-primary)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] transition-shadow placeholder:text-[var(--text-muted)]"
+            />
+          </div>
+        </div>
 
-        <div className="px-5 mt-4">
+        <div className="px-5 mt-6">
           {loading ? (
             <div className="flex justify-center py-20">
               <div className="spinner" />
@@ -79,20 +96,19 @@ export default function GroupsPage() {
               }}
             />
           ) : (
-            <Card padding="none">
-              <motion.div 
-                className="divide-y divide-[var(--border)]"
-                initial="hidden"
-                animate="show"
-                variants={{
-                  hidden: { opacity: 0 },
-                  show: {
-                    opacity: 1,
-                    transition: { staggerChildren: 0.05 }
-                  }
-                }}
-              >
-                {groups.map((group) => (
+            <motion.div 
+              className="flex flex-col gap-4"
+              initial="hidden"
+              animate="show"
+              variants={{
+                hidden: { opacity: 0 },
+                show: { opacity: 1, transition: { staggerChildren: 0.05 } }
+              }}
+            >
+              {filteredGroups.length === 0 ? (
+                <div className="py-12 text-center text-[var(--text-secondary)] font-medium">No groups match your search.</div>
+              ) : (
+                filteredGroups.map((group) => (
                   <motion.div
                     key={group.id}
                     variants={{
@@ -100,29 +116,17 @@ export default function GroupsPage() {
                       show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
                     }}
                   >
-                    <Link
-                      href={`/groups/${group.id}`}
-                      className="flex items-center gap-4 p-4 hover:bg-[var(--paper-dim)] transition-colors active:scale-[0.98]"
-                    >
-                      <div className="h-10 w-10 rounded-[var(--radius-sm)] bg-[var(--paper-dim)] flex items-center justify-center flex-shrink-0 text-[var(--accent)] font-medium">
-                        {group.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-[var(--text-primary)] truncate">{group.name}</p>
-                        <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                          {group.memberCount} member{group.memberCount !== 1 ? "s" : ""}
-                          {" · "}
-                          <span className={group.myRole === "admin" ? "text-[var(--accent)] font-medium" : "text-[var(--text-muted)]"}>
-                            {group.myRole === "admin" ? "Admin" : "Member"}
-                          </span>
-                        </p>
-                      </div>
-                      <ChevronRight size={20} strokeWidth={1.5} className="text-[var(--text-muted)] flex-shrink-0" />
-                    </Link>
+                    <GroupCard
+                      id={group.id}
+                      name={group.name}
+                      memberCount={group.memberCount}
+                      members={[]} // Handled by fallback inside GroupCard
+                      lastActivity={new Date(group.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                    />
                   </motion.div>
-                ))}
-              </motion.div>
-            </Card>
+                ))
+              )}
+            </motion.div>
           )}
         </div>
       </main>

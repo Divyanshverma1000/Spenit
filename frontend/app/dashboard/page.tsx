@@ -2,14 +2,16 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
-import { Card } from "@/components/ui/Card";
 import { BalanceAmount } from "@/components/ui/BalanceAmount";
-import { SectionLabel } from "@/components/ui/SectionLabel";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Plus, Users, ChevronRight, TrendingUp, TrendingDown, Check } from "lucide-react";
+import { QuickActions } from "@/components/ui/QuickActions";
+import { SettingsList } from "@/components/ui/SettingsList";
+import { SettingsRow } from "@/components/ui/SettingsRow";
+import { Plus, Users, TrendingUp, TrendingDown, Check } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -41,16 +43,11 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, [accessToken]);
 
-  // Initial load
   useEffect(() => { loadBalance(); }, [loadBalance]);
-
-  // 30s polling — dashboard balance stays live
   useEffect(() => {
     const interval = setInterval(loadBalance, 30_000);
     return () => clearInterval(interval);
   }, [loadBalance]);
-
-  // Refresh on tab focus
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === "visible") loadBalance(); };
     document.addEventListener("visibilitychange", onVisible);
@@ -60,122 +57,106 @@ export default function DashboardPage() {
   if (!authed) return null;
 
   const direction = balance?.direction ?? "settled";
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
 
   return (
     <>
       <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb">
-        {/* Header */}
-        <div className="px-5 pt-14 pb-4">
-          <h1 className="text-[14px] font-[var(--font-body)] text-[var(--text-muted)]">
-            Hi, {user?.name?.split(" ")[0] || "there"}
+        
+        {/* ── Greeting Header ──────────────────────────────────────────────── */}
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="px-6 pt-16 pb-6"
+        >
+          <h2 className="text-[14px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
+            {today}
+          </h2>
+          <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
+            Hello, {user?.name?.split(" ")[0] || "there"}
           </h1>
-        </div>
+        </motion.div>
 
         {/* ── Hero balance card ──────────────────────────────────────────────── */}
-        <div className="px-5 mb-5">
-          <Card 
-            accentEdge={direction === "owed" ? "positive" : direction === "owes" ? "negative" : "none"}
-            padding="lg"
-            className="balance-reveal"
+        <div className="px-5 mb-8">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.1, duration: 0.4, type: "spring", bounce: 0.4 }}
+            className={`bg-white rounded-[24px] p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] relative overflow-hidden ${
+              direction === "owed" ? "border-l-4 border-l-[var(--positive)]" : 
+              direction === "owes" ? "border-l-4 border-l-[var(--negative)]" : 
+              ""
+            }`}
           >
-            <SectionLabel>YOUR OVERALL BALANCE</SectionLabel>
+            <h3 className="text-[13px] font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-4">Total Balance</h3>
 
             {loading ? (
-              <div className="flex items-center gap-3 py-2">
-                <div className="spinner w-5 h-5" />
-                <span className="text-[var(--text-secondary)] text-sm font-[var(--font-body)]">Calculating...</span>
+              <div className="flex items-center gap-3 py-4">
+                <div className="spinner-sm" />
+                <span className="text-[var(--text-secondary)] text-[15px] font-medium">Calculating...</span>
               </div>
             ) : (
               <>
-                <div className="mb-2">
+                <div className="mb-3">
                   <BalanceAmount 
                     variant="hero" 
                     direction={direction} 
                     amount={balance?.netAmount || "0"} 
                   />
                 </div>
-                <div className="flex items-center gap-1.5 mt-1">
+                <div className="flex items-center gap-1.5 inline-flex px-3 py-1.5 rounded-full bg-[var(--ink)]">
                   {direction === "owed" && <TrendingUp size={14} className="text-[var(--positive)]" />}
                   {direction === "owes" && <TrendingDown size={14} className="text-[var(--negative)]" />}
-                  <p className={`text-[13px] font-[var(--font-body)] ${
+                  <span className={`text-[13px] font-semibold ${
                     direction === "owed" ? "text-[var(--positive)]" : 
                     direction === "owes" ? "text-[var(--negative)]" : 
                     "text-[var(--text-secondary)]"
                   }`}>
-                    {direction === "owed"
-                      ? "You are owed across all groups"
-                      : direction === "owes"
-                        ? "You owe across all groups"
-                        : "All settled"}
-                  </p>
+                    {direction === "owed" ? "You are owed" : direction === "owes" ? "You owe" : "All settled"}
+                  </span>
                 </div>
               </>
             )}
-          </Card>
+          </motion.div>
         </div>
 
         {/* ── Quick actions ─────────────────────────────────────────────────── */}
-        <div className="px-5 mb-6">
-          <div className="grid grid-cols-2 gap-[12px]">
-            <Link href="/groups/new" className="block outline-none">
-              <Card padding="md" className="hover:bg-[var(--paper-dim)] transition-colors h-full flex flex-col justify-center gap-2">
-                <Plus size={20} className="text-[var(--text-primary)]" />
-                <span className="text-[14px] font-semibold font-[var(--font-body)] text-[var(--text-primary)]">New Group</span>
-              </Card>
-            </Link>
-            <Link href="/groups" className="block outline-none">
-              <Card padding="md" className="hover:bg-[var(--paper-dim)] transition-colors h-full flex flex-col justify-center gap-2">
-                <div className="flex justify-between items-center w-full">
-                  <Users size={20} className="text-[var(--text-primary)]" />
-                  <ChevronRight size={16} className="text-[var(--text-muted)]" />
-                </div>
-                <span className="text-[14px] font-semibold font-[var(--font-body)] text-[var(--text-primary)]">All Groups</span>
-              </Card>
-            </Link>
-          </div>
+        <div className="px-5 mb-10">
+          <QuickActions 
+            actions={[
+              { label: "New Group", icon: <Plus size={22} />, href: "/groups/new", accent: true },
+              { label: "All Groups", icon: <Users size={22} />, href: "/groups" }
+            ]}
+          />
         </div>
 
-        {/* ── Per-group breakdown ───────────────────────────────────────────── */}
+        {/* ── Per-group breakdown (iOS Settings style) ──────────────────────── */}
         {balance && balance.breakdown.length > 0 && (
           <div className="px-5">
-            <SectionLabel>By Group</SectionLabel>
-            <Card padding="none" className="overflow-hidden">
-              <div className="flex flex-col">
-                {balance.breakdown.map((g, idx) => (
-                  <Link 
-                    key={g.groupId} 
-                    href={`/groups/${g.groupId}`}
-                    className={`flex items-center gap-3 p-4 hover:bg-[var(--paper-dim)] transition-colors ${
-                      idx !== balance.breakdown.length - 1 ? "border-b border-[var(--border)]" : ""
-                    }`}
-                  >
-                    <div className="h-[36px] w-[36px] rounded-[var(--radius-sm)] bg-[var(--paper-dim)] text-[var(--accent)] flex items-center justify-center text-[16px] font-semibold flex-shrink-0 font-[var(--font-body)]">
+            <SettingsList title="By Group">
+              {balance.breakdown.map((g) => (
+                <SettingsRow 
+                  key={g.groupId}
+                  href={`/groups/${g.groupId}`}
+                  icon={
+                    <div className="h-8 w-8 rounded-full bg-[var(--paper-dim)] text-[var(--accent)] flex items-center justify-center text-[12px] font-bold">
                       {g.groupName.charAt(0).toUpperCase()}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[14px] font-semibold text-[var(--text-primary)] truncate font-[var(--font-body)]">
-                        {g.groupName}
-                      </p>
-                      <p className="text-[12px] text-[var(--text-secondary)] font-[var(--font-body)]">
-                        {g.direction === "settled" ? "Settled" : g.direction === "owed" ? "You are owed" : "You owe"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {g.direction !== "settled" ? (
-                        <BalanceAmount 
-                          variant="default" 
-                          direction={g.direction} 
-                          amount={g.netAmount} 
-                        />
-                      ) : (
-                        <Check size={16} className="text-[var(--positive)]" />
-                      )}
-                      <ChevronRight size={16} className="text-[var(--text-muted)]" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </Card>
+                  }
+                  label={g.groupName}
+                  value={
+                    g.direction === "settled" ? (
+                      <span className="text-[var(--positive)] flex items-center gap-1">
+                        <Check size={14} /> Settled
+                      </span>
+                    ) : (
+                      <BalanceAmount variant="compact" direction={g.direction} amount={g.netAmount} />
+                    )
+                  }
+                />
+              ))}
+            </SettingsList>
           </div>
         )}
 

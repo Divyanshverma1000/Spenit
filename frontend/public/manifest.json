@@ -2,6 +2,7 @@
   "name": "Spenit",
   "short_name": "Spenit",
   "description": "Split expenses effortlessly. Share a link. Settle with UPI.",
+  "id": "/",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#F9FAFB",

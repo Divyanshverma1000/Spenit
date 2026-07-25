@@ -76,3 +76,9 @@ self.addEventListener("notificationclick", (event) => {
       })
   );
 });
+
+// ── Fetch event: Required for PWA Installability in Chrome ────────────────────
+self.addEventListener("fetch", (event) => {
+  // We just let the browser handle the fetch normally (no offline caching yet)
+  // But this dummy fetch handler satisfies Chrome's PWA install requirements.
+});
