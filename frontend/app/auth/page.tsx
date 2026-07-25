@@ -20,7 +20,7 @@ export default function AuthPage() {
   if (initializing) {
     return (
       <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
-        <div className="spinner" />
+        <div className="spinner border-[var(--accent)]" />
       </div>
     );
   }
@@ -65,7 +65,7 @@ export default function AuthPage() {
         <div className="text-left space-y-3 px-2">
           <h1 className="text-4xl sm:text-5xl font-[var(--font-display)] font-extrabold tracking-tight text-[#111827] leading-[1.1]">
             Split expenses effortlessly.<br/>
-            <span className="text-[var(--brand-primary)]">Settle with ease.</span>
+            <span className="text-[var(--accent)]">Settle with ease.</span>
           </h1>
           <p className="text-[#6B7280] text-[15px] sm:text-base font-[var(--font-body)] leading-relaxed max-w-[320px]">
             Track shared expenses, simplify settlements, and stay on top of every group, every time.
@@ -88,7 +88,7 @@ export default function AuthPage() {
           {/* Feature 1 */}
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0 w-12 h-12 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center">
-              <Link className="text-[var(--brand-primary)]" size={24} strokeWidth={2} />
+              <Link className="text-[var(--accent)]" size={24} strokeWidth={2} />
             </div>
             <div className="flex flex-col pt-1">
               <h3 className="text-[#111827] font-bold text-base">Share in seconds</h3>
@@ -99,7 +99,7 @@ export default function AuthPage() {
           {/* Feature 2 */}
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0 w-12 h-12 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center">
-              <Sparkles className="text-[var(--brand-primary)]" size={24} strokeWidth={2} />
+              <Sparkles className="text-[var(--accent)]" size={24} strokeWidth={2} />
             </div>
             <div className="flex flex-col pt-1">
               <h3 className="text-[#111827] font-bold text-base">AI makes it easy</h3>
@@ -110,7 +110,7 @@ export default function AuthPage() {
           {/* Feature 3 */}
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0 w-12 h-12 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center">
-              <ShieldCheck className="text-[var(--brand-primary)]" size={24} strokeWidth={2} />
+              <ShieldCheck className="text-[var(--accent)]" size={24} strokeWidth={2} />
             </div>
             <div className="flex flex-col pt-1">
               <h3 className="text-[#111827] font-bold text-base">Secure & private</h3>
@@ -121,7 +121,7 @@ export default function AuthPage() {
 
         {/* Pagination Dots (Decorative) */}
         <div className="flex justify-center items-center gap-2 py-4">
-          <div className="w-2.5 h-2.5 rounded-full bg-[var(--brand-primary)]"></div>
+          <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent)]"></div>
           <div className="w-2.5 h-2.5 rounded-full bg-gray-200"></div>
           <div className="w-2.5 h-2.5 rounded-full bg-gray-200"></div>
         </div>
@@ -132,7 +132,7 @@ export default function AuthPage() {
         <div className="w-full max-w-md flex flex-col items-center space-y-4">
           <div className="w-full overflow-hidden rounded-2xl relative shadow-xl shadow-orange-500/20 group hover:shadow-orange-500/30 transition-shadow">
             {/* We overlay the invisible GoogleLogin button over a custom beautiful button to match the mockup perfectly */}
-            <div className="absolute inset-0 z-10 opacity-0 cursor-pointer">
+            <div className="absolute inset-0 z-10 cursor-pointer" style={{ opacity: 0.01 }}>
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
                 onError={() => console.error("Google sign-in failed")}
@@ -142,7 +142,7 @@ export default function AuthPage() {
                 width="1000" // Make it very wide so it covers our custom button
               />
             </div>
-            <div className="w-full bg-[var(--brand-primary)] hover:bg-[#E67E22] transition-colors text-white font-semibold text-lg py-4 flex items-center justify-center gap-3">
+            <div className="w-full bg-[var(--accent)] hover:bg-[#E67E22] transition-colors text-white font-semibold text-lg py-4 flex items-center justify-center gap-3">
               <svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#FFFFFF" />
                 <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#FFFFFF" />
