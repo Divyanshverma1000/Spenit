@@ -50,38 +50,32 @@ export default function AuthPage() {
       {/* Decorative background blur */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[var(--brand-primary)] opacity-10 rounded-full blur-[100px] pointer-events-none" />
 
-      <div className="relative z-10 w-full max-w-sm space-y-8">
-        {/* Logo and Brand */}
-        <div className="flex flex-col items-center space-y-4">
-          <div className="relative w-24 h-24 sm:w-28 sm:h-28 drop-shadow-xl bg-white rounded-3xl p-2 shadow-sm border border-black/5">
+      <div className="relative z-10 w-full max-w-sm flex flex-col justify-center min-h-[80vh] space-y-10">
+        {/* Premium Text Logo Integration */}
+        <div className="flex flex-col items-center space-y-4 pt-8">
+          <div className="relative w-56 h-20 sm:w-64 sm:h-24 drop-shadow-lg">
             <Image
-              src="/icon-512.png"
+              src="/Spenit-logo-withText.png"
               alt="Spenit Logo"
               fill
-              className="object-contain p-1"
+              className="object-contain"
               priority
             />
           </div>
-          <div className="text-center space-y-1.5">
-            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[var(--text-primary)] font-[var(--font-display)]">
-              Spenit
-            </h1>
-            <p className="text-[var(--text-muted)] text-sm sm:text-base font-[var(--font-body)] max-w-[250px] mx-auto leading-relaxed">
-              Split expenses effortlessly. Settle with UPI.
-            </p>
-          </div>
+          <p className="text-[var(--text-muted)] text-sm sm:text-base font-[var(--font-body)] max-w-[250px] mx-auto text-center leading-relaxed">
+            Split expenses effortlessly. Settle with UPI.
+          </p>
         </div>
 
-        {/* Feature pills */}
-        <div className="flex flex-wrap justify-center gap-2">
+        {/* Minimal Feature Pills */}
+        <div className="flex flex-wrap justify-center gap-2 px-4">
           {[
-            { label: "Share a link", icon: Link },
-            { label: "Instant splits", icon: Zap },
+            { label: "Share link", icon: Link },
             { label: "AI entry", icon: Bot },
             { label: "UPI settle", icon: CheckCircle }
           ].map((f) => (
-            <span key={f.label} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] border border-[var(--border)] bg-[var(--paper)] rounded-[var(--radius-sm)] px-3 py-1.5">
-              <f.icon size={14} strokeWidth={1.5} />
+            <span key={f.label} className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)] border border-[var(--border)] bg-[var(--surface)]/50 backdrop-blur-sm rounded-full px-3.5 py-1.5 shadow-sm">
+              <f.icon size={13} strokeWidth={2} className="text-[var(--brand-primary)]" />
               {f.label}
             </span>
           ))}
