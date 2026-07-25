@@ -78,42 +78,42 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* ── Hero balance card ──────────────────────────────────────────────── */}
-        <div className="px-5 mb-8">
+        <div className="px-5 mb-6">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.1, duration: 0.4, type: "spring", bounce: 0.4 }}
-            className={`bg-white rounded-[24px] p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] relative overflow-hidden ${
+            className={`bg-white rounded-[24px] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] relative overflow-hidden flex flex-col gap-2 ${
               direction === "owed" ? "border-l-4 border-l-[var(--positive)]" : 
               direction === "owes" ? "border-l-4 border-l-[var(--negative)]" : 
               ""
             }`}
           >
-            <h3 className="text-[13px] font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-4">Total Balance</h3>
+            <h3 className="text-[12px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Overall Balance</h3>
 
             {loading ? (
-              <div className="flex items-center gap-3 py-4">
+              <div className="flex items-center gap-3 py-2">
                 <div className="spinner-sm" />
-                <span className="text-[var(--text-secondary)] text-[15px] font-medium">Calculating...</span>
+                <span className="text-[var(--text-secondary)] text-[14px] font-medium">Calculating...</span>
               </div>
             ) : (
               <>
-                <div className="mb-3">
+                <div>
                   <BalanceAmount 
                     variant="hero" 
                     direction={direction} 
                     amount={balance?.netAmount || "0"} 
                   />
                 </div>
-                <div className="flex items-center gap-1.5 inline-flex px-3 py-1.5 rounded-full bg-[var(--ink)]">
+                <div className="flex items-center gap-1.5 inline-flex px-3 py-1.5 rounded-[12px] bg-[var(--ink)] self-start mt-1">
                   {direction === "owed" && <TrendingUp size={14} className="text-[var(--positive)]" />}
                   {direction === "owes" && <TrendingDown size={14} className="text-[var(--negative)]" />}
-                  <span className={`text-[13px] font-semibold ${
+                  <span className={`text-[12px] font-semibold ${
                     direction === "owed" ? "text-[var(--positive)]" : 
                     direction === "owes" ? "text-[var(--negative)]" : 
                     "text-[var(--text-secondary)]"
                   }`}>
-                    {direction === "owed" ? "You are owed" : direction === "owes" ? "You owe" : "All settled"}
+                    {direction === "owed" ? `You are owed across ${balance?.breakdown.length || 0} groups` : direction === "owes" ? `You owe across ${balance?.breakdown.length || 0} groups` : "All settled up"}
                   </span>
                 </div>
               </>
@@ -122,11 +122,13 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Quick actions ─────────────────────────────────────────────────── */}
-        <div className="px-5 mb-10">
+        <div className="px-5 mb-8">
           <QuickActions 
             actions={[
-              { label: "New Group", icon: <Plus size={22} />, href: "/groups/new", accent: true },
-              { label: "All Groups", icon: <Users size={22} />, href: "/groups" }
+              { label: "New Group", icon: <Plus size={20} />, href: "/groups/new", accent: true },
+              { label: "Scan Receipt", icon: <Users size={20} />, onClick: () => alert("Scan Receipt coming soon") },
+              { label: "AI Expense", icon: <TrendingUp size={20} />, href: "/groups" },
+              { label: "Join Group", icon: <Check size={20} />, href: "/groups" }
             ]}
           />
         </div>

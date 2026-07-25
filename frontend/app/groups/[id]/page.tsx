@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { QRCodeSVG } from "qrcode.react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
+  ChevronLeft,
+  MoreVertical,
   RefreshCw,
   Scale,
   ArrowRightLeft,
@@ -14,40 +17,25 @@ import {
   Check,
   Sparkles,
   X,
-  Plus,
-  Trash2,
   ShieldCheck
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import PushPromptBanner from "@/components/PushPromptBanner";
-import { Card } from "@/components/ui/Card";
 import { BalanceAmount } from "@/components/ui/BalanceAmount";
 import { SectionLabel } from "@/components/ui/SectionLabel";
-import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { CategoryIcon } from "@/components/ui/CategoryIcon";
 import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
+import { SummaryGrid } from "@/components/ui/SummaryGrid";
+import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface Member {
   id: string; name: string; username: string; avatarUrl: string | null; role: string;
 }
-interface Payer {
-  userId: string; name: string; amountPaid: string;
-}
-interface Split {
-  userId: string; name: string; shareAmount: string;
-}
-interface Expense {
-  id: string; description: string; amount: string; currency: string;
-  splitType: string; createdAt: string; payers: Payer[]; splits: Split[];
-  category?: string;
-  receiptData?: any;
-  createdBy: { id: string; name: string; username: string; };
-}
+
 interface GroupDetail {
   id: string; name: string; icon: string | null; inviteToken: string;
   createdBy: string; myRole: string; members: Member[];
@@ -58,6 +46,7 @@ export default function GroupDetailPage() {
   const authed = useRequireAuth();
   const { accessToken, user } = useAuth();
   const router = useRouter();
+  
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,16 +60,31 @@ export default function GroupDetailPage() {
   const [aiResponse, setAiResponse] = useState<{ answer: string; filters?: { categories?: string[]; userIds?: string[] } } | null>(null);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
+  
+  // My Balance in this group
+  const [myBalance, setMyBalance] = useState<{ netAmount: string, direction: "owed" | "owes" | "settled" } | null>(null);
 
   const loadData = useCallback(async () => {
     if (!accessToken || !id) return;
     Promise.all([
       fetch(`${API_URL}/groups/${id}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
       fetch(`${API_URL}/expenses?groupId=${id}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
-    ]).then(async ([gRes, eRes]) => {
+      fetch(`${API_URL}/balance/me`, { headers: { Authorization: `Bearer ${accessToken}` } })
+    ]).then(async ([gRes, eRes, bRes]) => {
       if (!gRes.ok) { router.replace("/groups"); return; }
-      const [gData, eData] = await Promise.all([gRes.json(), eRes.ok ? eRes.json() : []]);
-      setGroup(gData); setExpenses(eData);
+      const [gData, eData, bData] = await Promise.all([gRes.json(), eRes.ok ? eRes.json() : [], bRes.ok ? bRes.json() : null]);
+      setGroup(gData); 
+      setExpenses(eData);
+      
+      if (bData && bData.breakdown) {
+        const groupBalance = bData.breakdown.find((b: any) => b.groupId === id);
+        if (groupBalance) {
+          setMyBalance({ netAmount: groupBalance.netAmount, direction: groupBalance.direction });
+        } else {
+          setMyBalance({ netAmount: "0", direction: "settled" });
+        }
+      }
+
       if (eData.length > 0 && typeof window !== "undefined") {
         const dismissed = localStorage.getItem("push-prompt-dismissed");
         if (!dismissed && Notification.permission === "default") {
@@ -143,29 +147,31 @@ export default function GroupDetailPage() {
     }
   }
 
-  const filteredExpenses = expenses.filter(exp => {
-    if (!aiResponse?.filters) return true;
-    const { categories, userIds } = aiResponse.filters;
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter(exp => {
+      if (!aiResponse?.filters) return true;
+      const { categories, userIds } = aiResponse.filters;
 
-    let match = true;
-    if (categories && categories.length > 0) {
-      match = match && !!exp.category && categories.includes(exp.category);
-    }
-    if (userIds && userIds.length > 0) {
-      const involvedIds = new Set([
-        ...exp.payers.map(p => p.userId),
-        ...exp.splits.map(s => s.userId)
-      ]);
-      const hasUserMatch = userIds.some(uid => involvedIds.has(uid));
-      match = match && hasUserMatch;
-    }
-    return match;
-  });
+      let match = true;
+      if (categories && categories.length > 0) {
+        match = match && !!exp.category && categories.includes(exp.category);
+      }
+      if (userIds && userIds.length > 0) {
+        const involvedIds = new Set([
+          ...exp.payers.map(p => p.userId),
+          ...exp.splits.map(s => s.userId)
+        ]);
+        const hasUserMatch = userIds.some(uid => involvedIds.has(uid));
+        match = match && hasUserMatch;
+      }
+      return match;
+    });
+  }, [expenses, aiResponse]);
 
   if (!authed) return null;
-  if (loading) return (
+  if (loading && !group) return (
     <>
-      <main className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--ink)" }}>
+      <main className="min-h-screen flex items-center justify-center bg-[var(--ink)]">
         <div className="spinner" />
       </main>
       <BottomNav />
@@ -178,151 +184,151 @@ export default function GroupDetailPage() {
 
   return (
     <>
-      <main className="min-h-screen page-content pb-24" style={{ backgroundColor: "var(--ink)" }}>
-        <PageHeader 
-          title={group.name} 
-          subtitle={`${group.members.length} member${group.members.length !== 1 ? "s" : ""} · ${group.myRole === "admin" ? "You're admin" : "Member"}`}
-          onBack={() => router.back()}
-          rightAction={
-            <button onClick={loadData} aria-label="Refresh" style={{ color: "var(--text-muted)" }}>
-              <RefreshCw className="h-5 w-5" strokeWidth={1.5} />
+      <main className="min-h-screen page-content pb-24 bg-[var(--ink)]">
+        
+        {/* ── Sticky Premium Context Header ────────────────────────────────────────── */}
+        <div className="sticky top-0 z-20 bg-[var(--ink)]/80 backdrop-blur-xl px-5 pt-14 pb-4 border-b border-[rgba(0,0,0,0.03)] flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={() => router.back()} className="h-10 w-10 flex items-center justify-center bg-white rounded-full shadow-sm border border-[rgba(0,0,0,0.02)] active:scale-95 transition-transform">
+                <ChevronLeft size={20} className="text-[var(--text-primary)]" />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="h-10 w-10 rounded-[12px] bg-[var(--paper-dim)] text-[var(--accent)] flex items-center justify-center text-[16px] font-bold">
+                  {group.name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h1 className="text-[18px] font-bold text-[var(--text-primary)] tracking-tight leading-tight">{group.name}</h1>
+                  <p className="text-[13px] font-medium text-[var(--text-secondary)]">{group.members.length} members</p>
+                </div>
+              </div>
+            </div>
+            <button className="h-10 w-10 flex items-center justify-center text-[var(--text-secondary)] active:scale-95 transition-transform">
+              <MoreVertical size={20} />
             </button>
-          }
-        />
+          </div>
+        </div>
 
-        {showPushPrompt && (
-          <PushPromptBanner
-            onDismiss={() => {
-              setShowPushPrompt(false);
-              localStorage.setItem("push-prompt-dismissed", "1");
-            }}
-          />
-        )}
-
-        <div className="px-4 pb-4 flex gap-2 overflow-x-auto">
-          <Link href={`/groups/${id}/balance`} className="btn-secondary flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm rounded-[var(--radius-md)]">
-            <Scale className="h-4 w-4" strokeWidth={1.5} />
+        {/* ── Action Pills ────────────────────────────────────────── */}
+        <div className="px-5 py-4 flex gap-2 overflow-x-auto hide-scrollbar sticky top-[88px] z-10 bg-[var(--ink)]/90 backdrop-blur-sm">
+          <Link href={`/groups/${id}/balance`} className="bg-white border border-[rgba(0,0,0,0.03)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
+            <Scale className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
             Balance
           </Link>
-          <Link href={`/groups/${id}/settle`} className="btn-secondary flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm rounded-[var(--radius-md)]">
-            <ArrowRightLeft className="h-4 w-4" strokeWidth={1.5} />
+          <Link href={`/groups/${id}/settle`} className="bg-white border border-[rgba(0,0,0,0.03)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
+            <ArrowRightLeft className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
             Settle Up
           </Link>
-          <button onClick={() => setShowInvite(!showInvite)} className="btn-secondary flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm rounded-[var(--radius-md)]">
-            <LinkIcon className="h-4 w-4" strokeWidth={1.5} />
+          <button onClick={() => setShowInvite(!showInvite)} className="bg-white border border-[rgba(0,0,0,0.03)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
+            <LinkIcon className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
             Invite
           </button>
         </div>
 
-        {showInvite && (
-          <div className="px-4 mb-4 animate-in">
-            <Card padding="md">
-              <h3 className="text-sm font-medium mb-3" style={{ color: "var(--text-primary)" }}>
-                Invite link
-              </h3>
-              <div className="flex gap-2 mb-4">
-                <code className="flex-1 truncate px-3 py-2 text-xs font-mono rounded-[var(--radius-sm)]" style={{ backgroundColor: "var(--paper-dim)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
-                  {inviteUrl}
-                </code>
-                <button
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(inviteUrl);
-                    setCopied(true); setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className="btn-secondary flex-shrink-0 px-3 py-2 rounded-[var(--radius-sm)]"
-                >
-                  {copied ? <Check className="h-4 w-4" strokeWidth={1.5} /> : <Copy className="h-4 w-4" strokeWidth={1.5} />}
-                </button>
-              </div>
-              <div className="flex justify-center">
-                <div style={{ padding: "12px", backgroundColor: "var(--paper)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
-                  <QRCodeSVG value={inviteUrl} size={120} bgColor="transparent" fgColor="var(--text-primary)" level="M" />
+        <AnimatePresence>
+          {showInvite && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-5 mb-5 overflow-hidden">
+              <div className="bg-white p-5 rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[rgba(0,0,0,0.03)]">
+                <h3 className="text-[14px] font-bold text-[var(--text-primary)] mb-3">Invite link</h3>
+                <div className="flex gap-2 mb-4">
+                  <code className="flex-1 truncate px-3 py-3 text-[13px] font-mono rounded-[12px] bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]">
+                    {inviteUrl}
+                  </code>
+                  <button onClick={async () => { await navigator.clipboard.writeText(inviteUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="bg-[var(--accent)] text-white flex-shrink-0 px-4 rounded-[12px] font-bold text-[14px] shadow-[0_4px_14px_rgba(245,158,11,0.3)]">
+                    {copied ? <Check size={18} /> : <Copy size={18} />}
+                  </button>
                 </div>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        <div className="px-4 grid grid-cols-2 gap-3 mb-5">
-          <Card padding="md">
-            <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Total spent</p>
-            <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
-              ₹{totalSpend.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </p>
-          </Card>
-          <Card padding="md">
-            <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Expenses</p>
-            <p className="text-xl font-semibold tabular-nums" style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
-              {expenses.length}
-            </p>
-          </Card>
-        </div>
-
-        <div className="px-4 mb-5">
-          <form onSubmit={askAI} className="relative">
-            <div style={{ position: "relative" }}>
-              <input
-                type="text"
-                placeholder="Ask: “Show food expenses”..."
-                value={aiQuery}
-                onChange={e => setAiQuery(e.target.value)}
-                className="input-field w-full pl-10 pr-12 py-3 text-sm"
-              />
-              <div className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }}>
-                <Sparkles className="h-4 w-4" strokeWidth={1.5} />
-              </div>
-              <button
-                type="submit"
-                disabled={aiLoading || !aiQuery.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-[var(--radius-sm)] transition-colors disabled:opacity-40"
-                style={{ color: "var(--accent)" }}
-                aria-label="Ask AI"
-              >
-                {aiLoading ? <div className="spinner" style={{ width: "16px", height: "16px", borderWidth: "2px" }} /> : <Sparkles className="h-4 w-4" strokeWidth={1.5} />}
-              </button>
-            </div>
-          </form>
-
-          {aiResponse && (
-            <div className="mt-3 animate-in">
-              <Card padding="md" style={{ backgroundColor: "var(--paper-dim)", position: "relative" }}>
-                <button
-                  onClick={() => { setAiResponse(null); setAiQuery(""); }}
-                  className="absolute top-2 right-2 transition-colors"
-                  style={{ color: "var(--text-muted)" }}
-                  aria-label="Dismiss"
-                >
-                  <X className="h-4 w-4" strokeWidth={1.5} />
-                </button>
-                <div className="flex gap-2 pr-6">
-                  <Sparkles className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: "var(--accent)" }} strokeWidth={1.5} />
-                  <div>
-                    <p className="text-sm" style={{ color: "var(--text-primary)" }}>{aiResponse.answer}</p>
-                    {aiResponse.filters && Object.keys(aiResponse.filters).length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {aiResponse.filters.categories?.map(c => (
-                          <span key={c} className="px-2 py-0.5 text-xs rounded-[var(--radius-sm)]" style={{ backgroundColor: "var(--paper)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                <div className="flex justify-center">
+                  <div className="p-4 bg-[var(--paper-dim)] rounded-[16px]">
+                    <QRCodeSVG value={inviteUrl} size={140} bgColor="transparent" fgColor="var(--text-primary)" level="M" />
                   </div>
                 </div>
-              </Card>
-            </div>
+              </div>
+            </motion.div>
           )}
+        </AnimatePresence>
+
+        {showPushPrompt && (
+          <PushPromptBanner onDismiss={() => { setShowPushPrompt(false); localStorage.setItem("push-prompt-dismissed", "1"); }} />
+        )}
+
+        {/* ── Summary Grid ────────────────────────────────────────── */}
+        <div className="px-5">
+          <SummaryGrid 
+            items={[
+              { label: "Spent", value: `₹${totalSpend.toLocaleString("en-IN", { maximumFractionDigits: 0 })}` },
+              { label: "Expenses", value: expenses.length },
+              { label: "Members", value: group.members.length },
+              { 
+                label: "Your Balance", 
+                value: myBalance ? <BalanceAmount amount={myBalance.netAmount} direction={myBalance.direction} variant="compact" /> : "₹0",
+                valueClassName: "mt-1"
+              }
+            ]}
+          />
         </div>
 
-        <div className="px-4 mb-8">
+        {/* ── Sticky AI Search ────────────────────────────────────────── */}
+        <div className="sticky top-[148px] z-10 bg-[var(--ink)]/90 backdrop-blur-md px-5 py-3 mb-2">
+          <form onSubmit={askAI} className="relative">
+            <input
+              type="text"
+              placeholder="Ask Spenit... e.g. Who owes me?"
+              value={aiQuery}
+              onChange={e => setAiQuery(e.target.value)}
+              className="w-full bg-white rounded-[14px] pl-10 pr-12 py-3.5 text-[15px] font-medium text-[var(--text-primary)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.03)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] transition-shadow placeholder:text-[var(--text-muted)]"
+            />
+            <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]">
+              <Sparkles size={18} strokeWidth={2} />
+            </div>
+            <button
+              type="submit"
+              disabled={aiLoading || !aiQuery.trim()}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-[10px] transition-colors disabled:opacity-40 text-[var(--accent)]"
+              aria-label="Ask AI"
+            >
+              {aiLoading ? <div className="spinner-sm" style={{ borderWidth: "2px" }} /> : <Sparkles size={18} strokeWidth={2.5} />}
+            </button>
+          </form>
+
+          <AnimatePresence>
+            {aiResponse && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 overflow-hidden">
+                <div className="bg-[var(--accent-subtle)] p-4 rounded-[16px] relative">
+                  <button onClick={() => { setAiResponse(null); setAiQuery(""); }} className="absolute top-3 right-3 text-[var(--accent)] opacity-70 hover:opacity-100">
+                    <X size={16} strokeWidth={2} />
+                  </button>
+                  <div className="flex gap-2.5 pr-6">
+                    <Sparkles size={16} className="flex-shrink-0 mt-0.5 text-[var(--accent)]" strokeWidth={2} />
+                    <div>
+                      <p className="text-[14px] font-semibold text-[var(--text-primary)] leading-snug">{aiResponse.answer}</p>
+                      {aiResponse.filters && Object.keys(aiResponse.filters).length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-2">
+                          {aiResponse.filters.categories?.map(c => (
+                            <span key={c} className="px-2 py-1 text-[11px] font-bold rounded-[8px] bg-white text-[var(--text-secondary)] shadow-sm uppercase tracking-wider">
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* ── Expenses ────────────────────────────────────────── */}
+        <div className="px-5 mb-8">
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>EXPENSES</SectionLabel>
             <div className="flex items-center gap-2">
-              <Link href={`/groups/${id}/expenses/new`} className="text-xs font-medium px-2 py-1" style={{ color: "var(--text-muted)" }}>
+              <Link href={`/groups/${id}/expenses/new`} className="text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
                 Manual
               </Link>
-              <Link href={`/groups/${id}/expenses/ai`} className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-sm)]">
-                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
+              <Link href={`/groups/${id}/expenses/ai`} className="bg-[var(--accent)] text-white flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-bold rounded-[12px] shadow-[0_4px_14px_rgba(245,158,11,0.3)] active:scale-95 transition-transform">
+                <Sparkles size={14} strokeWidth={2.5} />
                 Add
               </Link>
             </div>
@@ -333,97 +339,49 @@ export default function GroupDetailPage() {
               type="no-expenses" 
               title="No expenses yet" 
               description="Add the first expense and splits will be calculated automatically"
-              action={
-                <div className="flex gap-2 mt-4">
-                  <Link href={`/groups/${id}/expenses/ai`} className="btn-primary flex items-center gap-1.5 px-4 py-2 text-sm rounded-[var(--radius-md)]">
-                    <Sparkles className="h-4 w-4" strokeWidth={1.5} />
-                    Add with AI
-                  </Link>
-                  <Link href={`/groups/${id}/expenses/new`} className="btn-secondary flex items-center px-4 py-2 text-sm rounded-[var(--radius-md)]">
-                    Manual
-                  </Link>
-                </div>
-              }
+              action={{ label: "Add with AI", href: `/groups/${id}/expenses/ai` }}
             />
           ) : (
-            <Card padding="none">
-              <div className="flex flex-col">
-                {filteredExpenses.map((exp, i) => (
-                  <button 
-                    key={exp.id} 
-                    onClick={() => setSelectedExpense(exp)}
-                    className="w-full text-left p-3 flex items-start gap-3 hover:bg-[var(--paper-dim)] transition-colors active:bg-[var(--border)]" 
-                    style={{ borderBottom: i < filteredExpenses.length - 1 ? "1px solid var(--border)" : "none" }}
-                  >
-                    <div className="mt-0.5 flex-shrink-0">
-                      <CategoryIcon category={exp.category ?? null} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{exp.description}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
-                        {new Date(exp.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                        {" · "}{exp.splitType} split
-                        {exp.payers.length > 0 && ` · ${exp.payers.map(p => p.name).join(", ")} paid`}
-                      </p>
-                      {exp.splits.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {exp.splits.map((s) => (
-                            <span
-                              key={s.userId}
-                              className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)]"
-                              style={{ backgroundColor: "var(--paper)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
-                            >
-                              {s.name} ₹{parseFloat(s.shareAmount).toFixed(0)}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                      <BalanceAmount amount={exp.amount} direction="settled" variant="compact" />
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </Card>
+            <div className="bg-white rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[rgba(0,0,0,0.03)] overflow-hidden divide-y divide-[rgba(0,0,0,0.03)]">
+              {filteredExpenses.map((exp) => (
+                <ExpenseRow 
+                  key={exp.id} 
+                  expense={exp} 
+                  onClick={() => setSelectedExpense(exp)} 
+                />
+              ))}
+            </div>
           )}
         </div>
 
-        <div className="px-4 pb-8">
+        {/* ── Members List Rows ────────────────────────────────────────── */}
+        <div className="px-5 pb-8">
           <SectionLabel className="mb-3">MEMBERS ({group.members.length})</SectionLabel>
-          <Card padding="none">
-            <div className="flex flex-col">
-              {group.members.map((m, i) => (
-                <div key={m.id} className="p-3 flex items-center gap-3" style={{ borderBottom: i < group.members.length - 1 ? "1px solid var(--border)" : "none" }}>
-                  {m.avatarUrl ? (
-                    <Image src={m.avatarUrl} alt={m.name} width={36} height={36} className="rounded-full flex-shrink-0" />
-                  ) : (
-                    <div
-                      className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0"
-                      style={{ backgroundColor: "var(--accent)", color: "var(--paper)" }}
-                    >
-                      {m.name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                      {m.name}{m.id === user?.id ? " (you)" : ""}
-                    </p>
-                    <p className="text-xs" style={{ color: "var(--text-secondary)" }}>@{m.username}</p>
+          <div className="bg-white rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[rgba(0,0,0,0.03)] overflow-hidden divide-y divide-[rgba(0,0,0,0.03)]">
+            {group.members.map((m) => (
+              <div key={m.id} className="p-4 flex items-center gap-3">
+                {m.avatarUrl ? (
+                  <Image src={m.avatarUrl} alt={m.name} width={40} height={40} className="rounded-full flex-shrink-0 border border-[rgba(0,0,0,0.05)]" />
+                ) : (
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center text-[16px] font-bold flex-shrink-0 bg-[var(--paper-dim)] text-[var(--accent)] border border-[rgba(0,0,0,0.02)]">
+                    {m.name.charAt(0).toUpperCase()}
                   </div>
-                  {m.role === "admin" && (
-                    <span
-                      className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-[var(--radius-sm)]"
-                      style={{ backgroundColor: "var(--paper-dim)", color: "var(--text-secondary)" }}
-                    >
-                      <ShieldCheck className="h-3 w-3" strokeWidth={1.5} />
-                      Admin
-                    </span>
-                  )}
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[15px] font-bold tracking-tight text-[var(--text-primary)] truncate">
+                    {m.name}{m.id === user?.id ? " (you)" : ""}
+                  </p>
+                  <p className="text-[13px] font-medium text-[var(--text-secondary)]">@{m.username}</p>
                 </div>
-              ))}
-            </div>
-          </Card>
+                {m.role === "admin" && (
+                  <span className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-[8px] bg-[var(--paper-dim)] text-[var(--text-secondary)] uppercase tracking-wider">
+                    <ShieldCheck size={12} strokeWidth={2.5} />
+                    Admin
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </main>
 

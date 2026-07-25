@@ -37,11 +37,18 @@
 
 /* ── Radius scale ────────────────────────────────────────────────────────── */
   --radius-xs: 8px;
-  --radius-sm: 12px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
+  --radius-sm: 14px; /* Inputs */
+  --radius-md: 16px; /* Buttons */
+  --radius-lg: 24px; /* Cards */
   --radius-xl: 32px;
 }
+
+/* ── Typography Scale ────────────────────────────────────────────────────── */
+.text-display { font-size: 32px; line-height: 40px; font-weight: 700; letter-spacing: -0.02em; }
+.text-heading { font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; }
+.text-section { font-size: 18px; line-height: 24px; font-weight: 600; }
+.text-body { font-size: 16px; line-height: 24px; font-weight: 400; }
+.text-caption { font-size: 13px; line-height: 18px; font-weight: 500; }
 
 /* ── Reset ───────────────────────────────────────────────────────────────── */
 
@@ -195,6 +202,22 @@ body {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
+}
+
+.animate-marquee {
+  display: inline-block;
+  white-space: nowrap;
+  animation: marquee 10s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+.animate-marquee:active {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-100%); }
 }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */

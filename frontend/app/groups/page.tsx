@@ -60,10 +60,15 @@ export default function GroupsPage() {
         {/* ── Sticky Premium Header ────────────────────────────────────────── */}
         <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-6 pt-14 pb-4 border-b border-[rgba(0,0,0,0.03)]">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
-              Groups
-            </h1>
-            <Link href="/groups/new" className="h-10 w-10 bg-[var(--accent)] text-white rounded-full flex items-center justify-center shadow-[0_4px_14px_rgba(245,158,11,0.3)] hover:scale-105 transition-transform">
+            <div>
+              <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
+                Groups
+              </h1>
+              <p className="text-[13px] font-medium text-[var(--text-secondary)] mt-0.5">
+                {groups.length} active group{groups.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <Link href="/groups/new" className="h-10 w-10 bg-[var(--accent)] text-white rounded-[16px] flex items-center justify-center shadow-[0_4px_14px_rgba(245,158,11,0.3)] hover:scale-105 transition-transform">
               <Plus size={20} strokeWidth={2.5} />
             </Link>
           </div>
