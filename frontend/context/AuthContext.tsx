@@ -29,7 +29,7 @@ interface AuthContextValue {
   user: User | null;
   isAuthenticated: boolean;
   initializing: boolean;
-  login: (accessToken: string, user: User) => void;
+  login: (accessToken: string, user: User, refreshToken?: string) => void;
   logout: () => void;
 }
 
@@ -59,10 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function tryRefresh() {
       try {
-        // Hit the refresh endpoint — uses the httpOnly cookie automatically
+        const storedRefreshToken = localStorage.getItem("refresh_token");
+        
+        // Hit the refresh endpoint — uses the httpOnly cookie automatically,
+        // or the stored refresh token as a fallback for PWAs
         const res = await fetch(`${API_URL}/auth/refresh`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           credentials: "include",
+          body: storedRefreshToken ? JSON.stringify({ refreshToken: storedRefreshToken }) : undefined,
         });
 
         if (!res.ok) {
@@ -71,7 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const { accessToken } = await res.json();
+        const { accessToken, refreshToken } = await res.json();
+        
+        if (refreshToken) {
+          localStorage.setItem("refresh_token", refreshToken);
+        }
 
         // Fetch the user profile with the new access token
         const userRes = await fetch(`${API_URL}/users/me`, {
@@ -105,7 +114,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tryRefresh();
   }, []); // Only on mount
 
-  const login = useCallback((accessToken: string, user: User) => {
+  const login = useCallback((accessToken: string, user: User, refreshToken?: string) => {
+    if (refreshToken) {
+      localStorage.setItem("refresh_token", refreshToken);
+    }
     setAuth({ accessToken, user, initializing: false });
   }, []);
 
@@ -118,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Best-effort
     }
+    localStorage.removeItem("refresh_token");
     setAuth({ accessToken: null, user: null, initializing: false });
   }, []);
 

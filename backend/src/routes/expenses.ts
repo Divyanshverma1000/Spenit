@@ -445,6 +445,9 @@ router.delete("/:id", requireAuth, async (req: Request, res: Response): Promise<
     [id]
   );
 
+  // Architecture §9: Invalidate the group and cross-group caches so the UI updates immediately
+  await invalidateGroupBalanceCache(e.group_id);
+
   res.json({ message: "Expense deleted", id });
 });
 

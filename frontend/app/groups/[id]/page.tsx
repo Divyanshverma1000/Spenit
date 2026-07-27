@@ -27,6 +27,7 @@ import { BalanceAmount } from "@/components/ui/BalanceAmount";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
+import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
 import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 
@@ -49,6 +50,7 @@ export default function GroupDetailPage() {
   
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -69,12 +71,19 @@ export default function GroupDetailPage() {
     Promise.all([
       fetch(`${API_URL}/groups/${id}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
       fetch(`${API_URL}/expenses?groupId=${id}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      fetch(`${API_URL}/settlements?groupId=${id}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
       fetch(`${API_URL}/balance/me`, { headers: { Authorization: `Bearer ${accessToken}` } })
-    ]).then(async ([gRes, eRes, bRes]) => {
+    ]).then(async ([gRes, eRes, sRes, bRes]) => {
       if (!gRes.ok) { router.replace("/groups"); return; }
-      const [gData, eData, bData] = await Promise.all([gRes.json(), eRes.ok ? eRes.json() : [], bRes.ok ? bRes.json() : null]);
+      const [gData, eData, sData, bData] = await Promise.all([
+        gRes.json(), 
+        eRes.ok ? eRes.json() : [], 
+        sRes.ok ? sRes.json() : [], 
+        bRes.ok ? bRes.json() : null
+      ]);
       setGroup(gData); 
       setExpenses(eData);
+      setSettlements(sData);
       
       if (bData && bData.breakdown) {
         const groupBalance = bData.breakdown.find((b: any) => b.groupId === id);
@@ -147,8 +156,8 @@ export default function GroupDetailPage() {
     }
   }
 
-  const filteredExpenses = useMemo(() => {
-    return expenses.filter(exp => {
+  const feedItems = useMemo(() => {
+    const filteredExp = expenses.filter(exp => {
       if (!aiResponse?.filters) return true;
       const { categories, userIds } = aiResponse.filters;
 
@@ -165,8 +174,14 @@ export default function GroupDetailPage() {
         match = match && hasUserMatch;
       }
       return match;
-    });
-  }, [expenses, aiResponse]);
+    }).map(e => ({ type: 'expense' as const, data: e, createdAt: new Date(e.createdAt).getTime() }));
+
+    const filteredSet = aiResponse?.filters 
+      ? [] // hide settlements if AI filtering is active
+      : settlements.map(s => ({ type: 'settlement' as const, data: s, createdAt: new Date(s.createdAt).getTime() }));
+
+    return [...filteredExp, ...filteredSet].sort((a, b) => b.createdAt - a.createdAt);
+  }, [expenses, settlements, aiResponse]);
 
   if (!authed) return null;
   if (loading && !group) return (
@@ -334,7 +349,7 @@ export default function GroupDetailPage() {
             </div>
           </div>
 
-          {filteredExpenses.length === 0 ? (
+          {feedItems.length === 0 ? (
             <EmptyState 
               type="no-expenses" 
               title="No expenses yet" 
@@ -343,12 +358,19 @@ export default function GroupDetailPage() {
             />
           ) : (
             <div className="bg-white rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[rgba(0,0,0,0.03)] overflow-hidden divide-y divide-[rgba(0,0,0,0.03)]">
-              {filteredExpenses.map((exp) => (
-                <ExpenseRow 
-                  key={exp.id} 
-                  expense={exp} 
-                  onClick={() => setSelectedExpense(exp)} 
-                />
+              {feedItems.map((item) => (
+                item.type === 'expense' ? (
+                  <ExpenseRow 
+                    key={`exp-${item.data.id}`} 
+                    expense={item.data as Expense} 
+                    onClick={() => setSelectedExpense(item.data as Expense)} 
+                  />
+                ) : (
+                  <SettlementRow 
+                    key={`set-${item.data.id}`}
+                    settlement={item.data as Settlement} 
+                  />
+                )
               ))}
             </div>
           )}

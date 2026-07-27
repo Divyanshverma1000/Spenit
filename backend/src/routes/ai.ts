@@ -322,4 +322,59 @@ router.post(
   }
 );
 
+
+
+// ─── POST /ai/ask-personal ───────────────────────────────────────────────────
+/**
+ * Stage 6B: Conversational Ledger Intelligence for Personal Expenses.
+ * Fetch user's personal expenses, then ask AI to answer.
+ *
+ * Body: { question: string }
+ */
+router.post(
+  "/ask-personal",
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const { question } = req.body;
+
+    if (!question || question.trim().length === 0) {
+      res.status(400).json({ error: "question is required" });
+      return;
+    }
+
+    const userRes = await pool.query('SELECT name, groq_api_key FROM "User" WHERE id = $1', [userId]);
+    const apiKey = userRes.rows[0]?.groq_api_key;
+    const userName = userRes.rows[0]?.name;
+    
+    if (!apiKey) {
+      res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." });
+      return;
+    }
+
+    // Fetch personal expenses
+    const expRes = await pool.query(
+      `SELECT id, description, amount, currency, category, created_at
+       FROM "PersonalExpense"
+       WHERE user_id = $1 AND deleted_at IS NULL
+       ORDER BY created_at DESC LIMIT 100`,
+      [userId]
+    );
+
+    const context = {
+      members: [{ id: userId, name: userName, username: "me" }],
+      personalExpenses: expRes.rows,
+    };
+
+    try {
+      const ai = new GroqProvider(apiKey);
+      const result = await ai.answerLedgerQuery(question, context);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[ai] ask-personal failed:", err);
+      res.status(500).json({ error: err.message || "AI request failed" });
+    }
+  }
+);
+
 export default router;

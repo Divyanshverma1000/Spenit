@@ -91,12 +91,18 @@ export default function AIExpensePage() {
   function handleReceiptChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setReceiptFile(file);
-    setReceiptToast(true);
-    setTimeout(() => {
-      setReceiptToast(false);
-      router.push(`/groups/${groupId}/expenses/new`);
-    }, 2500);
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      if (base64 && groupId) {
+        setReceiptFile(file);
+        setReceiptToast(true);
+        setTimeout(() => setReceiptToast(false), 2500);
+        await ai.parseReceipt(base64, groupId);
+      }
+    };
+    reader.readAsDataURL(file);
   }
 
   async function handleParse() {

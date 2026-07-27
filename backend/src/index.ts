@@ -13,6 +13,7 @@ import balanceRouter from "./routes/balance";
 import settlementsRouter from "./routes/settlements";
 import pushRouter from "./routes/push";
 import aiRouter from "./routes/ai";
+import personalExpensesRouter from "./routes/personal_expenses";
 
 dotenv.config();
 
@@ -20,7 +21,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 app.use(
   cors({
@@ -68,6 +69,7 @@ app.use("/balance", balanceRouter);
 app.use("/settlements", settlementsRouter);
 app.use("/push", pushRouter);
 app.use("/ai", aiRouter);
+app.use("/personal_expenses", personalExpensesRouter);
 
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

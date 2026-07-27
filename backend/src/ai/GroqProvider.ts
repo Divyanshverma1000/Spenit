@@ -75,22 +75,23 @@ OUTPUT JSON SCHEMA:
   "splitType": "equal" | "exact" | "fairshare",
   "category": string or null,
   "payers": [{"userId": "uuid", "amountPaid": number}],
-  "participants": [{"userId": "uuid", "shareAmount": number_or_null}],
+  "participants": [{"userId": "uuid", "shareAmount": number_or_null, "personalAmount": number_or_null}],
   "receiptData": [{"id": "uuid", "label": "string", "amount": string, "sharedBy": ["uuid"]}],
   "confidence": number,
   "ambiguities": ["string"]
 }
 
-EXPLANATION OF RECEIPT_DATA:
-If the user mentions specific items (e.g. "Pizza for 400 for John and me, and coke for 100 for me"), this is a True Universal Fairshare expense!
-1. Set splitType to "exact".
-2. Generate an array for receiptData. Assign a unique UUID for each item's "id".
-3. "sharedBy" MUST be an array of the exact userIds who shared that specific item.
-4. Calculate the final exact "shareAmount" for each participant in the "participants" array by splitting the items among the sharedBy users, and splitting any remaining amount equally among all mentioned participants.
+EXPLANATION OF RECEIPT_DATA & FAIRSHARE:
+If the user mentions specific items belonging to specific people (e.g. "Pizza for 400 for John and me, and coke for 100 for me"), this is a True Universal Fairshare expense!
+1. Set splitType to "fairshare".
+2. You DO NOT need to do the math to divide the rest.
+3. Just figure out the total value of personal items for each person. If multiple people share a personal item, divide its amount equally among them and add it to their personal amount.
+4. Set "personalAmount" inside the "participants" array for anyone who had personal items.
+5. The backend will automatically subtract the sum of all personalAmounts from the total amount, and divide the remainder equally among everyone in the "participants" array.
 
 EXAMPLES:
-- "Dinner 900 Rahul paid" → payers:[{Rahul,900}], participants:all, splitType:equal, receiptData:null
-- "I paid 1000, 400 was for wine that Rahul and I drank" → payers:[{me,1000}], participants:[all], splitType:exact, receiptData:[{id:"...", label:"wine", amount:"400", sharedBy:[me, Rahul]}] (Calculate exactly: remaining 600 split equally)
+- "Dinner 900 Rahul paid" → payers:[{Rahul,900}], participants:all, splitType:equal
+- "I paid 1000, 400 was for wine that Rahul and I drank" → payers:[{me,1000}], participants:[{userId: me, personalAmount: 200}, {userId: Rahul, personalAmount: 200}], splitType:fairshare (Backend handles the remaining 600)
 - "paid by me 500" → payers:[{me,500}], participants:all, splitType:equal`;
 }
 
@@ -240,16 +241,90 @@ export class GroqProvider implements AIProvider {
   // ── parseReceiptImage — PHASE 6B STUB ────────────────────────────────────────
 
   async parseReceiptImage(
-    _imageData: string,
-    _groupContext: GroupMember[]
+    imageData: string,
+    groupContext: GroupMember[]
   ): Promise<ParseResult> {
-    // Phase 6B: vision model OCR — stubbed for now
-    // Returns a fallback so the frontend shows the manual form with a toast.
-    return {
-      fallback: true,
-      reason: "parse_error",
-      rawText: "[receipt image]",
-    } satisfies AIFallback;
+    if (!this.apiKey) {
+      return this.fallback("config_error", "[Receipt Image]");
+    }
+
+    // Ensure the image string has the proper data URL prefix if missing
+    let base64Url = imageData;
+    if (!base64Url.startsWith("data:image")) {
+      base64Url = `data:image/jpeg;base64,${imageData}`;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS * 2); // 20s for vision
+
+      const response = await fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama-3.2-11b-vision-preview",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}. DO NOT wrap it in a code block or return any markdown text.",
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: base64Url,
+                  },
+                },
+              ],
+            },
+          ],
+          temperature: 0.1,
+          max_tokens: 1024,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        throw new Error(`Groq vision API error: ${response.status}`);
+      }
+
+      const json = await response.json() as any;
+      const rawResponse = json.choices?.[0]?.message?.content || "";
+      const parsed = JSON.parse(rawResponse);
+
+      // We map the extracted items into a special ParseResult that the frontend can use for assignment
+      // We will add `extractedItems` to the ParsedExpenseDraft object
+      const draft: any = {
+        description: parsed.merchant ? `${parsed.merchant} Bill` : "Receipt Bill",
+        amount: parsed.total || null,
+        currency: "INR",
+        splitType: "fairshare",
+        category: "Food",
+        payers: [{ userId: groupContext[0]?.id || "unknown", amountPaid: parsed.total || 0 }],
+        participants: groupContext.map(m => ({ userId: m.id, personalAmount: 0 })), // starts empty
+        confidence: 0.9,
+        ambiguities: [],
+        possibleDuplicate: false,
+        rawText: "[Receipt Scan]",
+        extractedItems: parsed.items || [], // <--- Critical payload for Universal Fairshare UI
+      };
+
+      return draft;
+    } catch (e: any) {
+      console.error("[ai] vision error:", e);
+      return this.fallback(
+        e.name === "AbortError" ? "timeout" : "parse_error",
+        "[Receipt Image]"
+      );
+    }
   }
 
   // ── Stubs for future capabilities ─────────────────────────────────────────────
@@ -266,19 +341,20 @@ export class GroqProvider implements AIProvider {
 
   async answerLedgerQuery(
     question: string,
-    context: { members: GroupMember[]; expenses: any[]; settlements: any[]; balances: any[] }
+    context: { members?: GroupMember[]; expenses?: any[]; settlements?: any[]; balances?: any[]; personalExpenses?: any[] }
   ): Promise<LedgerQueryResponse> {
     if (!this.apiKey) {
       throw new Error("Bring your own AI: Groq API Key required. Please set it in your Profile.");
     }
 
     const systemPrompt = `You are a ledger intelligence assistant for a group expense app called Spenit.
-Your job is to answer questions about the group's expenses, settlements, and balances.
+Your job is to answer questions about the group's expenses, settlements, balances, and the user's personal expenses.
 You will be provided with the current state of the ledger as JSON data.
 Answer the user's question accurately using ONLY the provided data. Do not invent or hallucinate amounts, users, or transactions.
+Use a friendly, premium tone. You can use markdown for formatting (bold, lists).
 
 LEDGER DATA:
-${JSON.stringify(context)}
+${JSON.stringify(context, null, 2)}
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object matching this schema:

@@ -36,7 +36,7 @@ export default function AuthPage() {
       });
       if (!res.ok) return;
       const data = await res.json();
-      login(data.accessToken, data.user);
+      login(data.accessToken, data.user, data.refreshToken);
       router.replace("/dashboard");
     } catch (err) {
       console.error("Auth error:", err);

@@ -24,6 +24,7 @@ export interface AIExpenseResult {
   voiceSupported: boolean;
   liveTranscript: string;
   parse: (text: string, groupId: string) => Promise<void>;
+  parseReceipt: (base64Url: string, groupId: string) => Promise<void>;
   startVoice: (groupId: string) => void;
   stopVoice: () => void;
   reset: () => void;
@@ -94,6 +95,50 @@ export function useAIExpense(): AIExpenseResult {
           fallback: true,
           reason: "network",
           rawText: text,
+        });
+        setState("fallback");
+      }
+    },
+    [accessToken]
+  );
+
+  const parseReceipt = useCallback(
+    async (base64Url: string, groupId: string) => {
+      if (!accessToken || !base64Url) return;
+
+      setState("parsing");
+      setDraft(null);
+      setFallbackData(null);
+
+      try {
+        const res = await fetch(`${API_URL}/ai/parse-receipt`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ imageBase64: base64Url, groupId }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        if (data.fallback === true) {
+          setFallbackData(data as AIFallback);
+          setState("fallback");
+        } else {
+          setDraft(data as ParsedExpenseDraft);
+          setState("review");
+        }
+      } catch (err) {
+        console.error("[useAIExpense] parse receipt error:", err);
+        setFallbackData({
+          fallback: true,
+          reason: "network",
+          rawText: "[Receipt Scan Failed]",
         });
         setState("fallback");
       }
@@ -234,6 +279,7 @@ export function useAIExpense(): AIExpenseResult {
     voiceSupported,
     liveTranscript,
     parse,
+    parseReceipt,
     startVoice,
     stopVoice,
     reset,

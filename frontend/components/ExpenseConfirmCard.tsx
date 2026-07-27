@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import type { ParsedExpenseDraft, ExpenseCategory } from "@/hooks/types/ai";
 import CategoryBadge from "./CategoryBadge";
+import ReceiptItemAssigner from "./ReceiptItemAssigner";
 import { Sparkles, AlertTriangle, Equal, Hash, Target, Check } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -140,6 +141,10 @@ export default function ExpenseConfirmCard({
   const numAmount = parseFloat(amount) || 0;
   const isLowConfidence = draft.confidence < 0.4;
 
+  const totalPersonal = participants.reduce((sum, p) => sum + (p.personalAmount || 0), 0);
+  const remainingShared = Math.max(0, numAmount - totalPersonal);
+  const equalSharedPortion = participants.length > 0 ? remainingShared / participants.length : 0;
+
   return (
     <div className="card p-5 space-y-4">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
@@ -254,6 +259,15 @@ export default function ExpenseConfirmCard({
         </div>
       </div>
 
+      {/* ── Extracted Receipt Items (if any) ────────────────────────────── */}
+      {draft.extractedItems && draft.extractedItems.length > 0 && (
+        <ReceiptItemAssigner 
+          items={draft.extractedItems}
+          members={members}
+          onChange={(newParticipants) => setParticipants(newParticipants)}
+        />
+      )}
+
       {/* ── Payers ───────────────────────────────────────────────────────── */}
       <div>
         <label className="section-label mb-2 block">Who paid?</label>
@@ -297,8 +311,9 @@ export default function ExpenseConfirmCard({
           {members.map((m) => {
             const included = isParticipant(m.id);
             const participant = participants.find((p) => p.userId === m.id);
-            const equalShare =
-              participants.length > 0 ? numAmount / participants.length : 0;
+            const participantShare = splitType === "fairshare" 
+              ? (participant?.personalAmount || 0) + equalSharedPortion
+              : equalSharedPortion;
 
             return (
               <div key={m.id} className="flex items-center gap-3">
@@ -322,9 +337,16 @@ export default function ExpenseConfirmCard({
                   />
                 )}
                 {included && (splitType === "equal" || splitType === "fairshare") && (
-                  <span className="text-sm font-medium text-[var(--positive)] tabular-nums">
-                    ₹{equalShare.toFixed(2)}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <span className="text-sm font-medium text-[var(--positive)] tabular-nums">
+                      ₹{participantShare.toFixed(2)}
+                    </span>
+                    {splitType === "fairshare" && (participant?.personalAmount || 0) > 0 && (
+                      <span className="text-[10px] text-[var(--text-secondary)]">
+                        (₹{(participant?.personalAmount || 0).toFixed(2)} personal)
+                      </span>
+                    )}
+                  </div>
                 )}
                 {included && splitType === "exact" && participant?.shareAmount !== undefined && participant.shareAmount > 0 && (
                   <Check className="h-4 w-4 text-[var(--accent)] ml-2" strokeWidth={2} />

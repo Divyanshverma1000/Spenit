@@ -172,6 +172,6 @@ export interface AIProvider {
    */
   answerLedgerQuery(
     question: string,
-    context: { members: GroupMember[]; expenses: any[]; settlements: any[]; balances: any[] }
+    context: { members?: GroupMember[]; expenses?: any[]; settlements?: any[]; balances?: any[]; personalExpenses?: any[] }
   ): Promise<LedgerQueryResponse>;
 }

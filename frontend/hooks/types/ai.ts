@@ -37,6 +37,7 @@ export interface ParsedPayer {
 export interface ParsedParticipant {
   userId: string;
   shareAmount?: number;
+  personalAmount?: number;
 }
 
 export interface ParsedExpenseDraft {
@@ -47,6 +48,11 @@ export interface ParsedExpenseDraft {
   category: ExpenseCategory | null;
   payers: ParsedPayer[];
   participants: ParsedParticipant[];
+
+  /** Optional line items extracted from a receipt scan for interactive assignment */
+  extractedItems?: { name: string; amount: number }[];
+
+  /** 0–1. If < 0.4, show a low-confidence warning on the confirm card. */
   confidence: number;
   ambiguities: string[];
   possibleDuplicate: boolean;

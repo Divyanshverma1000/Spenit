@@ -80,7 +80,7 @@ export default function GroupInvitePage() {
 
     if (!authRes.ok) return;
     const authData = await authRes.json();
-    login(authData.accessToken, authData.user);
+    login(authData.accessToken, authData.user, authData.refreshToken);
 
     const joinRes = await fetch(`${API_URL}/groups/join/${token}`, {
       method: "POST",

@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, User } from 'lucide-react';
+import { Home, Users, User, Wallet } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function BottomNav() {
@@ -12,6 +12,7 @@ export default function BottomNav() {
   const navItems = [
     { label: 'Home', href: '/dashboard', icon: Home },
     { label: 'Groups', href: '/groups', icon: Users },
+    { label: 'Personal', href: '/personal', icon: Wallet },
     { label: 'Profile', href: '/profile', icon: User },
   ];
 

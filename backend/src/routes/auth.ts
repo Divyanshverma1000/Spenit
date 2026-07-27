@@ -145,6 +145,7 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
 
   res.json({
     accessToken,
+    refreshToken,
     user: {
       id: user.id,
       username: user.username,
@@ -163,10 +164,11 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
  * to revisit at v1 when attack surface is wider).
  */
 router.post("/refresh", async (req: Request, res: Response): Promise<void> => {
-  const refreshToken: string | undefined = req.cookies?.refresh_token;
+  // Fallback to Authorization header or request body if cookie is missing (PWA support)
+  const refreshToken: string | undefined = req.cookies?.refresh_token || req.body?.refreshToken;
 
   if (!refreshToken) {
-    res.status(401).json({ error: "No refresh token cookie" });
+    res.status(401).json({ error: "No refresh token provided" });
     return;
   }
 
@@ -194,7 +196,7 @@ router.post("/refresh", async (req: Request, res: Response): Promise<void> => {
 
   const user = rows[0];
   const accessToken = issueAccessToken(user.id, user.username);
-  res.json({ accessToken });
+  res.json({ accessToken, refreshToken });
 });
 
 // ─── POST /auth/logout ────────────────────────────────────────────────────────
