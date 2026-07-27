@@ -258,6 +258,8 @@ export class GroqProvider implements AIProvider {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS * 2); // 20s for vision
 
+      const systemPrompt = "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}.";
+
       const response = await fetch(GROQ_API_URL, {
         method: "POST",
         headers: {
@@ -265,15 +267,12 @@ export class GroqProvider implements AIProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "llama-3.2-11b-vision-preview",
+          model: "qwen/qwen3.6-27b",
           messages: [
             {
               role: "user",
               content: [
-                {
-                  type: "text",
-                  text: "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}. DO NOT wrap it in a code block or return any markdown text.",
-                },
+                { type: "text", text: systemPrompt },
                 {
                   type: "image_url",
                   image_url: {
@@ -293,12 +292,14 @@ export class GroqProvider implements AIProvider {
       clearTimeout(timer);
 
       if (!response.ok) {
-        throw new Error(`Groq vision API error: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Groq vision API error: ${response.status} - ${errorText}`);
       }
 
       const json = await response.json() as any;
       const rawResponse = json.choices?.[0]?.message?.content || "";
-      const parsed = JSON.parse(rawResponse);
+      const cleaned = rawResponse.replace(/```(?:json)?/g, "").trim();
+      const parsed = JSON.parse(cleaned);
 
       // We map the extracted items into a special ParseResult that the frontend can use for assignment
       // We will add `extractedItems` to the ParsedExpenseDraft object
@@ -359,10 +360,16 @@ ${JSON.stringify(context, null, 2)}
 OUTPUT FORMAT:
 Return ONLY a valid JSON object matching this schema:
 {
-  "answer": "A clear, natural language answer to the user's question. Explain balances if asked (e.g. 'Rahul owes you 800' instead of 'Net 800').",
+  "action": "query" or "log", // If the user wants to log/add a new personal expense, set to "log". Otherwise "query".
+  "logDetails": { // ONLY if action is "log"
+    "description": "Short name for the expense",
+    "amount": number,
+    "category": "Food" | "Travel" | "Shopping" | "Stay" | "Fuel" | "Medical" | "Utilities" | "Entertainment" | "Misc"
+  },
+  "answer": "A clear, natural language answer. If action is 'log', say that you logged it successfully.",
   "filters": {
-    "categories": ["Food"], // Optional: if the user asked to 'show food expenses', include 'Food' here
-    "userIds": ["uuid-of-user"] // Optional: if the user asked for expenses involving a specific person, include their ID here
+    "categories": ["Food"], // Optional
+    "userIds": ["uuid-of-user"] // Optional
   }
 }
 No markdown fences, just the raw JSON.`;
@@ -398,6 +405,8 @@ No markdown fences, just the raw JSON.`;
       const parsed = JSON.parse(rawText);
       return {
         answer: parsed.answer || "I couldn't generate an answer.",
+        action: parsed.action || "query",
+        logDetails: parsed.logDetails,
         filters: parsed.filters,
       };
     } finally {

@@ -126,6 +126,12 @@ export interface QueryResult {
 
 export interface LedgerQueryResponse {
   answer: string;
+  action?: "query" | "log";
+  logDetails?: {
+    description: string;
+    amount: number;
+    category: string;
+  };
   filters?: {
     categories?: string[];
     userIds?: string[];

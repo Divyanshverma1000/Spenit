@@ -369,6 +369,15 @@ router.post(
     try {
       const ai = new GroqProvider(apiKey);
       const result = await ai.answerLedgerQuery(question, context);
+      
+      if (result.action === "log" && result.logDetails) {
+        await pool.query(
+          `INSERT INTO "PersonalExpense" (user_id, description, amount, currency, category)
+           VALUES ($1, $2, $3, 'INR', $4)`,
+          [userId, result.logDetails.description, result.logDetails.amount, result.logDetails.category || 'Misc']
+        );
+      }
+
       res.json(result);
     } catch (err: any) {
       console.error("[ai] ask-personal failed:", err);
