@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -29,6 +30,7 @@ interface CrossGroupBalance {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const authed = useRequireAuth();
   const { user, accessToken } = useAuth();
   const [balance, setBalance] = useState<CrossGroupBalance | null>(null);
@@ -126,7 +128,7 @@ export default function DashboardPage() {
           <QuickActions 
             actions={[
               { label: "New Group", icon: <Plus size={20} />, href: "/groups/new", accent: true },
-              { label: "Scan Receipt", icon: <Users size={20} />, onClick: () => alert("Scan Receipt coming soon") },
+              { label: "Scan Receipt", icon: <Users size={20} />, onClick: () => { alert("Please select a group first to scan a receipt"); router.push("/groups"); } },
               { label: "AI Expense", icon: <TrendingUp size={20} />, href: "/groups" },
               { label: "Join Group", icon: <Check size={20} />, href: "/groups" }
             ]}

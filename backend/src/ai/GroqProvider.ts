@@ -256,7 +256,7 @@ export class GroqProvider implements AIProvider {
 
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS * 2); // 20s for vision
+      const timer = setTimeout(() => controller.abort(), 60000); // 60s for vision
 
       const systemPrompt = "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}.";
 

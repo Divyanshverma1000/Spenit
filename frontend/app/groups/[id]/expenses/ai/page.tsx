@@ -155,7 +155,7 @@ export default function AIExpensePage() {
         )}
         {receiptToast && (
           <div className="mx-4 mb-4 p-3 rounded-[var(--radius-sm)] text-center text-xs font-medium" style={{ backgroundColor: "var(--paper-dim)", color: "var(--text-primary)" }}>
-            Receipt scanning coming soon — opening manual form...
+            Scanning Receipt...
           </div>
         )}
 
