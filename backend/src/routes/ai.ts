@@ -368,9 +368,21 @@ router.post(
       [userId]
     );
 
+    // Fetch group expenses the user is involved in
+    const groupExpRes = await pool.query(
+      `SELECT e.id, e.description, e.amount, e.currency, e.category, e.created_at, g.name as group_name
+       FROM "Expense" e
+       JOIN "Group" g ON g.id = e.group_id
+       JOIN "GroupMember" gm ON gm.group_id = e.group_id
+       WHERE gm.user_id = $1 AND e.deleted_at IS NULL
+       ORDER BY e.created_at DESC LIMIT 50`,
+      [userId]
+    );
+
     const context = {
       members: [{ id: userId, name: userName, username: "me" }],
       personalExpenses: expRes.rows,
+      groupExpenses: groupExpRes.rows,
     };
 
     try {
