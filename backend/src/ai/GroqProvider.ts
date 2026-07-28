@@ -27,7 +27,7 @@ import { EXPENSE_CATEGORIES } from "./AIProvider";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 10_000;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_MODEL = process.env.GROQ_MODEL || "mixtral-8x7b-32768";
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -292,8 +292,9 @@ export class GroqProvider implements AIProvider {
       clearTimeout(timer);
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Groq vision API error: ${response.status} - ${errorText}`);
+        const errText = await response.text().catch(() => "");
+        if (response.status === 403) throw new Error("GROQ_BLOCKED_403: " + errText);
+        throw new Error(`Groq vision API error: ${response.status} - ${errText}`);
       }
 
       const json = await response.json() as any;
@@ -397,7 +398,9 @@ No markdown fences, just the raw JSON.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Groq API error ${response.status}: ${await response.text().catch(() => "")}`);
+        const errText = await response.text().catch(() => "");
+        if (response.status === 403) throw new Error("GROQ_BLOCKED_403: " + errText);
+        throw new Error(`Groq API error ${response.status}: ${errText}`);
       }
 
       const json = await response.json() as any;

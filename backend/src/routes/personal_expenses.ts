@@ -28,7 +28,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   const userId = req.user!.userId;
   const { description, amount, category } = req.body;
 
-  if (!description || !amount) {
+  if (!description || amount === undefined || amount === null) {
     res.status(400).json({ error: "description and amount are required" });
     return;
   }

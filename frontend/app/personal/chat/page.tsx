@@ -45,6 +45,9 @@ export default function PersonalChatPage() {
       });
 
       if (!res.ok) {
+        if (res.status === 403) {
+          throw new Error("AI Provider (Groq) has blocked access from your network. Please try using a VPN.");
+        }
         throw new Error("Failed to get answer");
       }
       
@@ -52,7 +55,10 @@ export default function PersonalChatPage() {
       const aiMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: "ai", content: data.answer };
       setMessages(prev => [...prev, aiMsg]);
     } catch (err: any) {
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: "ai", content: "Sorry, I had trouble answering that." }]);
+      const errMsg = err.message.includes("VPN") 
+        ? err.message 
+        : "Sorry, I had trouble answering that.";
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: "ai", content: errMsg }]);
     } finally {
       setLoading(false);
     }

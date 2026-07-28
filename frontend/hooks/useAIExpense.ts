@@ -76,6 +76,12 @@ export function useAIExpense(): AIExpenseResult {
         });
 
         if (!res.ok) {
+          if (res.status === 403) {
+            const errBody = await res.json().catch(() => ({}));
+            if (errBody.error && errBody.error.includes("Groq")) {
+              alert("AI Provider (Groq) has blocked access from your network. Please try using a VPN.");
+            }
+          }
           throw new Error(`HTTP ${res.status}`);
         }
 
@@ -121,6 +127,12 @@ export function useAIExpense(): AIExpenseResult {
         });
 
         if (!res.ok) {
+          if (res.status === 403) {
+            const errBody = await res.json().catch(() => ({}));
+            if (errBody.error && errBody.error.includes("Groq")) {
+              alert("AI Provider (Groq) has blocked access from your network. Please try using a VPN.");
+            }
+          }
           throw new Error(`HTTP ${res.status}`);
         }
 

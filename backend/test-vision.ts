@@ -14,11 +14,11 @@ async function run() {
     const base64 = Buffer.from(buffer).toString('base64');
     const imageData = `data:image/jpeg;base64,${base64}`;
     
-    console.log("Sending to vision model...");
-    const res = await provider.parseReceiptImage(imageData, context);
-    console.log("VISION RESULT:", JSON.stringify(res, null, 2));
+    console.log("Sending to ledger query...");
+    const res = await provider.answerLedgerQuery("what are my spending habits?", { members: context, personalExpenses: [] });
+    console.log("QUERY RESULT:", JSON.stringify(res, null, 2));
   } catch (err) {
-    console.error("VISION ERROR:", err);
+    console.error("QUERY ERROR:", err);
   }
 }
 run();
