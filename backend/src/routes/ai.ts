@@ -165,6 +165,13 @@ router.post(
       res.status(400).json({ error: "imageBase64 is required" });
       return;
     }
+    
+    // Quick UUID validation regex
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(groupId)) {
+      res.status(400).json({ error: "Invalid groupId format" });
+      return;
+    }
 
     // Verify membership
     const memberCheck = await pool.query(
