@@ -99,7 +99,7 @@ export default function AIExpensePage() {
         setReceiptFile(file);
         setReceiptToast(true);
         setTimeout(() => setReceiptToast(false), 2500);
-        await ai.parseReceipt(base64, groupId);
+        await ai.parseReceipt([base64], groupId);
       }
     };
     reader.readAsDataURL(file);
