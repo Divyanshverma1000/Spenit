@@ -155,10 +155,7 @@ export interface AIProvider {
    * Parse receipt image (base64 or URL) into a draft.
    * [PHASE 6B — STUBBED]: returns a fallback with partialAmount if detectable.
    */
-  parseReceiptImage(
-    imageData: string,
-    groupContext: GroupMember[]
-  ): Promise<ParseResult>;
+  parseReceiptImage(imageDatas: string[], groupContext: GroupMember[]): Promise<ParseResult>;
 
   /**
    * Phrase a settlement simplification in natural language.

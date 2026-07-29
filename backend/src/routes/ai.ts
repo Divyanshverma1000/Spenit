@@ -159,7 +159,7 @@ router.get(
 
       // Simple test using GroqProvider
       const ai = new GroqProvider(apiKey);
-      const test = await ai.parseReceiptImage("data:image/jpeg;base64,test", []); // It will fallback due to bad image, but if API key is invalid it will throw auth error
+      const test = await ai.parseReceiptImage(["data:image/jpeg;base64,test"], []); // It will fallback due to bad image, but if API key is invalid it will throw auth error
       
       res.json({ success: true });
     } catch (err: any) {
