@@ -261,7 +261,16 @@ export class GroqProvider implements AIProvider {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60000); // 60s for vision
 
-      const systemPrompt = "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}.";
+      const systemPrompt = `You are a receipt parser. Extract the merchant, total, tax, and EVERY line item. Return ONLY valid JSON in this exact format:
+{
+  "merchant": "string",
+  "total": number,
+  "tax": number,
+  "items": [
+    { "name": "string", "amount": number }
+  ]
+}
+If there are items, you MUST include them in the "items" array.`;
 
       const contentArray: any[] = [{ type: "text", text: systemPrompt }];
       for (const url of base64Urls) {

@@ -54,6 +54,7 @@ export default function GlobalScanPage() {
   };
 
   const handleSelectContext = (groupId?: string) => {
+    setSelectedGroupId(groupId || "");
     setShowGroupSelect(false);
     if (selectedImages.length > 0) {
       ai.parseReceipt(selectedImages, groupId || "");
@@ -79,12 +80,25 @@ export default function GlobalScanPage() {
     }
   }, [ai.state, router]);
 
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedGroupId && accessToken) {
+      fetch(`${API_URL}/groups/${selectedGroupId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+        .then(res => res.json())
+        .then(data => setSelectedGroupMembers(data.members || []))
+        .catch(console.error);
+    } else {
+      setSelectedGroupMembers([]);
+    }
+  }, [selectedGroupId, accessToken]);
+
   if (!authed) return null;
 
   if ((ai.state === "review" || ai.state === "submitting") && ai.draft) {
-    // If it's a personal context (no groupId selected), we pass a dummy group ID 
-    // or we'd ideally render a different card. For now, pass empty members/groupId
-    // and let submitDraft handle it.
     return (
       <div className="min-h-screen bg-black text-white pb-24">
         <header className="px-5 py-4 flex items-center gap-4 border-b border-white/10">
@@ -96,13 +110,21 @@ export default function GlobalScanPage() {
         <main className="p-5">
           <ExpenseConfirmCard 
             draft={ai.draft} 
-            members={[]} 
-            groupId={""} 
+            members={selectedGroupMembers} 
+            groupId={selectedGroupId} 
             onConfirmed={() => {}} 
-            onManual={() => {}} 
+            onManual={() => {
+              const amount = ai.draft?.amount || ai.fallbackData?.partialAmount || "";
+              if (selectedGroupId) {
+                router.push(`/groups/${selectedGroupId}/expenses/new${amount ? `?amount=${amount}` : ""}`);
+              } else {
+                // If personal context
+                router.push(`/`);
+              }
+            }} 
             onCancel={ai.reset} 
             isSubmitting={ai.state === "submitting"} 
-            onSubmit={async (updated) => { await ai.submitDraft(updated, ""); }} 
+            onSubmit={async (updated) => { await ai.submitDraft(updated, selectedGroupId); }} 
           />
         </main>
       </div>
