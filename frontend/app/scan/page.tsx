@@ -19,7 +19,7 @@ export default function GlobalScanPage() {
   const router = useRouter();
   
   const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [showGroupSelect, setShowGroupSelect] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -35,22 +35,28 @@ export default function GlobalScanPage() {
       .catch(console.error);
   }, [accessToken]);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setSelectedImage(event.target?.result as string);
-      setShowGroupSelect(true);
-    };
-    reader.readAsDataURL(file);
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newImages: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve) => {
+        reader.onload = (event) => resolve(event.target?.result as string);
+        reader.readAsDataURL(file);
+      });
+      newImages.push(base64);
+    }
+
+    setSelectedImages(prev => [...prev, ...newImages]);
   };
 
   const handleSelectContext = (groupId?: string) => {
     setShowGroupSelect(false);
-    if (selectedImage) {
-      // parseReceipt supports optional groupId now (if undefined, it parses as personal)
-      ai.parseReceipt(selectedImage, groupId || "");
+    if (selectedImages.length > 0) {
+      ai.parseReceipt(selectedImages, groupId || "");
     }
   };
 
@@ -134,43 +140,93 @@ export default function GlobalScanPage() {
       </header>
 
       <main className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-24 h-24 bg-[var(--accent)]/10 text-[var(--accent)] rounded-full flex items-center justify-center mb-6">
-          <Camera size={40} />
-        </div>
-        <h2 className="text-[22px] font-extrabold text-[var(--text-primary)] mb-2">Capture a Receipt</h2>
-        <p className="text-[14px] text-[var(--text-secondary)] mb-10 max-w-xs">
-          Upload a clear photo of your receipt and let AI do the data entry for you.
-        </p>
+        {selectedImages.length > 0 ? (
+          <div className="w-full max-w-md flex flex-col items-center">
+            <h2 className="text-[20px] font-extrabold text-[var(--text-primary)] mb-6">
+              {selectedImages.length} Image{selectedImages.length > 1 ? 's' : ''} Selected
+            </h2>
+            <div className="grid grid-cols-2 gap-3 w-full mb-8 max-h-[50vh] overflow-y-auto pr-2 pb-2">
+              {selectedImages.map((img, idx) => (
+                <div key={idx} className="relative rounded-[16px] overflow-hidden aspect-[3/4] border border-[rgba(0,0,0,0.05)] shadow-sm">
+                  <img src={img} alt={`Receipt ${idx + 1}`} className="w-full h-full object-cover" />
+                  <button 
+                    onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))}
+                    className="absolute top-2 right-2 w-8 h-8 bg-black/60 backdrop-blur-md rounded-full text-white flex items-center justify-center"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3 w-full">
+              <button 
+                onClick={() => setShowGroupSelect(true)}
+                disabled={selectedImages.length === 0}
+                className="w-full bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
+              >
+                Process Receipts
+              </button>
+              <button 
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.removeAttribute('capture');
+                    fileInputRef.current.multiple = true;
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[rgba(0,0,0,0.05)] active:scale-95 transition-transform"
+              >
+                + Add More Photos
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="w-24 h-24 bg-[var(--accent)]/10 text-[var(--accent)] rounded-full flex items-center justify-center mb-6">
+              <Camera size={40} />
+            </div>
+            <h2 className="text-[22px] font-extrabold text-[var(--text-primary)] mb-2">Capture a Receipt</h2>
+            <p className="text-[14px] text-[var(--text-secondary)] mb-10 max-w-xs">
+              Upload clear photos of your receipts and let AI do the data entry for you.
+            </p>
+            <div className="flex flex-col gap-4 w-full max-w-xs">
+              <button 
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.setAttribute('capture', 'environment');
+                    fileInputRef.current.multiple = false;
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="w-full bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform flex items-center justify-center gap-2"
+              >
+                <Camera size={20} /> Open Camera
+              </button>
+              
+              <button 
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.removeAttribute('capture');
+                    fileInputRef.current.multiple = true;
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[rgba(0,0,0,0.05)] active:scale-95 transition-transform flex items-center justify-center gap-2"
+              >
+                <ImageIcon size={20} /> Choose from Gallery
+              </button>
+            </div>
+          </>
+        )}
 
         <input 
           type="file"
           accept="image/*"
-          capture="environment"
           ref={fileInputRef}
           className="hidden"
           onChange={handleImageSelect}
         />
-
-        <div className="flex flex-col gap-4 w-full max-w-xs">
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform flex items-center justify-center gap-2"
-          >
-            <Camera size={20} /> Open Camera
-          </button>
-          
-          <button 
-            onClick={() => {
-              if (fileInputRef.current) {
-                fileInputRef.current.removeAttribute('capture');
-                fileInputRef.current.click();
-              }
-            }}
-            className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[rgba(0,0,0,0.05)] active:scale-95 transition-transform flex items-center justify-center gap-2"
-          >
-            <ImageIcon size={20} /> Choose from Gallery
-          </button>
-        </div>
       </main>
 
       <AnimatePresence>

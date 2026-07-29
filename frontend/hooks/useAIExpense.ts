@@ -24,7 +24,7 @@ export interface AIExpenseResult {
   voiceSupported: boolean;
   liveTranscript: string;
   parse: (text: string, groupId: string) => Promise<void>;
-  parseReceipt: (base64Url: string, groupId: string) => Promise<void>;
+  parseReceipt: (base64Urls: string[], groupId: string) => Promise<void>;
   startVoice: (groupId: string) => void;
   stopVoice: () => void;
   reset: () => void;
@@ -109,8 +109,8 @@ export function useAIExpense(): AIExpenseResult {
   );
 
   const parseReceipt = useCallback(
-    async (base64Url: string, groupId: string) => {
-      if (!accessToken || !base64Url) return;
+    async (base64Urls: string[], groupId: string) => {
+      if (!accessToken || !base64Urls || base64Urls.length === 0) return;
 
       setState("parsing");
       setDraft(null);
@@ -123,7 +123,7 @@ export function useAIExpense(): AIExpenseResult {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ imageBase64: base64Url, groupId }),
+          body: JSON.stringify({ imagesBase64: base64Urls, groupId }),
         });
 
         if (!res.ok) {

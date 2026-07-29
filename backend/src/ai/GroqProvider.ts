@@ -241,24 +241,35 @@ export class GroqProvider implements AIProvider {
   // ── parseReceiptImage — PHASE 6B STUB ────────────────────────────────────────
 
   async parseReceiptImage(
-    imageData: string,
+    imageDatas: string[],
     groupContext: GroupMember[]
   ): Promise<ParseResult> {
     if (!this.apiKey) {
       return this.fallback("config_error", "[Receipt Image]");
     }
 
-    // Ensure the image string has the proper data URL prefix if missing
-    let base64Url = imageData;
-    if (!base64Url.startsWith("data:image")) {
-      base64Url = `data:image/jpeg;base64,${imageData}`;
+    if (!imageDatas || imageDatas.length === 0) {
+      return this.fallback("parse_error", "No images provided");
     }
+
+    // Ensure image strings have the proper data URL prefix if missing
+    const base64Urls = imageDatas.map(img => 
+      img.startsWith("data:image") ? img : `data:image/jpeg;base64,${img}`
+    );
 
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60000); // 60s for vision
 
       const systemPrompt = "Extract the line items and prices from this receipt. Return ONLY valid JSON in this exact schema: {\"items\": [{\"name\": \"string\", \"amount\": number}], \"total\": number, \"tax\": number, \"merchant\": \"string\"}.";
+
+      const contentArray: any[] = [{ type: "text", text: systemPrompt }];
+      for (const url of base64Urls) {
+        contentArray.push({
+          type: "image_url",
+          image_url: { url }
+        });
+      }
 
       const response = await fetch(GROQ_API_URL, {
         method: "POST",
@@ -267,19 +278,11 @@ export class GroqProvider implements AIProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "qwen/qwen3.6-27b",
+          model: "llama-3.2-90b-vision-preview", // Updated model for vision
           messages: [
             {
               role: "user",
-              content: [
-                { type: "text", text: systemPrompt },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: base64Url,
-                  },
-                },
-              ],
+              content: contentArray,
             },
           ],
           temperature: 0.1,

@@ -53,7 +53,7 @@ export default function ExpenseConfirmCard({
   // ── Editable state — pre-filled from AI draft ─────────────────────────────
   const [description, setDescription] = useState(draft.description);
   const [amount, setAmount] = useState(formatAmount(draft.amount));
-  const [splitType, setSplitType] = useState<"equal" | "exact" | "fairshare">(draft.splitType);
+  const [splitType, setSplitType] = useState<"equal" | "exact" | "fairshare">("fairshare");
   const [category, setCategory] = useState<ExpenseCategory | null>(draft.category);
   const [payers, setPayers] = useState(draft.payers);
   const [participants, setParticipants] = useState(draft.participants);
@@ -62,7 +62,7 @@ export default function ExpenseConfirmCard({
   useEffect(() => {
     setDescription(draft.description);
     setAmount(formatAmount(draft.amount));
-    setSplitType(draft.splitType);
+    setSplitType("fairshare");
     setCategory(draft.category);
     setPayers(draft.payers);
     setParticipants(draft.participants);
@@ -231,32 +231,10 @@ export default function ExpenseConfirmCard({
         <CategoryBadge value={category} onChange={setCategory} />
       </div>
 
-      {/* ── Split type ───────────────────────────────────────────────────── */}
-      <div>
+      {/* ── Split type (Forced to Fairshare) ─────────────────────────────── */}
+      <div className="hidden">
         <label className="section-label mb-1.5 block">Split type</label>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setSplitType("equal")}
-            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "equal" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
-          >
-            <Equal className="h-4 w-4" strokeWidth={1.5} /> Equal
-          </button>
-          <button
-            type="button"
-            onClick={() => setSplitType("exact")}
-            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "exact" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
-          >
-            <Hash className="h-4 w-4" strokeWidth={1.5} /> Exact
-          </button>
-          <button
-            type="button"
-            onClick={() => setSplitType("fairshare")}
-            className={`flex-1 flex flex-col items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-medium transition-colors border ${splitType === "fairshare" ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--border)] bg-[var(--paper-dim)] text-[var(--text-secondary)] hover:bg-[var(--paper)]"}`}
-          >
-            <Target className="h-4 w-4" strokeWidth={1.5} /> Fairshare
-          </button>
-        </div>
+        {/* We keep splitType in state as 'fairshare' implicitly or explicitly */}
       </div>
 
       {/* ── Extracted Receipt Items (if any) ────────────────────────────── */}

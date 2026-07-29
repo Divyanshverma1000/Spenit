@@ -184,13 +184,16 @@ router.post(
   requireAuth,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { imageBase64, groupId } = req.body as {
-      imageBase64?: string;
+    const { imagesBase64, imageBase64, groupId } = req.body as {
+      imagesBase64?: string[];
+      imageBase64?: string; // fallback for backwards compatibility
       groupId?: string;
     };
 
-    if (!imageBase64) {
-      res.status(400).json({ error: "imageBase64 is required" });
+    const finalImages = imagesBase64 || (imageBase64 ? [imageBase64] : []);
+
+    if (finalImages.length === 0) {
+      res.status(400).json({ error: "imagesBase64 is required" });
       return;
     }
     
@@ -236,7 +239,7 @@ router.post(
     
     let result;
     try {
-      result = await ai.parseReceiptImage(imageBase64, membersList);
+      result = await ai.parseReceiptImage(finalImages, membersList);
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: "[receipt image]" };
     }
