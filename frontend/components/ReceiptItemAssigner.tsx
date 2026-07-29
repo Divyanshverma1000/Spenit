@@ -138,7 +138,7 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
                   placeholder="0.00"
                   min="0"
                   step="0.01"
-                  className="w-16 text-[14px] font-bold tabular-nums bg-transparent outline-none border-b border-transparent focus:border-[rgba(0,0,0,0.1)] transition-colors px-1 py-0.5 text-right" 
+                  className="w-20 flex-shrink-0 text-[14px] font-bold text-[var(--text-primary)] tabular-nums bg-transparent outline-none border-b border-transparent focus:border-[rgba(0,0,0,0.1)] transition-colors px-1 py-0.5 text-right" 
                 />
                 <button 
                   onClick={() => deleteItem(idx)}
