@@ -237,8 +237,8 @@ export default function ExpenseConfirmCard({
         {/* We keep splitType in state as 'fairshare' implicitly or explicitly */}
       </div>
 
-      {/* ── Extracted Receipt Items (if any) ────────────────────────────── */}
-      {draft.extractedItems && draft.extractedItems.length > 0 && (
+      {/* ── Extracted Receipt Items ────────────────────────────── */}
+      {draft.extractedItems && (
         <ReceiptItemAssigner 
           items={draft.extractedItems}
           members={members}
