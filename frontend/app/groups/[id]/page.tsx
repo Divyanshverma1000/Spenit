@@ -8,7 +8,6 @@ import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
-  MoreVertical,
   RefreshCw,
   Scale,
   ArrowRightLeft,
@@ -17,7 +16,11 @@ import {
   Check,
   Sparkles,
   X,
-  ShieldCheck
+  ShieldCheck,
+  Edit2,
+  Trash2,
+  Clock,
+  ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";

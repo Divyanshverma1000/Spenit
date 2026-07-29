@@ -128,9 +128,9 @@ export default function DashboardPage() {
           <QuickActions 
             actions={[
               { label: "New Group", icon: <Plus size={20} />, href: "/groups/new", accent: true },
-              { label: "Scan Receipt", icon: <Users size={20} />, onClick: () => { alert("Please select a group first to scan a receipt"); router.push("/groups"); } },
-              { label: "AI Expense", icon: <TrendingUp size={20} />, href: "/groups" },
-              { label: "Join Group", icon: <Check size={20} />, href: "/groups" }
+              { label: "Scan Receipt", icon: <Users size={20} />, href: "/scan" },
+              { label: "AI Expense", icon: <TrendingUp size={20} />, href: "/personal/chat" },
+              { label: "Join Group", icon: <Check size={20} />, href: "/join/scan" }
             ]}
           />
         </div>

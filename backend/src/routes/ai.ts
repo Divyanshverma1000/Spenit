@@ -141,6 +141,38 @@ router.post(
   }
 );
 
+// ─── GET /ai/test-key ─────────────────────────────────────────────────────────
+
+router.get(
+  "/test-key",
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    try {
+      const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
+      const apiKey = userRes.rows[0]?.groq_api_key;
+      
+      if (!apiKey) {
+        res.status(400).json({ error: "No API key configured" });
+        return;
+      }
+
+      // Simple test using GroqProvider
+      const ai = new GroqProvider(apiKey);
+      const test = await ai.parseReceiptImage("data:image/jpeg;base64,test", []); // It will fallback due to bad image, but if API key is invalid it will throw auth error
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err.message?.includes("Bring your own AI")) {
+        res.status(403).json({ error: "Invalid API key" });
+      } else {
+        // If it throws auth error from Groq API
+        res.status(403).json({ error: "API connection failed" });
+      }
+    }
+  }
+);
+
 // ─── POST /ai/parse-receipt ────────────────────────────────────────────────────
 /**
  * Phase 6B stub — receipt OCR.
@@ -157,45 +189,46 @@ router.post(
       groupId?: string;
     };
 
-    if (!groupId) {
-      res.status(400).json({ error: "groupId is required" });
-      return;
-    }
     if (!imageBase64) {
       res.status(400).json({ error: "imageBase64 is required" });
       return;
     }
     
-    // Quick UUID validation regex
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(groupId)) {
-      res.status(400).json({ error: "Invalid groupId format" });
-      return;
-    }
+    let membersList: any[] = [];
 
-    // Verify membership
-    const memberCheck = await pool.query(
-      'SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
-      [groupId, userId]
-    );
-    if (memberCheck.rows.length === 0) {
-      res.status(403).json({ error: "You are not a member of this group" });
-      return;
-    }
+    if (groupId) {
+      // Group context
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(groupId)) {
+        res.status(400).json({ error: "Invalid groupId format" });
+        return;
+      }
 
-    // Fetch group context
-    const membersRes = await pool.query<{
-      id: string;
-      name: string;
-      username: string;
-    }>(
-      `SELECT u.id, u.name, u.username
-       FROM "GroupMember" gm
-       JOIN "User" u ON u.id = gm.user_id
-       WHERE gm.group_id = $1
-       ORDER BY (gm.user_id = $2) DESC, u.name ASC`,
-      [groupId, userId]
-    );
+      // Verify membership
+      const memberCheck = await pool.query(
+        'SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
+        [groupId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        res.status(403).json({ error: "You are not a member of this group" });
+        return;
+      }
+
+      // Fetch group members
+      const membersRes = await pool.query<{ id: string; name: string; username: string; }>(
+        `SELECT u.id, u.name, u.username
+         FROM "GroupMember" gm
+         JOIN "User" u ON u.id = gm.user_id
+         WHERE gm.group_id = $1
+         ORDER BY (gm.user_id = $2) DESC, u.name ASC`,
+        [groupId, userId]
+      );
+      membersList = membersRes.rows;
+    } else {
+      // Personal context
+      const userRes = await pool.query('SELECT id, name, username FROM "User" WHERE id = $1', [userId]);
+      membersList = userRes.rows;
+    }
 
     const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
     const apiKey = userRes.rows[0]?.groq_api_key;
@@ -203,7 +236,7 @@ router.post(
     
     let result;
     try {
-      result = await ai.parseReceiptImage(imageBase64, membersRes.rows);
+      result = await ai.parseReceiptImage(imageBase64, membersList);
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: "[receipt image]" };
     }

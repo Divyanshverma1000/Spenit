@@ -291,31 +291,22 @@ export default function ProfilePage() {
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-[12px] bg-black text-white shadow-sm">
                         <Cpu size={20} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-[16px] font-bold text-[var(--text-primary)] tracking-tight">Groq</p>
-                          {profile.hasGroqKey && !isEditingGroq && (
-                            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--positive)] bg-green-50 px-2 py-0.5 rounded-[6px]">
-                              <CheckCircle size={10} /> Connected
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[12px] font-medium text-[var(--text-secondary)] mt-0.5">Model: Llama 3 8B Instruct</p>
-                      </div>
+                      <h4 className="text-[14px] font-bold text-[var(--text-primary)]">Groq API Key</h4>
+                      <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 leading-snug">Bring Your Own AI. Required for receipt scanning and intelligent chat.</p>
                     </div>
                   </div>
 
                   {isEditingGroq ? (
                     <form onSubmit={handleSaveGroq} className="flex gap-2 mb-3">
                       <div className="relative flex-1">
-                        <Key size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                        <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
                         <input
                           type="password"
-                          placeholder="gsk_..."
                           value={groqKey}
                           onChange={(e) => setGroqKey(e.target.value)}
-                          className="w-full bg-[var(--ink)] rounded-[12px] pl-9 pr-3 py-2 text-[14px] text-[var(--text-primary)] border border-[rgba(0,0,0,0.05)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] font-mono"
+                          placeholder="gsk_..."
+                          className="w-full pl-9 pr-3 py-2.5 bg-[var(--bg-main)] border border-[rgba(0,0,0,0.08)] rounded-[12px] text-[13px] font-medium outline-none focus:border-[var(--accent)] transition-colors"
+                          autoFocus
                         />
                       </div>
                       <button type="submit" disabled={isSavingGroq || !groqKey.trim()} className="bg-[var(--accent)] text-white px-4 rounded-[12px] font-bold text-[13px] shadow-sm disabled:opacity-50">
@@ -323,7 +314,7 @@ export default function ProfilePage() {
                       </button>
                     </form>
                   ) : profile.hasGroqKey ? (
-                    <div className="flex items-center justify-between bg-[var(--ink)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
+                    <div className="flex items-center justify-between bg-[var(--bg-main)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
                       <code className="font-mono text-[13px] font-medium text-[var(--text-secondary)]">{profile.groqKeyMasked}</code>
                       <div className="flex gap-2">
                         <button onClick={() => setCopiedGroq(true)} className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
@@ -335,23 +326,23 @@ export default function ProfilePage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-[var(--ink)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
+                    <div className="bg-[var(--bg-main)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
                       <span className="text-[13px] text-[var(--text-muted)] font-medium">No API Key configured</span>
                     </div>
                   )}
 
                   <div className="flex gap-2">
                     {profile.hasGroqKey && (
-                      <button onClick={handleTestConnection} disabled={testingGroq} className="flex-1 bg-[var(--paper-dim)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform">
+                      <button onClick={handleTestConnection} disabled={testingGroq} className="flex-1 bg-[var(--ink)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform">
                         {testingGroq ? "Testing..." : "Test Connection"}
                       </button>
                     )}
                     {!profile.hasGroqKey && !isEditingGroq && (
-                      <button onClick={() => setIsEditingGroq(true)} className="flex-1 bg-[var(--paper-dim)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform">
+                      <button onClick={() => setIsEditingGroq(true)} className="flex-1 bg-[var(--ink)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform">
                         Set API Key
                       </button>
                     )}
-                    <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="flex-1 bg-[var(--paper-dim)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform flex items-center justify-center gap-1">
+                    <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="flex-1 bg-[var(--ink)] text-[var(--text-primary)] font-bold text-[12px] py-2 rounded-[10px] active:scale-95 transition-transform flex items-center justify-center gap-1">
                       Get Free Key
                     </a>
                   </div>
@@ -362,11 +353,9 @@ export default function ProfilePage() {
             {/* ── Settings ───────────────────────────────────────────────── */}
             <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-8">
               <SettingsList title="More Options">
-                <SettingsRow icon={<Lock size={18} />} label="Privacy" onClick={() => alert("Privacy coming soon")} />
-                <SettingsRow icon={<ShieldCheck size={18} />} label="Security" onClick={() => alert("Security coming soon")} />
-                <SettingsRow icon={<HelpCircle size={18} />} label="Help & Support" onClick={() => alert("Help coming soon")} />
-                <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => alert("Terms coming soon")} />
-                <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => alert("About coming soon")} />
+                <SettingsRow icon={<Lock size={18} />} label="Privacy Policy" onClick={() => router.push("/privacy")} />
+                <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => router.push("/terms")} />
+                <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => router.push("/about")} />
                 <SettingsRow 
                   icon={<LogOut size={18} />} 
                   label="Log Out" 
