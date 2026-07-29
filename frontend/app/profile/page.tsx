@@ -291,8 +291,11 @@ export default function ProfilePage() {
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-[12px] bg-black text-white shadow-sm">
                         <Cpu size={20} />
-                      <h4 className="text-[14px] font-bold text-[var(--text-primary)]">Groq API Key</h4>
-                      <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 leading-snug">Bring Your Own AI. Required for receipt scanning and intelligent chat.</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[14px] font-bold text-[var(--text-primary)]">Groq API Key</h4>
+                        <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 leading-snug">Bring Your Own AI. Required for receipt scanning and intelligent chat.</p>
+                      </div>
                     </div>
                   </div>
 

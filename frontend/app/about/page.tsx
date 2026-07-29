@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, Github, Globe } from "lucide-react";
+import { ChevronLeft, Globe } from "lucide-react";
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 
@@ -32,7 +32,7 @@ export default function AboutPage() {
             <Globe size={20} />
           </a>
           <a href="https://github.com/Divyanshverma1000/Spenit" target="_blank" rel="noreferrer" className="w-12 h-12 rounded-full bg-[var(--paper)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors border border-[rgba(0,0,0,0.05)]">
-            <Github size={20} />
+            <span className="font-bold">GH</span>
           </a>
         </div>
       </main>
