@@ -221,9 +221,6 @@ export default function GroupDetailPage() {
                 </div>
               </div>
             </div>
-            <button className="h-10 w-10 flex items-center justify-center text-[var(--text-secondary)] active:scale-95 transition-transform">
-              <MoreVertical size={20} />
-            </button>
           </div>
         </div>
 
