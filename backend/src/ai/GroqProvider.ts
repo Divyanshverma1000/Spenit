@@ -278,7 +278,7 @@ export class GroqProvider implements AIProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "llama-3.2-90b-vision-preview", // Updated model for vision
+          model: "qwen/qwen3.6-27b",
           messages: [
             {
               role: "user",
@@ -286,7 +286,8 @@ export class GroqProvider implements AIProvider {
             },
           ],
           temperature: 0.1,
-          max_tokens: 1024,
+          max_completion_tokens: 1024,
+          response_format: { type: "json_object" },
         }),
         signal: controller.signal,
       });
