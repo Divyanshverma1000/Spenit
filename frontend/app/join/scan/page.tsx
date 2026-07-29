@@ -14,13 +14,12 @@ export default function QRScanJoinPage() {
 
   const handleScan = (text: string) => {
     try {
-      // Expecting a URL like: https://spenit.vercel.app/join/uuid
-      // Or just a raw uuid
-      if (text.includes("/join/")) {
-        const parts = text.split("/join/");
+      // The QR code contains the invite URL: https://spenit.vercel.app/g/token
+      if (text.includes("/g/")) {
+        const parts = text.split("/g/");
         if (parts.length === 2) {
-          const groupId = parts[1].split("/")[0].split("?")[0];
-          router.push(`/join/${groupId}`);
+          const token = parts[1].split("/")[0].split("?")[0];
+          router.push(`/g/${token}`);
           return;
         }
       }
