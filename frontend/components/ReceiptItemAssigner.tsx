@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { Plus, X, Users } from "lucide-react";
+import { Plus, Trash2, Users } from "lucide-react";
 
 interface ReceiptItem {
   name: string;
@@ -24,7 +24,16 @@ interface ReceiptItemAssignerProps {
 
 export default function ReceiptItemAssigner({ items: initialItems, members, onChange, onItemsChange }: ReceiptItemAssignerProps) {
   const [items, setItems] = useState<ReceiptItem[]>(initialItems);
-  const [assignments, setAssignments] = useState<Record<number, string[]>>({});
+  
+  // Default all parsed items to be selected by all members
+  const [assignments, setAssignments] = useState<Record<number, string[]>>(() => {
+    const defaultAssignments: Record<number, string[]> = {};
+    const allMemberIds = members.map(m => m.id);
+    initialItems.forEach((_, idx) => {
+      defaultAssignments[idx] = allMemberIds;
+    });
+    return defaultAssignments;
+  });
 
   useEffect(() => {
     onItemsChange?.(items);
@@ -79,7 +88,13 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
   }
 
   function addItem() {
+    const newIdx = items.length;
     setItems(prev => [...prev, { name: "", amount: 0 }]);
+    // Default new item to be selected by all members
+    setAssignments(prev => ({
+      ...prev,
+      [newIdx]: members.map(m => m.id)
+    }));
   }
 
   // Recalculate personalAmounts whenever assignments or items change
@@ -142,16 +157,17 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
                 />
                 <button 
                   onClick={() => deleteItem(idx)}
-                  className="text-[var(--text-muted)] hover:text-red-500 p-1"
+                  className="text-[var(--text-muted)] hover:text-red-500 p-2 flex-shrink-0"
+                  aria-label="Delete item"
                 >
-                  <X size={16} />
+                  <Trash2 size={16} />
                 </button>
               </div>
               <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 items-center">
                 <button
                   type="button"
                   onClick={() => toggleSelectAll(idx)}
-                  className={`h-10 px-3 flex-shrink-0 rounded-full flex items-center justify-center gap-1.5 font-bold text-[12px] border-2 transition-colors ${
+                  className={`h-8 px-3 flex-shrink-0 rounded-full flex items-center justify-center gap-1.5 font-bold text-[12px] border-2 transition-colors ${
                     isAllSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-[rgba(0,0,0,0.05)] bg-[var(--paper-dim)] text-[var(--text-secondary)]"
                   }`}
                 >
@@ -165,12 +181,12 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
                       key={m.id}
                       type="button"
                       onClick={() => toggleAssignment(idx, m.id)}
-                      className={`h-10 w-10 flex-shrink-0 rounded-full flex items-center justify-center font-bold text-[14px] border-2 transition-colors ${
-                        isSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-transparent bg-[var(--paper-dim)] text-[var(--text-secondary)]"
+                      className={`h-8 w-8 flex-shrink-0 rounded-full flex items-center justify-center font-bold text-[12px] border-2 transition-colors ${
+                        isSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-transparent bg-[var(--paper-dim)] text-[var(--text-secondary)] opacity-50 grayscale"
                       }`}
                     >
                       {m.avatarUrl ? (
-                        <Image src={m.avatarUrl} alt={m.name} width={36} height={36} className="rounded-full object-cover" />
+                        <Image src={m.avatarUrl} alt={m.name} width={28} height={28} className="rounded-full object-cover" />
                       ) : (
                         m.name.charAt(0).toUpperCase()
                       )}

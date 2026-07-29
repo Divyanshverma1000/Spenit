@@ -243,6 +243,13 @@ export default function ExpenseConfirmCard({
           items={draft.extractedItems}
           members={members}
           onChange={(newParticipants) => setParticipants(newParticipants)}
+          onItemsChange={(newItems) => {
+            const runningTotal = newItems.reduce((acc, item) => acc + (item.amount || 0), 0);
+            const currentAmount = parseFloat(amount || "0");
+            if (runningTotal > currentAmount) {
+              setAmount(runningTotal.toFixed(2));
+            }
+          }}
         />
       )}
 
