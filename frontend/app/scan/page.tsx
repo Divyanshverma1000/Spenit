@@ -75,7 +75,10 @@ export default function GlobalScanPage() {
 
   if (!authed) return null;
 
-  if (ai.state === "confirming" && ai.draft) {
+  if ((ai.state === "review" || ai.state === "submitting") && ai.draft) {
+    // If it's a personal context (no groupId selected), we pass a dummy group ID 
+    // or we'd ideally render a different card. For now, pass empty members/groupId
+    // and let submitDraft handle it.
     return (
       <div className="min-h-screen bg-black text-white pb-24">
         <header className="px-5 py-4 flex items-center gap-4 border-b border-white/10">
@@ -85,7 +88,16 @@ export default function GlobalScanPage() {
           <h1 className="text-[17px] font-bold tracking-tight">Confirm Receipt</h1>
         </header>
         <main className="p-5">
-          <ExpenseConfirmCard draft={ai.draft} onConfirm={ai.submitExpense} onCancel={ai.reset} isSubmitting={false} />
+          <ExpenseConfirmCard 
+            draft={ai.draft} 
+            members={[]} 
+            groupId={""} 
+            onConfirmed={() => {}} 
+            onManual={() => {}} 
+            onCancel={ai.reset} 
+            isSubmitting={ai.state === "submitting"} 
+            onSubmit={async (updated) => { await ai.submitDraft(updated, ""); }} 
+          />
         </main>
       </div>
     );

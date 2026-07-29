@@ -239,7 +239,8 @@ export function useAIExpense(): AIExpenseResult {
       setState("submitting");
 
       try {
-        const body = {
+        let endpoint = `${API_URL}/expenses`;
+        let body: any = {
           groupId,
           description: confirmedDraft.description,
           amount: confirmedDraft.amount,
@@ -250,7 +251,16 @@ export function useAIExpense(): AIExpenseResult {
           participants: confirmedDraft.participants,
         };
 
-        const res = await fetch(`${API_URL}/expenses`, {
+        if (!groupId) {
+          endpoint = `${API_URL}/personal_expenses`;
+          body = {
+            description: confirmedDraft.description,
+            amount: confirmedDraft.amount,
+            category: confirmedDraft.category || "Misc",
+          };
+        }
+
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
