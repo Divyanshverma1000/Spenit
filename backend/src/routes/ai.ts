@@ -244,8 +244,7 @@ router.post(
       result = { fallback: true, reason: "config_error", rawText: "[receipt image]" };
     }
 
-    // Stub always returns fallback — Phase 6B will implement vision model
-    res.json({ ...result, stubMessage: "Receipt OCR coming in Phase 6B" });
+    res.json(result);
   }
 );
 

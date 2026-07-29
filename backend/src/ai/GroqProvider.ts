@@ -287,7 +287,6 @@ export class GroqProvider implements AIProvider {
           ],
           temperature: 0.1,
           max_tokens: 1024,
-          response_format: { type: "json_object" },
         }),
         signal: controller.signal,
       });
@@ -324,10 +323,10 @@ export class GroqProvider implements AIProvider {
 
       return draft;
     } catch (e: any) {
-      console.error("[ai] vision error:", e);
+      console.error("Groq vision error:", e);
       return this.fallback(
         e.name === "AbortError" ? "timeout" : "parse_error",
-        "[Receipt Image]"
+        `[Error]: ${e.message}`
       );
     }
   }
