@@ -10,6 +10,7 @@
  * Endpoints:
  *   POST /ai/parse-expense   — parse NL text → ParsedExpenseDraft | AIFallback
  *   POST /ai/parse-receipt   — upload receipt image → stub (Phase 6B)
+ *   POST /ai/extract-order   — OCR text of one order screenshot → checked order JSON
  */
 
 import { Router, Request, Response } from "express";
@@ -17,6 +18,7 @@ import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { GroqProvider } from "../ai/GroqProvider";
 import type { GroupMember, ParsedExpenseDraft } from "../ai/AIProvider";
+import { normalizeOrder, groundOrder, checkTotals, needsVisionBackup } from "../lib/orderExtract";
 
 const router = Router();
 
@@ -245,6 +247,72 @@ router.post(
     }
 
     res.json(result);
+  }
+);
+
+// ─── POST /ai/extract-order ────────────────────────────────────────────────────
+/**
+ * Bulk order import (BulkOrderSplit_Plan.md §3): ONE order screenshot per call.
+ *
+ * The phone runs OCR and sends the text. The text model only structures it; the checks
+ * (every price must appear in the OCR text, totals must add up) are plain code.
+ * If the text route clearly failed, the response says `needsVision: true` and the phone
+ * retries this one image with `imageBase64` — so images only leave the phone when needed.
+ *
+ * Body: { ocrText: string, ocrConfidence?: number (0–100), imageBase64?: string }
+ * Returns: { order, totals, groundedShare, needsVision, source, model, latencyMs } | AIFallback
+ */
+router.post(
+  "/extract-order",
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const { ocrText, ocrConfidence, imageBase64 } = req.body as {
+      ocrText?: string;
+      ocrConfidence?: number;
+      imageBase64?: string;
+    };
+
+    if (typeof ocrText !== "string" || (ocrText.trim().length === 0 && !imageBase64)) {
+      res.status(400).json({ error: "ocrText is required" });
+      return;
+    }
+
+    const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
+    const apiKey = userRes.rows[0]?.groq_api_key;
+    if (!apiKey) {
+      res.json({ fallback: true, reason: "config_error", rawText: "" });
+      return;
+    }
+
+    const result = await new GroqProvider(apiKey).extractOrder({ ocrText, imageBase64 });
+    if (!result.ok) {
+      console.warn(`[ai] extract-order failed reason=${result.reason} ${result.message ?? ""}`);
+      res.json({ fallback: true, reason: result.reason, rawText: "" });
+      return;
+    }
+
+    const order = normalizeOrder(result.raw);
+    // Grounding only applies to the text route: the vision model is allowed to read digits
+    // the OCR got wrong, so there the totals check is the guard.
+    const groundedShare = result.source === "text" ? groundOrder(order, ocrText) : 1;
+    const totals = checkTotals(order);
+    const needsVision =
+      result.source === "text" && needsVisionBackup(order, groundedShare, Number(ocrConfidence) || 0);
+
+    console.log(
+      `[ai] extract-order source=${result.source} items=${order.items.length} totals=${totals.status} grounded=${groundedShare.toFixed(2)} latency=${result.latencyMs}ms`
+    );
+
+    res.json({
+      order,
+      totals,
+      groundedShare,
+      needsVision,
+      source: result.source,
+      model: result.model,
+      latencyMs: result.latencyMs,
+    });
   }
 );
 

@@ -17,6 +17,8 @@ import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { invalidateGroupBalanceCache } from "./balance";
 import { sendToUsers } from "../push";
+import { computeItemizedShares, FeePolicy } from "../lib/itemizedSplit";
+import type { PoolClient } from "pg";
 
 const router = Router();
 
@@ -38,13 +40,33 @@ interface CreateExpenseBody {
   description: string;
   amount: number;
   currency?: string;
-  splitType: "equal" | "exact" | "fairshare";
+  splitType: SplitType;
   payers: PayerInput[];
   participants: SplitInput[]; // for 'exact': must include shareAmount; for 'equal'/'fairshare': list of userId + optional personalAmount
   /** Optional — AI-inferred or user-selected category. Stored in Expense.category (Tier 1 column, now active). */
   category?: string | null;
   /** Optional — JSON data representing itemized receipt details for Universal Fairshare */
   receiptData?: any;
+}
+
+type SplitType = "equal" | "exact" | "fairshare" | "itemized";
+const SPLIT_TYPES: SplitType[] = ["equal", "exact", "fairshare", "itemized"];
+
+/**
+ * receiptData for split_type 'itemized' (one imported order — BulkOrderSplit_Plan.md §4).
+ * The server computes every share from this; participants in the body are ignored.
+ */
+interface ItemizedReceiptData {
+  items: { name: string; lineTotal: number; sharedBy: string[] }[];
+  fees?: { label?: string; amount: number }[];
+  discounts?: { label?: string; amount: number }[];
+  feePolicy?: FeePolicy;
+  orderKey?: string; // "platform:orderId" — used to spot double imports
+}
+
+/** Where prepareExpense reports a validation failure (an Express Response, or a collector for batches). */
+interface ErrorSink {
+  status(code: number): { json(body: unknown): unknown };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -89,7 +111,7 @@ interface PreparedExpense {
   description: string;
   amount: Decimal;
   currency: string;
-  splitType: "equal" | "exact" | "fairshare";
+  splitType: SplitType;
   category: string | null;
   receiptData: unknown;
   payers: PayerInput[];
@@ -104,7 +126,7 @@ interface PreparedExpense {
 async function prepareExpense(
   body: CreateExpenseBody,
   userId: string,
-  res: Response
+  res: ErrorSink
 ): Promise<PreparedExpense | null> {
   // ── 2. Parse & basic validation ───────────────────────────────────────────
   const {
@@ -114,14 +136,27 @@ async function prepareExpense(
     currency = "INR",
     splitType,
     payers = [],
-    participants = [],
     category = null,
   } = body;
+  let participants = body.participants ?? [];
+
+  // Itemized: who shares what lives in receiptData; participants are derived from it.
+  const itemized = splitType === "itemized" ? (body.receiptData as ItemizedReceiptData | undefined) : undefined;
+  if (splitType === "itemized") {
+    if (!itemized || !Array.isArray(itemized.items) || itemized.items.length === 0) {
+      res.status(400).json({ error: "receiptData.items is required for split_type 'itemized'" });
+      return null;
+    }
+    if (itemized.items.length > 300) { res.status(400).json({ error: "Too many items in one expense" }); return null; }
+    participants = Array.from(new Set(itemized.items.flatMap((i) => (Array.isArray(i.sharedBy) ? i.sharedBy : [])))).map(
+      (id) => ({ userId: String(id) })
+    );
+  }
 
   if (!groupId) { res.status(400).json({ error: "groupId is required" }); return null; }
   if (!description || description.trim().length === 0) { res.status(400).json({ error: "description is required" }); return null; }
   if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0) { res.status(400).json({ error: "amount must be a positive number" }); return null; }
-  if (!["equal", "exact", "fairshare"].includes(splitType)) { res.status(400).json({ error: "splitType must be 'equal', 'exact', or 'fairshare'" }); return null; }
+  if (!SPLIT_TYPES.includes(splitType)) { res.status(400).json({ error: "splitType must be 'equal', 'exact', 'fairshare' or 'itemized'" }); return null; }
   if (payers.length === 0) { res.status(400).json({ error: "At least one payer is required" }); return null; }
   if (participants.length === 0) { res.status(400).json({ error: "At least one participant is required" }); return null; }
 
@@ -170,7 +205,29 @@ async function prepareExpense(
   // ── 5. Compute split shares ───────────────────────────────────────────────
   let splitShares: { userId: string; shareAmount: Decimal }[];
 
-  if (splitType === "equal") {
+  if (splitType === "itemized") {
+    const feePolicy: FeePolicy = ["proportional", "equal", "payer"].includes(itemized!.feePolicy as string)
+      ? itemized!.feePolicy!
+      : "proportional";
+    // The biggest payer carries the extras under the 'payer' fee policy.
+    const mainPayer = [...payers].sort((a, b) => Number(b.amountPaid) - Number(a.amountPaid))[0].userId;
+    let result;
+    try {
+      result = computeItemizedShares({
+        amount,
+        payerId: mainPayer,
+        items: itemized!.items.map((i) => ({ lineTotal: toDecimal(i.lineTotal).toFixed(2), sharedBy: i.sharedBy })),
+        fees: (itemized!.fees ?? []).map((f) => ({ amount: toDecimal(f.amount).toFixed(2) })),
+        discounts: (itemized!.discounts ?? []).map((d) => ({ amount: toDecimal(Math.abs(Number(d.amount))).toFixed(2) })),
+        feePolicy,
+      });
+    } catch {
+      res.status(400).json({ error: "Every item, fee and discount needs a valid amount" });
+      return null;
+    }
+    if (!result.ok) { res.status(400).json({ error: result.error }); return null; }
+    splitShares = result.shares;
+  } else if (splitType === "equal") {
     const shares = computeEqualShares(amount, participants.length);
     splitShares = participants.map((p, i) => ({
       userId: p.userId,
@@ -246,6 +303,61 @@ async function prepareExpense(
   };
 }
 
+/** Write one prepared expense (Expense + payer + split rows) inside the caller's transaction. */
+async function insertExpense(
+  client: PoolClient,
+  prepared: PreparedExpense,
+  userId: string
+): Promise<Record<string, unknown>> {
+  const { groupId, description, amount, currency, splitType, category, receiptData, payers, splitShares } = prepared;
+
+  // Insert Expense row
+  const expenseRow = await client.query(
+    `INSERT INTO "Expense"
+       (group_id, description, amount, currency, split_type, category, receipt_data, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, group_id, description, amount, currency, split_type, category, receipt_data, created_by, created_at`,
+    [groupId, description.trim(), amount.toFixed(2), currency, splitType, category || null, receiptData ? JSON.stringify(receiptData) : null, userId]
+  );
+  const expense = expenseRow.rows[0];
+
+  // Insert ExpensePayer rows
+  for (const payer of payers) {
+    await client.query(
+      `INSERT INTO "ExpensePayer" (expense_id, user_id, amount_paid) VALUES ($1, $2, $3)`,
+      [expense.id, payer.userId, toDecimal(payer.amountPaid).toFixed(2)]
+    );
+  }
+
+  // Insert ExpenseSplit rows
+  for (const split of splitShares) {
+    await client.query(
+      `INSERT INTO "ExpenseSplit" (expense_id, user_id, share_amount) VALUES ($1, $2, $3)`,
+      [expense.id, split.userId, split.shareAmount.toFixed(2)]
+    );
+  }
+
+  return {
+    id: expense.id,
+    groupId: expense.group_id,
+    description: expense.description,
+    amount: expense.amount,
+    currency: expense.currency,
+    splitType: expense.split_type,
+    category: expense.category,
+    createdBy: expense.created_by,
+    createdAt: expense.created_at,
+    payers: payers.map((p) => ({
+      userId: p.userId,
+      amountPaid: toDecimal(p.amountPaid).toFixed(2),
+    })),
+    splits: splitShares.map((s) => ({
+      userId: s.userId,
+      shareAmount: s.shareAmount.toFixed(2),
+    })),
+  };
+}
+
 // ─── POST /expenses ───────────────────────────────────────────────────────────
 
 router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
@@ -273,7 +385,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   const body = req.body as CreateExpenseBody;
   const prepared = await prepareExpense(body, userId, res);
   if (!prepared) return;
-  const { groupId, description, amount, currency, splitType, category, payers, splitShares } = prepared;
+  const { description, amount } = prepared;
 
   // ── 6. Persist in a transaction ───────────────────────────────────────────
   const client = await pool.connect();
@@ -282,51 +394,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   try {
     await client.query("BEGIN");
 
-    // Insert Expense row
-    const expenseRow = await client.query(
-      `INSERT INTO "Expense"
-         (group_id, description, amount, currency, split_type, category, receipt_data, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, group_id, description, amount, currency, split_type, category, receipt_data, created_by, created_at`,
-      [groupId, description.trim(), amount.toFixed(2), currency, splitType, category || null, body.receiptData ? JSON.stringify(body.receiptData) : null, userId]
-    );
-    const expense = expenseRow.rows[0];
-
-    // Insert ExpensePayer rows
-    for (const payer of payers) {
-      await client.query(
-        `INSERT INTO "ExpensePayer" (expense_id, user_id, amount_paid) VALUES ($1, $2, $3)`,
-        [expense.id, payer.userId, toDecimal(payer.amountPaid).toFixed(2)]
-      );
-    }
-
-    // Insert ExpenseSplit rows
-    for (const split of splitShares) {
-      await client.query(
-        `INSERT INTO "ExpenseSplit" (expense_id, user_id, share_amount) VALUES ($1, $2, $3)`,
-        [expense.id, split.userId, split.shareAmount.toFixed(2)]
-      );
-    }
-
-    expenseResult = {
-      id: expense.id,
-      groupId: expense.group_id,
-      description: expense.description,
-      amount: expense.amount,
-      currency: expense.currency,
-      splitType: expense.split_type,
-      category: expense.category,
-      createdBy: expense.created_by,
-      createdAt: expense.created_at,
-      payers: payers.map((p) => ({
-        userId: p.userId,
-        amountPaid: toDecimal(p.amountPaid).toFixed(2),
-      })),
-      splits: splitShares.map((s) => ({
-        userId: s.userId,
-        shareAmount: s.shareAmount.toFixed(2),
-      })),
-    };
+    expenseResult = await insertExpense(client, prepared, userId);
 
     // Record the idempotency key in the SAME transaction as the expense. If a concurrent
     // duplicate request got there first, undo ours and return its stored response.
@@ -391,6 +459,176 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   })();
 
   res.status(201).json(expenseResult);
+});
+
+// ─── POST /expenses/batch ─────────────────────────────────────────────────────
+/**
+ * Bulk order import (BulkOrderSplit_Plan.md §4): up to 30 expenses in ONE group, all or nothing.
+ * Every expense goes through the same prepareExpense rules as a single create.
+ * One Idempotency-Key covers the whole batch; one push notification for all of it.
+ *
+ * Body: { groupId, expenses: CreateExpenseBody[] }
+ * Returns 201 { expenses: [...] } | 400 { error, index } | 409 { error, duplicateOrderKeys }
+ */
+const MAX_BATCH = 30;
+
+router.post("/batch", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
+  const userId = req.user!.userId;
+  const { groupId, expenses } = req.body as { groupId?: string; expenses?: CreateExpenseBody[] };
+
+  if (!groupId) { res.status(400).json({ error: "groupId is required" }); return; }
+  if (!Array.isArray(expenses) || expenses.length === 0) { res.status(400).json({ error: "expenses is required" }); return; }
+  if (expenses.length > MAX_BATCH) { res.status(400).json({ error: `At most ${MAX_BATCH} expenses per batch` }); return; }
+
+  if (idempotencyKey) {
+    if (idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+      res.status(400).json({ error: "Idempotency-Key is too long" });
+      return;
+    }
+    const prior = await pool.query(
+      'SELECT response FROM "IdempotencyKey" WHERE user_id = $1 AND key = $2',
+      [userId, idempotencyKey]
+    );
+    if (prior.rows.length > 0) {
+      res.status(200).json(prior.rows[0].response);
+      return;
+    }
+  }
+
+  // Validate everything before writing anything.
+  const prepared: PreparedExpense[] = [];
+  for (const [index, e] of expenses.entries()) {
+    let failure: { code: number; body: any } | null = null;
+    const collector: ErrorSink = {
+      status: (code) => ({ json: (body) => (failure = { code, body }) }),
+    };
+    const p = await prepareExpense({ ...e, groupId }, userId, collector);
+    if (!p) {
+      const f = failure as { code: number; body: any } | null;
+      res.status(f?.code ?? 400).json({ ...(f?.body ?? { error: "Invalid expense" }), index });
+      return;
+    }
+    prepared.push(p);
+  }
+
+  // The same order can't be imported twice into a group (even from another phone).
+  const orderKeys = prepared
+    .map((p) => (p.receiptData as ItemizedReceiptData | null)?.orderKey)
+    .filter((k): k is string => typeof k === "string" && k.length > 0);
+  if (orderKeys.length > 0) {
+    const dup = await pool.query(
+      `SELECT DISTINCT receipt_data->>'orderKey' AS key FROM "Expense"
+       WHERE group_id = $1 AND deleted_at IS NULL AND receipt_data->>'orderKey' = ANY($2::text[])`,
+      [groupId, orderKeys]
+    );
+    if (dup.rows.length > 0) {
+      res.status(409).json({
+        error: "Some of these orders were already added to this group",
+        duplicateOrderKeys: dup.rows.map((r: { key: string }) => r.key),
+      });
+      return;
+    }
+  }
+
+  const client = await pool.connect();
+  let response: { expenses: Record<string, unknown>[] };
+  try {
+    await client.query("BEGIN");
+    const created: Record<string, unknown>[] = [];
+    for (const p of prepared) created.push(await insertExpense(client, p, userId));
+    response = { expenses: created };
+
+    if (idempotencyKey) {
+      const stored = await client.query(
+        `INSERT INTO "IdempotencyKey" (user_id, key, response) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, key) DO NOTHING RETURNING key`,
+        [userId, idempotencyKey, JSON.stringify(response)]
+      );
+      if (stored.rows.length === 0) {
+        await client.query("ROLLBACK");
+        const winner = await pool.query(
+          'SELECT response FROM "IdempotencyKey" WHERE user_id = $1 AND key = $2',
+          [userId, idempotencyKey]
+        );
+        res.status(200).json(winner.rows[0]?.response ?? response);
+        return;
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /expenses/batch error:", err);
+    res.status(500).json({ error: "Failed to create expenses" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  invalidateGroupBalanceCache(groupId).catch((err) =>
+    console.error("Balance cache invalidation failed:", err)
+  );
+
+  // One push for the whole import, not one per order.
+  ;(async () => {
+    try {
+      const [membersRes, creatorRes] = await Promise.all([
+        pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [groupId]),
+        pool.query(
+          `SELECT COALESCE(gm.nickname, u.name) AS name
+           FROM "User" u LEFT JOIN "GroupMember" gm ON gm.group_id = $2 AND gm.user_id = u.id
+           WHERE u.id = $1`,
+          [userId, groupId]
+        ),
+      ]);
+      const memberIds = membersRes.rows.map((r: { user_id: string }) => r.user_id);
+      const addedByName = creatorRes.rows[0]?.name || "Someone";
+      const total = prepared.reduce((a, p) => a.plus(p.amount), new Decimal(0));
+      await sendToUsers(memberIds, {
+        title: "🛒 Orders added",
+        body: `${addedByName} added ${prepared.length} order${prepared.length > 1 ? "s" : ""} — ₹${total.toFixed(2)}`,
+        url: `/groups/${groupId}`,
+        tag: `expense-${groupId}`,
+      }, userId);
+    } catch (err) {
+      console.error("[push] batch notification failed:", err);
+    }
+  })();
+
+  res.status(201).json(response);
+});
+
+// ─── POST /expenses/order-keys ────────────────────────────────────────────────
+/**
+ * Which of these imported orders are already in the group? Lets the import screen mark
+ * "Already added" while reading, before the user spends any taps on them.
+ * Body: { groupId, keys: string[] } → { existing: { key, expenseId, createdAt }[] }
+ */
+router.post("/order-keys", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user!.userId;
+  const { groupId, keys } = req.body as { groupId?: string; keys?: string[] };
+  if (!groupId || !Array.isArray(keys)) { res.status(400).json({ error: "groupId and keys are required" }); return; }
+
+  const member = await pool.query(
+    'SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
+    [groupId, userId]
+  );
+  if (member.rows.length === 0) { res.status(403).json({ error: "You are not a member of this group" }); return; }
+
+  const clean = keys.filter((k) => typeof k === "string" && k.length > 0).slice(0, 100);
+  if (clean.length === 0) { res.json({ existing: [] }); return; }
+  const rows = await pool.query(
+    `SELECT receipt_data->>'orderKey' AS key, id, created_at FROM "Expense"
+     WHERE group_id = $1 AND deleted_at IS NULL AND receipt_data->>'orderKey' = ANY($2::text[])`,
+    [groupId, clean]
+  );
+  res.json({
+    existing: rows.rows.map((r: { key: string; id: string; created_at: string }) => ({
+      key: r.key,
+      expenseId: r.id,
+      createdAt: r.created_at,
+    })),
+  });
 });
 
 /** Non-deleted expenses for a group with payers/splits (display names = nicknames). */

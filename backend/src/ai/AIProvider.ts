@@ -138,6 +138,14 @@ export interface LedgerQueryResponse {
   };
 }
 
+/**
+ * One quick-commerce order screenshot → raw order JSON (validated later by lib/orderExtract).
+ * `source` says which route produced it, for the accuracy benchmark.
+ */
+export type OrderExtractResult =
+  | { ok: true; raw: unknown; source: "text" | "vision"; model: string; latencyMs: number }
+  | { ok: false; reason: AIFallback["reason"]; message?: string };
+
 // ── The interface — stable across all versions ─────────────────────────────────
 
 export interface AIProvider {
@@ -156,6 +164,12 @@ export interface AIProvider {
    * [PHASE 6B — STUBBED]: returns a fallback with partialAmount if detectable.
    */
   parseReceiptImage(imageDatas: string[], groupContext: GroupMember[]): Promise<ParseResult>;
+
+  /**
+   * Structure ONE order screenshot. Primary route: OCR text from the phone (text model).
+   * Backup route: the image itself (vision model), with the OCR text as a hint.
+   */
+  extractOrder(input: { ocrText: string; imageBase64?: string }): Promise<OrderExtractResult>;
 
   /**
    * Phrase a settlement simplification in natural language.

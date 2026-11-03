@@ -1,0 +1,947 @@
+"use client";
+
+/**
+ * Import orders — bulk quick-commerce order split (BulkOrderSplit_Plan.md §2).
+ *
+ *   Drop → Reading (OCR on the phone → text to AI, live cards) → Sort it out → Check → Saved
+ *
+ * Images never leave the phone unless the text route clearly failed for that one image
+ * (the server answers needsVision: true) — then only that image is sent to the vision model.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import {
+  ArrowLeft, Check, AlertTriangle, ChevronDown, ImagePlus, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug,
+} from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { readJson } from "@/lib/api";
+import { fileToCompressedDataUrl } from "@/lib/image";
+import { ocrImage, warmUpOcr, type OcrResult } from "@/lib/ocr";
+import { groupKey, useGroupOverview, type GroupMember } from "@/lib/queries";
+import {
+  adjustToBillTotal, draftTotals, formatINR, isReady, joinPieces, netForMe, orderKey, orderTitle,
+  previewShares, toDraft, toExpenseBody,
+  type DraftItem, type DraftOrder, type ExtractResponse, type FeePolicy,
+} from "@/lib/orderImport";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+type Step = "drop" | "reading" | "sort" | "check" | "saving" | "saved";
+type PieceStatus = "queued" | "ocr" | "ai" | "vision" | "done" | "failed";
+
+interface PieceState {
+  index: number;
+  file: File;
+  thumb: string;
+  status: PieceStatus;
+  error?: string;
+  ocr?: OcrResult;
+  resp?: ExtractResponse;
+}
+
+const MAX_IMAGES = 30;
+const AI_CONCURRENCY = 3;
+
+async function hashFile(f: File): Promise<string> {
+  const buf = await f.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest).slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── Page ───────────────────────────────────────────────────────────────────────
+
+export default function ImportOrdersPage() {
+  const { id: groupId } = useParams<{ id: string }>();
+  const authed = useRequireAuth();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { authFetch, user } = useAuth();
+  const { data: overview } = useGroupOverview(groupId);
+  const members: GroupMember[] = useMemo(() => {
+    const ms = overview?.group.members ?? [];
+    // me first
+    return [...ms].sort((a, b) => (a.id === user?.id ? -1 : b.id === user?.id ? 1 : 0));
+  }, [overview, user?.id]);
+  const me = user?.id ?? "";
+
+  const [step, setStep] = useState<Step>("drop");
+  const [pieces, setPieces] = useState<PieceState[]>([]);
+  const [drafts, setDrafts] = useState<DraftOrder[]>([]);
+  const [noKey, setNoKey] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [undone, setUndone] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const hashes = useRef(new Set<string>());
+  const nextIndex = useRef(0);
+  const idempotencyKey = useRef<string>(crypto.randomUUID());
+
+  useEffect(() => {
+    warmUpOcr();
+  }, []);
+
+  const patchPiece = useCallback((index: number, patch: Partial<PieceState>) => {
+    setPieces((ps) => ps.map((p) => (p.index === index ? { ...p, ...patch } : p)));
+  }, []);
+
+  // ── Reading: OCR → text AI → (rarely) vision ───────────────────────────────
+
+  const aiSlots = useRef(0);
+  const aiQueue = useRef<(() => void)[]>([]);
+  const withAiSlot = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    if (aiSlots.current >= AI_CONCURRENCY) await new Promise<void>((r) => aiQueue.current.push(r));
+    aiSlots.current++;
+    try {
+      return await fn();
+    } finally {
+      aiSlots.current--;
+      aiQueue.current.shift()?.();
+    }
+  }, []);
+
+  const extract = useCallback(
+    async (body: object): Promise<ExtractResponse | "no_key" | null> => {
+      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify(body) });
+      const data = await readJson<ExtractResponse | { fallback: true; reason: string }>(res);
+      if ("fallback" in data) return data.reason === "config_error" ? "no_key" : null;
+      return data;
+    },
+    [authFetch]
+  );
+
+  const processPiece = useCallback(
+    async (p: PieceState) => {
+      try {
+        patchPiece(p.index, { status: "ocr", error: undefined });
+        const ocr = await ocrImage(p.file);
+        patchPiece(p.index, { status: "ai", ocr });
+
+        let resp = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence }));
+        if (resp === "no_key") { setNoKey(true); patchPiece(p.index, { status: "failed", error: "AI key needed" }); return; }
+
+        if (!resp || resp.needsVision) {
+          patchPiece(p.index, { status: "vision" });
+          const imageBase64 = await fileToCompressedDataUrl(p.file, 2000, 0.85);
+          const vision = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence, imageBase64 }));
+          if (vision && vision !== "no_key" && (vision.order.items.length > 0 || !resp)) resp = vision;
+        }
+        if (!resp || resp.order.items.length === 0) {
+          patchPiece(p.index, { status: "failed", error: "Couldn't find an order in this image", resp: resp ?? undefined });
+          return;
+        }
+        patchPiece(p.index, { status: "done", resp });
+      } catch (err) {
+        patchPiece(p.index, { status: "failed", error: (err as Error).message || "Failed" });
+      }
+    },
+    [extract, patchPiece, withAiSlot]
+  );
+
+  const addFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      const added: PieceState[] = [];
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) continue;
+        if (nextIndex.current >= MAX_IMAGES) break;
+        const h = await hashFile(file).catch(() => `${file.name}:${file.size}`);
+        if (hashes.current.has(h)) continue; // exact duplicate image
+        hashes.current.add(h);
+        added.push({ index: nextIndex.current++, file, thumb: URL.createObjectURL(file), status: "queued" });
+      }
+      if (added.length === 0) return;
+      setPieces((ps) => [...ps, ...added]);
+      setStep("reading");
+      added.forEach((p) => void processPiece(p));
+    },
+    [processPiece]
+  );
+
+  const doneCount = pieces.filter((p) => p.status === "done").length;
+  const busy = pieces.some((p) => ["queued", "ocr", "ai", "vision"].includes(p.status));
+
+  // Live order cards while reading: join whatever has finished so far.
+  const liveOrders = useMemo(
+    () => joinPieces(pieces.filter((p) => p.status === "done" && p.resp).map((p) => ({ index: p.index, order: p.resp!.order }))),
+    [pieces]
+  );
+
+  const startSorting = useCallback(async () => {
+    const everyone = members.map((m) => m.id);
+    const next = liveOrders.map(({ order, sources }) => toDraft(order, sources, me, everyone));
+    const keys = next.map((d) => orderKey(d)).filter((k): k is string => !!k);
+    if (keys.length > 0) {
+      try {
+        const res = await authFetch("/expenses/order-keys", { method: "POST", body: JSON.stringify({ groupId, keys }) });
+        const { existing } = await readJson<{ existing: { key: string; expenseId: string; createdAt: string }[] }>(res);
+        for (const d of next) {
+          const hit = existing.find((e) => e.key === orderKey(d));
+          if (hit) { d.alreadyAdded = { expenseId: hit.expenseId, createdAt: hit.createdAt }; d.skipped = true; }
+        }
+      } catch {
+        // best effort — the batch endpoint still refuses duplicates
+      }
+    }
+    setDrafts(next);
+    setStep("sort");
+  }, [authFetch, groupId, liveOrders, me, members]);
+
+  // ── Save ───────────────────────────────────────────────────────────────────
+
+  const toSave = drafts.filter((d) => !d.skipped);
+
+  const save = useCallback(async () => {
+    setSaveError(null);
+    setStep("saving");
+    try {
+      const res = await authFetch("/expenses/batch", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey.current },
+        body: JSON.stringify({ groupId, expenses: toSave.map(toExpenseBody) }),
+      });
+      const data = await readJson<{ expenses: { id: string }[] }>(res);
+      setSavedIds(data.expenses.map((e) => e.id));
+      queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
+      queryClient.invalidateQueries({ queryKey: ["balance"] });
+      setStep("saved");
+    } catch (err) {
+      const e = err as Error & { data?: { index?: number; duplicateOrderKeys?: string[] } };
+      let msg = e.message;
+      if (typeof e.data?.index === "number" && toSave[e.data.index]) msg = `${orderTitle(toSave[e.data.index])}: ${msg}`;
+      setSaveError(msg);
+      setStep("check");
+    }
+  }, [authFetch, groupId, queryClient, toSave]);
+
+  const undo = useCallback(async () => {
+    await Promise.all(savedIds.map((id) => authFetch(`/expenses/${id}`, { method: "DELETE" }).catch(() => null)));
+    queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
+    queryClient.invalidateQueries({ queryKey: ["balance"] });
+    setUndone(true);
+  }, [authFetch, groupId, queryClient, savedIds]);
+
+  if (!authed) return null;
+
+  const back = () => {
+    if (step === "check") setStep("sort");
+    else if (step === "sort") setStep("reading");
+    else router.push(`/groups/${groupId}`);
+  };
+
+  const title = { drop: "Import orders", reading: "Reading orders", sort: "Sort it out", check: "Check", saving: "Saving", saved: "Done" }[step];
+
+  return (
+    <div className="min-h-screen bg-[var(--ink)] text-[var(--text-primary)] pb-36">
+      <header className="sticky top-0 z-20 bg-[var(--ink)]/90 backdrop-blur-md px-4 pt-12 pb-3 flex items-center gap-3 border-b border-[var(--hairline)]">
+        {step !== "saved" && step !== "saving" && (
+          <button onClick={back} className="p-1 -ml-1" aria-label="Back"><ArrowLeft size={20} /></button>
+        )}
+        <div className="flex-1 min-w-0">
+          <h1 className="text-[20px] font-extrabold leading-tight">{title}</h1>
+          <p className="text-[12px] text-[var(--text-secondary)] truncate">{overview?.group.name}</p>
+        </div>
+        <button
+          onClick={() => setDebug((d) => !d)}
+          className={`p-2 rounded-full ${debug ? "text-[var(--accent)] bg-[var(--accent-subtle)]" : "text-[var(--text-muted)]"}`}
+          aria-label="Toggle debug details"
+        >
+          <Bug size={16} />
+        </button>
+      </header>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => { void addFiles(e.target.files); e.target.value = ""; }}
+      />
+
+      {noKey && (
+        <div className="mx-4 mt-4 p-4 rounded-[16px] bg-[var(--accent-subtle)] text-[13px]">
+          <b>AI key needed.</b> Add your Groq API key in{" "}
+          <button className="underline font-bold" onClick={() => router.push("/profile")}>Profile</button> to read orders.
+        </div>
+      )}
+
+      {step === "drop" && <DropStep onPick={() => fileRef.current?.click()} />}
+
+      {step === "reading" && (
+        <ReadingStep
+          pieces={pieces}
+          liveOrders={liveOrders}
+          debug={debug}
+          onRetry={(p) => void processPiece(p)}
+          onRemove={(index) => setPieces((ps) => ps.filter((p) => p.index !== index))}
+          onAddMore={() => fileRef.current?.click()}
+        />
+      )}
+
+      {step === "sort" && (
+        <SortStep drafts={drafts} setDrafts={setDrafts} members={members} me={me} />
+      )}
+
+      {(step === "check" || step === "saving") && (
+        <CheckStep drafts={toSave} members={members} me={me} error={saveError} />
+      )}
+
+      {step === "saved" && (
+        <SavedStep
+          count={savedIds.length}
+          undone={undone}
+          onUndo={undo}
+          onDone={() => router.push(`/groups/${groupId}`)}
+        />
+      )}
+
+      {/* ── Bottom action bar ─────────────────────────────────────── */}
+      {step === "reading" && (
+        <BottomBar>
+          <div className="text-[12px] text-[var(--text-secondary)] mb-2 text-center">
+            {busy ? `Reading ${pieces.length - doneCount} of ${pieces.length}…` : `${liveOrders.length} order${liveOrders.length === 1 ? "" : "s"} found`}
+          </div>
+          <button
+            disabled={liveOrders.length === 0 || members.length === 0}
+            onClick={() => void startSorting()}
+            className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] disabled:opacity-40"
+          >
+            {busy && liveOrders.length > 0 ? "Continue with what's read" : "Sort it out"}
+          </button>
+        </BottomBar>
+      )}
+      {step === "sort" && (
+        <BottomBar>
+          <SortProgress drafts={drafts} />
+          <button
+            disabled={toSave.length === 0 || !drafts.every(isReady)}
+            onClick={() => setStep("check")}
+            className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] disabled:opacity-40"
+          >
+            Check {toSave.length} order{toSave.length === 1 ? "" : "s"}
+          </button>
+        </BottomBar>
+      )}
+      {(step === "check" || step === "saving") && (
+        <BottomBar>
+          <button
+            disabled={step === "saving"}
+            onClick={() => void save()}
+            className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {step === "saving" ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : `Add ${toSave.length} expense${toSave.length === 1 ? "" : "s"}`}
+          </button>
+        </BottomBar>
+      )}
+    </div>
+  );
+}
+
+// ── Shared bits ────────────────────────────────────────────────────────────────
+
+function BottomBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="fixed bottom-0 inset-x-0 z-30 bg-[var(--ink)]/95 backdrop-blur-md border-t border-[var(--hairline)] px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+      <div className="max-w-md mx-auto">{children}</div>
+    </div>
+  );
+}
+
+function Avatar({ m, size = 28, dim = false }: { m: GroupMember; size?: number; dim?: boolean }) {
+  return (
+    <span
+      className={`rounded-full flex items-center justify-center font-bold overflow-hidden bg-[var(--paper-dim)] text-[var(--text-secondary)] flex-shrink-0 ${dim ? "opacity-40 grayscale" : ""}`}
+      style={{ width: size, height: size, fontSize: size * 0.42 }}
+    >
+      {m.avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={m.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+      ) : (
+        m.name.charAt(0).toUpperCase()
+      )}
+    </span>
+  );
+}
+
+const firstName = (m: GroupMember | undefined, me: string) => (!m ? "?" : m.id === me ? "You" : m.name.split(" ")[0]);
+
+function TotalsBadge({ o }: { o: DraftOrder }) {
+  const t = draftTotals(o);
+  if (o.skipped) return <span className="text-[11px] font-bold text-[var(--text-muted)]">Skipped</span>;
+  if (t.status === "ok") return <span className="text-[11px] font-bold text-[var(--positive)] flex items-center gap-1"><Check size={12} strokeWidth={3} /> Adds up</span>;
+  if (t.status === "mismatch" && !o.acceptItemsTotal)
+    return <span className="text-[11px] font-bold text-[var(--accent)] flex items-center gap-1"><AlertTriangle size={12} /> Off by {formatINR(Math.abs(t.difference!))}</span>;
+  if (t.status === "no_total") return <span className="text-[11px] font-bold text-[var(--text-secondary)]">No bill total seen</span>;
+  if (t.status === "no_items") return <span className="text-[11px] font-bold text-[var(--negative)]">No items</span>;
+  return <span className="text-[11px] font-bold text-[var(--text-secondary)]">Items total used</span>;
+}
+
+// ── Step 1: Drop ───────────────────────────────────────────────────────────────
+
+function DropStep({ onPick }: { onPick: () => void }) {
+  return (
+    <main className="px-6 pt-10 flex flex-col items-center text-center max-w-md mx-auto">
+      <div className="w-24 h-24 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center mb-6">
+        <ShoppingBag size={40} />
+      </div>
+      <h2 className="text-[22px] font-extrabold mb-2">Drop in your order screenshots</h2>
+      <p className="text-[14px] text-[var(--text-secondary)] mb-8">
+        Blinkit, Zepto, Instamart, BigBasket, Swiggy… Pick as many as you like, in any order.
+        Long orders can be several screenshots — we join them.
+      </p>
+      <button onClick={onPick} className="w-full bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] flex items-center justify-center gap-2 shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform">
+        <ImagePlus size={20} /> Choose screenshots
+      </button>
+      <ul className="mt-8 text-left text-[13px] text-[var(--text-secondary)] space-y-2 w-full">
+        <li>• Open the order in the app → screenshot the item list and the bill details.</li>
+        <li>• Text is read on your phone; only the text is sent to AI.</li>
+        <li>• You&apos;ll just tap to fix who shares what.</li>
+      </ul>
+    </main>
+  );
+}
+
+// ── Step 2: Reading ────────────────────────────────────────────────────────────
+
+const STATUS_LABEL: Record<PieceStatus, string> = {
+  queued: "Waiting", ocr: "Reading text", ai: "Understanding", vision: "Looking closer", done: "Done", failed: "Failed",
+};
+
+function ReadingStep({
+  pieces, liveOrders, debug, onRetry, onRemove, onAddMore,
+}: {
+  pieces: PieceState[];
+  liveOrders: ReturnType<typeof joinPieces>;
+  debug: boolean;
+  onRetry: (p: PieceState) => void;
+  onRemove: (index: number) => void;
+  onAddMore: () => void;
+}) {
+  return (
+    <main className="px-4 pt-4 max-w-md mx-auto space-y-5">
+      <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+        {pieces.map((p) => (
+          <div key={p.index} className="relative w-16 h-24 flex-shrink-0 rounded-[10px] overflow-hidden border border-[var(--hairline)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.thumb} alt="" className="w-full h-full object-cover" />
+            <div className={`absolute inset-x-0 bottom-0 text-[9px] font-bold text-center py-0.5 ${
+              p.status === "done" ? "bg-[var(--positive)] text-white" : p.status === "failed" ? "bg-[var(--negative)] text-white" : "bg-black/60 text-white"
+            }`}>
+              {STATUS_LABEL[p.status]}
+            </div>
+            {p.status !== "done" && p.status !== "failed" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20"><Loader2 size={18} className="animate-spin text-white" /></div>
+            )}
+          </div>
+        ))}
+        <button onClick={onAddMore} className="w-16 h-24 flex-shrink-0 rounded-[10px] border-2 border-dashed border-[var(--border-dark)] flex items-center justify-center text-[var(--text-muted)]" aria-label="Add screenshots">
+          <Plus size={20} />
+        </button>
+      </div>
+
+      {pieces.filter((p) => p.status === "failed").map((p) => (
+        <div key={p.index} className="flex items-center gap-3 p-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={p.thumb} alt="" className="w-10 h-14 object-cover rounded-[6px]" />
+          <div className="flex-1 text-[13px]">
+            <div className="font-bold">Screenshot {p.index + 1}</div>
+            <div className="text-[var(--text-secondary)]">{p.error}</div>
+          </div>
+          <button onClick={() => onRetry(p)} className="p-2 text-[var(--accent)]" aria-label="Retry"><RotateCcw size={18} /></button>
+          <button onClick={() => onRemove(p.index)} className="p-2 text-[var(--text-muted)]" aria-label="Remove"><X size={18} /></button>
+        </div>
+      ))}
+
+      <AnimatePresence initial={false}>
+        {liveOrders.map(({ order, sources }) => {
+          const fake = { items: order.items, fees: order.fees, discounts: order.discounts, grandTotal: order.grandTotal };
+          const t = draftTotals(fake);
+          return (
+            <motion.div
+              key={sources.join("-")}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-[15px]">{orderTitle(order)}</div>
+                <div className="font-extrabold tabular-nums">{formatINR(order.grandTotal ?? t.computed)}</div>
+              </div>
+              <div className="flex items-center justify-between mt-1 text-[12px] text-[var(--text-secondary)]">
+                <span>{order.items.length} items{sources.length > 1 ? ` · ${sources.length} screenshots joined` : ""}</span>
+                {t.status === "ok" ? (
+                  <span className="text-[var(--positive)] font-bold flex items-center gap-1"><Check size={12} strokeWidth={3} /> adds up</span>
+                ) : t.status === "mismatch" ? (
+                  <span className="text-[var(--accent)] font-bold">off by {formatINR(Math.abs(t.difference!))}</span>
+                ) : (
+                  <span>no total yet</span>
+                )}
+              </div>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+
+      {debug && (
+        <section className="space-y-3">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Debug — per screenshot</div>
+          {pieces.map((p) => <DebugPiece key={p.index} p={p} />)}
+        </section>
+      )}
+    </main>
+  );
+}
+
+function DebugPiece({ p }: { p: PieceState }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] text-[12px]">
+      <button onClick={() => setOpen((o) => !o)} className="w-full p-3 flex items-center justify-between text-left">
+        <span className="font-bold">#{p.index + 1} · {STATUS_LABEL[p.status]}</span>
+        <span className="text-[var(--text-secondary)] tabular-nums">
+          {p.ocr ? `OCR ${p.ocr.confidence}% · ${p.ocr.ms}ms` : ""}
+          {p.resp ? ` · ${p.resp.source} ${p.resp.latencyMs}ms · grounded ${Math.round(p.resp.groundedShare * 100)}% · ${p.resp.totals.status}` : ""}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {p.resp && <div className="text-[var(--text-secondary)]">model: {p.resp.model}{p.resp.needsVision ? " · text route asked for vision" : ""}</div>}
+          <div className="font-bold">OCR text sent</div>
+          <pre className="whitespace-pre-wrap break-words bg-[var(--paper-dim)] p-2 rounded-[8px] max-h-72 overflow-auto font-[family-name:var(--font-mono)] text-[11px]">{p.ocr?.text ?? "—"}</pre>
+          <div className="font-bold">AI result</div>
+          <pre className="whitespace-pre-wrap break-words bg-[var(--paper-dim)] p-2 rounded-[8px] max-h-72 overflow-auto font-[family-name:var(--font-mono)] text-[11px]">{p.resp ? JSON.stringify(p.resp.order, null, 2) : "—"}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 3: Sort it out ────────────────────────────────────────────────────────
+
+function SortProgress({ drafts }: { drafts: DraftOrder[] }) {
+  const active = drafts.filter((d) => !d.skipped);
+  const ready = active.filter(isReady).length;
+  const needLook = active.filter((d) => !isReady(d)).length;
+  return (
+    <div className="text-[12px] text-[var(--text-secondary)] mb-2 text-center">
+      {ready} of {active.length} orders ready{needLook > 0 ? ` · ${needLook} need a look` : ""}
+    </div>
+  );
+}
+
+function SortStep({
+  drafts, setDrafts, members, me,
+}: {
+  drafts: DraftOrder[];
+  setDrafts: React.Dispatch<React.SetStateAction<DraftOrder[]>>;
+  members: GroupMember[];
+  me: string;
+}) {
+  const [brush, setBrush] = useState<string | null>(null);
+  const update = useCallback(
+    (id: string, fn: (o: DraftOrder) => DraftOrder) => setDrafts((ds) => ds.map((d) => (d.id === id ? fn(d) : d))),
+    [setDrafts]
+  );
+  const brushMember = members.find((m) => m.id === brush);
+
+  return (
+    <main className="max-w-md mx-auto">
+      {/* Person brush */}
+      <div className="sticky top-[88px] z-10 bg-[var(--ink)]/95 backdrop-blur-md px-4 py-3 border-b border-[var(--hairline)]">
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
+          {members.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setBrush((b) => (b === m.id ? null : m.id))}
+              className={`flex flex-col items-center gap-1 px-1 flex-shrink-0 ${brush && brush !== m.id ? "opacity-50" : ""}`}
+            >
+              <span className={`rounded-full p-0.5 ${brush === m.id ? "ring-2 ring-[var(--accent)]" : ""}`}><Avatar m={m} size={36} /></span>
+              <span className="text-[11px] font-semibold">{firstName(m, me)}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+          {brushMember
+            ? `Tap items to add or remove ${firstName(brushMember, me) === "You" ? "yourself" : firstName(brushMember, me)}. Tap the avatar again to stop.`
+            : "Tap a person, then tap their items. Swipe an item → just mine, ← everyone."}
+        </p>
+      </div>
+
+      <div className="px-4 pt-4 space-y-4">
+        {drafts.map((o) => (
+          <OrderCard key={o.id} o={o} members={members} me={me} brush={brush} update={(fn) => update(o.id, fn)} />
+        ))}
+      </div>
+    </main>
+  );
+}
+
+function OrderCard({
+  o, members, me, brush, update,
+}: {
+  o: DraftOrder;
+  members: GroupMember[];
+  me: string;
+  brush: string | null;
+  update: (fn: (o: DraftOrder) => DraftOrder) => void;
+}) {
+  const [open, setOpen] = useState(!o.skipped && !isReady(o) ? true : !o.skipped);
+  const t = draftTotals(o);
+  const everyone = members.map((m) => m.id);
+
+  const setAll = (ids: string[]) => update((d) => ({ ...d, skipped: false, items: d.items.map((i) => ({ ...i, sharedBy: [...ids] })) }));
+  const setItem = (itemId: string, fn: (i: DraftItem) => DraftItem) =>
+    update((d) => ({ ...d, items: d.items.map((i) => (i.id === itemId ? fn(i) : i)) }));
+  const toggle = (itemId: string, userId: string) =>
+    setItem(itemId, (i) => ({ ...i, sharedBy: i.sharedBy.includes(userId) ? i.sharedBy.filter((u) => u !== userId) : [...i.sharedBy, userId] }));
+
+  const mode = o.items.every((i) => i.sharedBy.length === everyone.length)
+    ? "everyone"
+    : o.items.every((i) => i.sharedBy.length === 1 && i.sharedBy[0] === me)
+      ? "me"
+      : "custom";
+
+  return (
+    <div className={`rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] overflow-hidden ${o.skipped ? "opacity-60" : ""}`}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full p-4 flex items-center gap-3 text-left">
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-[15px] truncate">{orderTitle(o)}</div>
+          <div className="text-[12px] text-[var(--text-secondary)] flex items-center gap-2">
+            <span>{o.items.length} items</span>
+            <TotalsBadge o={o} />
+          </div>
+          {o.alreadyAdded && (
+            <div className="text-[11px] text-[var(--accent)] font-bold mt-0.5">
+              Already added on {new Date(o.alreadyAdded.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            </div>
+          )}
+        </div>
+        <div className="font-extrabold tabular-nums">{formatINR(o.grandTotal ?? t.computed)}</div>
+        <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="border-t border-[var(--hairline)]">
+          {/* Order-level defaults */}
+          <div className="px-4 py-3 flex gap-2 overflow-x-auto hide-scrollbar">
+            {([
+              ["everyone", "Everyone", <Users key="u" size={13} />, () => setAll(everyone)],
+              ["me", "Just me", <UserIcon key="m" size={13} />, () => setAll([me])],
+            ] as const).map(([key, label, icon, fn]) => (
+              <button
+                key={key}
+                onClick={fn}
+                className={`px-3 h-8 rounded-full text-[12px] font-bold flex items-center gap-1.5 border-2 flex-shrink-0 ${
+                  !o.skipped && mode === key ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-[var(--hairline)] bg-[var(--paper-dim)] text-[var(--text-secondary)]"
+                }`}
+              >
+                {icon} {label}
+              </button>
+            ))}
+            <button
+              onClick={() => update((d) => ({ ...d, skipped: !d.skipped }))}
+              className={`px-3 h-8 rounded-full text-[12px] font-bold border-2 flex-shrink-0 ${
+                o.skipped ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-[var(--hairline)] bg-[var(--paper-dim)] text-[var(--text-secondary)]"
+              }`}
+            >
+              {o.skipped ? "Skipped — include" : "Skip order"}
+            </button>
+          </div>
+
+          {!o.skipped && (
+            <>
+              <div className="divide-y divide-[var(--hairline)]">
+                {o.items.map((it) => (
+                  <ItemRow
+                    key={it.id}
+                    it={it}
+                    members={members}
+                    me={me}
+                    onTap={brush ? () => toggle(it.id, brush) : undefined}
+                    onToggle={(u) => toggle(it.id, u)}
+                    onJustMe={() => setItem(it.id, (i) => ({ ...i, sharedBy: [me] }))}
+                    onEveryone={() => setItem(it.id, (i) => ({ ...i, sharedBy: [...everyone] }))}
+                    onEdit={(patch) => setItem(it.id, (i) => ({ ...i, ...patch }))}
+                    onDelete={() => update((d) => ({ ...d, items: d.items.filter((i) => i.id !== it.id) }))}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() =>
+                  update((d) => ({
+                    ...d,
+                    items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], grounded: true }],
+                  }))
+                }
+                className="w-full py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1 border-t border-[var(--hairline)]"
+              >
+                <Plus size={14} /> Add item
+              </button>
+
+              <BillLines o={o} update={update} />
+
+              {/* Totals proof + fix */}
+              <div className="px-4 py-3 bg-[var(--paper-dim)] text-[12px] space-y-2">
+                <div className="tabular-nums text-[var(--text-secondary)]">
+                  items {formatINR(t.itemsTotal)}
+                  {t.feesTotal > 0 && <> + fees {formatINR(t.feesTotal)}</>}
+                  {t.discountsTotal > 0 && <> − discounts {formatINR(t.discountsTotal)}</>} = <b className="text-[var(--text-primary)]">{formatINR(t.computed)}</b>
+                  {o.grandTotal !== null && <> · bill {formatINR(o.grandTotal)} {t.status === "ok" ? "✓" : ""}</>}
+                </div>
+                {t.status === "mismatch" && !o.acceptItemsTotal && (
+                  <div className="flex gap-2">
+                    <button onClick={() => update(adjustToBillTotal)} className="flex-1 py-2 rounded-[10px] bg-[var(--accent)] text-white font-bold">
+                      Use bill total {formatINR(o.grandTotal!)}
+                    </button>
+                    <button onClick={() => update((d) => ({ ...d, acceptItemsTotal: true }))} className="flex-1 py-2 rounded-[10px] bg-[var(--paper)] border border-[var(--hairline)] font-bold">
+                      Keep {formatINR(t.computed)}
+                    </button>
+                  </div>
+                )}
+                {t.status === "mismatch" && !o.acceptItemsTotal && (
+                  <div className="text-[var(--text-secondary)]">Or fix the highlighted prices above.</div>
+                )}
+                <div className="flex gap-2 items-center">
+                  <label className="flex-1 flex items-center gap-1.5">
+                    <span className="text-[var(--text-secondary)]">Paid by</span>
+                    <select
+                      value={o.payerId}
+                      onChange={(e) => update((d) => ({ ...d, payerId: e.target.value }))}
+                      className="flex-1 bg-[var(--paper)] rounded-[8px] px-2 py-1.5 font-bold border border-[var(--hairline)]"
+                    >
+                      {members.map((m) => <option key={m.id} value={m.id}>{firstName(m, me)}</option>)}
+                    </select>
+                  </label>
+                  {(t.feesTotal > 0 || t.discountsTotal > 0) && (
+                    <label className="flex-1 flex items-center gap-1.5">
+                      <span className="text-[var(--text-secondary)]">Fees</span>
+                      <select
+                        value={o.feePolicy}
+                        onChange={(e) => update((d) => ({ ...d, feePolicy: e.target.value as FeePolicy }))}
+                        className="flex-1 bg-[var(--paper)] rounded-[8px] px-2 py-1.5 font-bold border border-[var(--hairline)]"
+                      >
+                        <option value="proportional">By items</option>
+                        <option value="equal">Equally</option>
+                        <option value="payer">Payer pays</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemRow({
+  it, members, me, onTap, onToggle, onJustMe, onEveryone, onEdit, onDelete,
+}: {
+  it: DraftItem;
+  members: GroupMember[];
+  me: string;
+  onTap?: () => void;
+  onToggle: (userId: string) => void;
+  onJustMe: () => void;
+  onEveryone: () => void;
+  onEdit: (patch: Partial<DraftItem>) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(it.name === "");
+  const onDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.x > 80) onJustMe();
+    else if (info.offset.x < -80) onEveryone();
+  };
+  const nobody = it.sharedBy.length === 0;
+
+  return (
+    <motion.div
+      drag={editing ? false : "x"}
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.35}
+      onDragEnd={onDragEnd}
+      onClick={onTap}
+      className={`px-4 py-3 bg-[var(--paper)] ${onTap ? "cursor-pointer active:bg-[var(--paper-dim)]" : ""} ${nobody ? "bg-[var(--accent-subtle)]" : ""}`}
+    >
+      <div className="flex items-start gap-2">
+        {editing ? (
+          <div className="flex-1 flex gap-2" onClick={(e) => e.stopPropagation()}>
+            <input
+              autoFocus
+              value={it.name}
+              onChange={(e) => onEdit({ name: e.target.value })}
+              placeholder="Item name"
+              className="flex-1 min-w-0 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-semibold outline-none"
+            />
+            <input
+              type="number"
+              inputMode="decimal"
+              value={it.lineTotal || ""}
+              onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), grounded: true })}
+              placeholder="0"
+              className="w-20 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-bold text-right tabular-nums outline-none"
+            />
+            <button onClick={() => setEditing(false)} className="p-1 text-[var(--positive)]" aria-label="Done"><Check size={18} /></button>
+            <button onClick={onDelete} className="p-1 text-[var(--text-muted)]" aria-label="Delete item"><Trash2 size={16} /></button>
+          </div>
+        ) : (
+          <>
+            <div className="flex-1 min-w-0">
+              <div className="text-[14px] font-semibold leading-snug">{it.name}</div>
+              <div className="text-[11px] text-[var(--text-secondary)]">
+                {[it.variant, it.qty > 1 ? `× ${it.qty}` : null].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+              className={`text-[14px] font-bold tabular-nums px-1 rounded ${it.grounded ? "" : "text-[var(--accent)] underline decoration-dotted"}`}
+              title={it.grounded ? "Edit" : "This price wasn't found in the screenshot text — please check"}
+            >
+              {formatINR(it.lineTotal)}
+            </button>
+          </>
+        )}
+      </div>
+      {!editing && (
+        <div className="flex gap-1.5 mt-2 overflow-x-auto hide-scrollbar">
+          {members.map((m) => {
+            const on = it.sharedBy.includes(m.id);
+            return (
+              <button
+                key={m.id}
+                onClick={(e) => { e.stopPropagation(); onToggle(m.id); }}
+                className={`rounded-full p-0.5 flex-shrink-0 ${on ? "ring-2 ring-[var(--accent)]" : ""}`}
+                aria-label={`${on ? "Remove" : "Add"} ${firstName(m, me)}`}
+                aria-pressed={on}
+              >
+                <Avatar m={m} size={24} dim={!on} />
+              </button>
+            );
+          })}
+          {nobody && <span className="text-[11px] text-[var(--accent)] font-bold self-center ml-1">Who shares this?</span>}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function BillLines({ o, update }: { o: DraftOrder; update: (fn: (o: DraftOrder) => DraftOrder) => void }) {
+  if (o.fees.length === 0 && o.discounts.length === 0) return null;
+  const row = (kind: "fees" | "discounts", l: { id: string; label: string; amount: number }) => (
+    <div key={l.id} className="flex items-center gap-2 text-[12px]">
+      <span className="flex-1 text-[var(--text-secondary)] truncate">{l.label}</span>
+      <span className="text-[var(--text-muted)]">{kind === "discounts" ? "−₹" : "₹"}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        value={l.amount || ""}
+        onChange={(e) => {
+          const amount = Math.max(0, parseFloat(e.target.value) || 0);
+          update((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === l.id ? { ...x, amount } : x)) }));
+        }}
+        className="w-16 bg-transparent text-right font-bold tabular-nums outline-none"
+      />
+      <button onClick={() => update((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== l.id) }))} className="p-1 text-[var(--text-muted)]" aria-label="Remove">
+        <X size={14} />
+      </button>
+    </div>
+  );
+  return (
+    <div className="px-4 py-2 space-y-1 border-t border-[var(--hairline)]">
+      {o.fees.map((l) => row("fees", l))}
+      {o.discounts.map((l) => row("discounts", l))}
+    </div>
+  );
+}
+
+// ── Step 4: Check ──────────────────────────────────────────────────────────────
+
+function CheckStep({ drafts, members, me, error }: { drafts: DraftOrder[]; members: GroupMember[]; me: string; error: string | null }) {
+  const { net, mine } = netForMe(drafts, me);
+  const byId = (id: string) => members.find((m) => m.id === id);
+  const total = drafts.reduce((a, d) => a + draftTotals(d).computed, 0);
+
+  return (
+    <main className="px-4 pt-4 max-w-md mx-auto space-y-4">
+      {error && <div className="p-3 rounded-[14px] bg-[var(--negative)]/10 text-[var(--negative)] text-[13px] font-semibold">{error}</div>}
+
+      <div className="rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] divide-y divide-[var(--hairline)]">
+        {Object.entries(net).filter(([, v]) => Math.abs(v) >= 0.01).map(([u, v]) => {
+          const m = byId(u);
+          return (
+            <div key={u} className="px-4 py-3 flex items-center gap-3">
+              {m && <Avatar m={m} size={32} />}
+              <div className="flex-1 text-[14px]">
+                {v > 0 ? <><b>{firstName(m, me)}</b> owes you</> : <>You owe <b>{firstName(m, me)}</b></>}
+              </div>
+              <div className={`font-extrabold tabular-nums ${v > 0 ? "text-[var(--positive)]" : "text-[var(--negative)]"}`}>{formatINR(Math.abs(v))}</div>
+            </div>
+          );
+        })}
+        <div className="px-4 py-3 flex items-center justify-between text-[13px] text-[var(--text-secondary)]">
+          <span>Your own share</span>
+          <span className="font-bold tabular-nums">{formatINR(mine)}</span>
+        </div>
+        <div className="px-4 py-3 flex items-center justify-between text-[13px]">
+          <span className="font-bold">{drafts.length} orders</span>
+          <span className="font-extrabold tabular-nums">{formatINR(Math.round(total * 100) / 100)}</span>
+        </div>
+      </div>
+
+      {drafts.map((o) => {
+        const t = draftTotals(o);
+        const shares = previewShares(o);
+        return (
+          <div key={o.id} className="rounded-[16px] bg-[var(--paper)] border border-[var(--hairline)] p-4 text-[13px]">
+            <div className="flex justify-between font-bold">
+              <span>{orderTitle(o)}</span>
+              <span className="tabular-nums">{formatINR(t.computed)}</span>
+            </div>
+            <div className="text-[11px] text-[var(--text-secondary)] tabular-nums mt-0.5">
+              Paid by {firstName(byId(o.payerId), me)} · items {formatINR(t.itemsTotal)}
+              {t.feesTotal > 0 && ` + fees ${formatINR(t.feesTotal)}`}
+              {t.discountsTotal > 0 && ` − ${formatINR(t.discountsTotal)}`}
+              {t.status === "ok" && " = bill ✓"}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+              {Object.entries(shares).map(([u, v]) => (
+                <span key={u} className="text-[12px]"><b>{firstName(byId(u), me)}</b> <span className="tabular-nums">{formatINR(v)}</span></span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </main>
+  );
+}
+
+// ── Step 5: Saved ──────────────────────────────────────────────────────────────
+
+function SavedStep({ count, undone, onUndo, onDone }: { count: number; undone: boolean; onUndo: () => void; onDone: () => void }) {
+  return (
+    <main className="px-6 pt-16 flex flex-col items-center text-center max-w-md mx-auto">
+      <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 ${undone ? "bg-[var(--paper-dim)]" : "bg-[var(--positive)]"}`}>
+        {undone ? <RotateCcw size={28} /> : <Check size={30} className="text-white" strokeWidth={3} />}
+      </div>
+      <h2 className="text-[20px] font-extrabold mb-2">
+        {undone ? "Import undone" : `${count} expense${count === 1 ? "" : "s"} added`}
+      </h2>
+      <p className="text-[14px] text-[var(--text-secondary)] mb-8">
+        {undone ? "Nothing was kept." : "Everyone in the group got one notification for the whole import."}
+      </p>
+      <button onClick={onDone} className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] mb-3">Back to group</button>
+      {!undone && (
+        <button onClick={onUndo} className="w-full bg-[var(--paper)] border border-[var(--hairline)] font-bold py-4 rounded-[16px] flex items-center justify-center gap-2">
+          <RotateCcw size={16} /> Undo
+        </button>
+      )}
+    </main>
+  );
+}

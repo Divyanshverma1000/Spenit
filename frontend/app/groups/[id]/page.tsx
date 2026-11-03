@@ -472,6 +472,9 @@ export default function GroupDetailPage() {
               <Link href={`/groups/${id}/expenses/new`} className="text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
                 Manual
               </Link>
+              <Link href={`/groups/${id}/import`} className="text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
+                Import orders
+              </Link>
               <Link href={`/groups/${id}/expenses/ai`} className="bg-[var(--accent)] text-white flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-bold rounded-[12px] shadow-[0_4px_14px_rgba(245,158,11,0.3)] active:scale-95 transition-transform">
                 <Sparkles size={14} strokeWidth={2.5} />
                 Add

@@ -22,6 +22,7 @@ import type {
   SpendStats,
   QueryResult,
   LedgerQueryResponse,
+  OrderExtractResult,
 } from "./AIProvider";
 import { EXPENSE_CATEGORIES } from "./AIProvider";
 
@@ -95,6 +96,45 @@ EXAMPLES:
 - "I paid 1000, 400 was for wine that Rahul and I drank" → payers:[{me,1000}], participants:[{userId: me, personalAmount: 200}, {userId: Rahul, personalAmount: 200}], splitType:fairshare (Backend handles the remaining 600)
 - "paid by me 500" → payers:[{me,500}], participants:all, splitType:equal`;
 }
+
+// ── Order extraction prompt (BulkOrderSplit_Plan.md §3.1) ───────────────────────
+
+/** OCR text of one tall screenshot is ~2–4k chars; cap it so a junk image can't blow the budget. */
+const ORDER_OCR_MAX_CHARS = 12_000;
+
+const ORDER_EXTRACT_PROMPT = `You read ONE screenshot of an Indian quick-commerce / food / shopping order (Blinkit, Zepto, Swiggy Instamart, BigBasket, Swiggy, Zomato, Amazon, Flipkart, JioMart, DMart) and return its contents as strict JSON.
+
+RULES
+1. Copy numbers EXACTLY as printed. Never calculate, round or guess a price. If a value is not printed, use null.
+2. An item row may show two prices: the higher one is the crossed-out MRP, the lower one is what was paid. lineTotal = the price actually paid for that row.
+3. The rupee sign ₹ is often misread by OCR as "2", "3", "7", "%", "R", "X" or "?" glued to the front of a price. "%54", "R54" or "₹54" all mean 54. A row like "Milk 1 L 254" usually means ₹54 — use the item total / grand total printed on the bill to decide.
+4. qty: the count shown ("2 x", "Qty 2", "x2"). Default 1. Pack sizes like "500 g", "1 L", "Pack of 6" are the variant, NOT qty.
+5. Items are only products. Charges go in fees; savings go in discounts (as positive numbers).
+   fee kinds: delivery | handling | platform | small_cart | packaging | tip | late_night | surge | tax | other
+   "FREE" / "₹0" / struck-through fees are not charged — leave them out.
+6. Do NOT list summary rows (Item total, Sub total, MRP total, You saved, Bill total, Grand total, To pay, Paid via UPI) as items. "You saved ₹X" is NOT a discount — only discounts actually subtracted on the bill (coupon, promo, offer discount).
+7. grandTotal = the final amount paid (Grand total / Bill total / To pay / Order total / Total paid). null if this screenshot does not show it.
+8. orderDate in YYYY-MM-DD (current year if the year is missing). orderId exactly as printed, without the "Order ID" label.
+9. page.hasHeader = the screenshot shows the order's top (order id, date or store name). page.hasTotal = it shows the grand total. A screenshot may show only the middle of a long order — then return just the items you see.
+10. Ignore app chrome: status bar, "Rate your order", "Reorder", "Need help?", ads, recommendations, delivery address, payment method.
+
+PLATFORM HINTS
+- Blinkit: "Order summary", "Bill details", "Handling charge", "Small cart charge", "Delivery charge", "Grand total". Order id starts with "ORD".
+- Zepto: "Item Total", "Handling Fee", "Small Cart Fee", "Delivery Fee", "Late Night Fee", "To Pay" / "Total Bill".
+- Swiggy Instamart: "Item Total", "Delivery Partner Fee", "Handling Fee", "Platform Fee", "Grand Total" / "Bill Total".
+- BigBasket: "Basket Value", "Delivery Charges", "Total Savings", "Final Total".
+
+OUTPUT (JSON only, no prose):
+{
+  "platform": "blinkit|zepto|instamart|bigbasket|swiggy|zomato|amazon|flipkart|jiomart|dmart|other",
+  "orderId": string|null,
+  "orderDate": "YYYY-MM-DD"|null,
+  "items": [{ "name": string, "variant": string|null, "qty": number, "unitPrice": number|null, "lineTotal": number }],
+  "fees": [{ "kind": string, "label": string, "amount": number }],
+  "discounts": [{ "label": string, "amount": number }],
+  "grandTotal": number|null,
+  "page": { "hasHeader": boolean, "hasTotal": boolean }
+}`;
 
 // ── Name resolution helpers ────────────────────────────────────────────────────
 
@@ -339,6 +379,80 @@ If there are items, you MUST include them in the "items" array.`;
         e.name === "AbortError" ? "timeout" : "parse_error",
         `[Error]: ${e.message}`
       );
+    }
+  }
+
+  // ── extractOrder — OCR text first, vision only as backup ─────────────────────
+
+  async extractOrder(input: { ocrText: string; imageBase64?: string }): Promise<OrderExtractResult> {
+    if (!this.apiKey) return { ok: false, reason: "config_error" };
+
+    const ocrText = input.ocrText.slice(0, ORDER_OCR_MAX_CHARS);
+    const useVision = Boolean(input.imageBase64);
+    const model = useVision ? GROQ_VISION_MODEL : GROQ_MODEL;
+
+    const userContent: any = useVision
+      ? [
+          {
+            type: "text",
+            text: `${ORDER_EXTRACT_PROMPT}\n\nOCR text of this same image (may contain mistakes; trust the image for digits):\n"""\n${ocrText}\n"""`,
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: input.imageBase64!.startsWith("data:image") ? input.imageBase64 : `data:image/jpeg;base64,${input.imageBase64}`,
+            },
+          },
+        ]
+      : `OCR text of one order screenshot. Each line is one visual row; " | " separates columns on that row.\n"""\n${ocrText}\n"""`;
+
+    const messages = useVision
+      ? [{ role: "user", content: userContent }]
+      : [
+          { role: "system", content: ORDER_EXTRACT_PROMPT },
+          { role: "user", content: userContent },
+        ];
+
+    const startMs = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), useVision ? 45_000 : 25_000);
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0,
+          max_completion_tokens: 4096,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        console.error(`[ai] extractOrder ${model} error ${response.status}:`, errText.slice(0, 300));
+        if (response.status === 429) return { ok: false, reason: "rate_limit" };
+        // 401 = bad key. 403 is Groq blocking the caller's network/region — not the user's key.
+        if (response.status === 401) return { ok: false, reason: "config_error" };
+        return { ok: false, reason: "network", message: `Groq ${response.status}` };
+      }
+
+      const json = (await response.json()) as any;
+      const content: string = json.choices?.[0]?.message?.content || "";
+      const cleaned = content.replace(/```(?:json)?/g, "").trim();
+      try {
+        return { ok: true, raw: JSON.parse(cleaned), source: useVision ? "vision" : "text", model, latencyMs: Date.now() - startMs };
+      } catch {
+        console.error("[ai] extractOrder JSON parse failed:", cleaned.slice(0, 200));
+        return { ok: false, reason: "parse_error" };
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return { ok: false, reason: "timeout" };
+      return { ok: false, reason: "network", message: (err as Error).message };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
