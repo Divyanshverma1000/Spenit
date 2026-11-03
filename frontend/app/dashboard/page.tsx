@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { API_URL } from "@/lib/api";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { useMyBalance } from "@/lib/queries";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { BalanceAmount } from "@/components/ui/BalanceAmount";
@@ -14,7 +15,6 @@ import { SettingsList } from "@/components/ui/SettingsList";
 import { SettingsRow } from "@/components/ui/SettingsRow";
 import { Plus, Users, TrendingUp, TrendingDown, Check } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface GroupBreakdown {
   groupId: string;
@@ -32,29 +32,10 @@ interface CrossGroupBalance {
 export default function DashboardPage() {
   const router = useRouter();
   const authed = useRequireAuth();
-  const { user, accessToken } = useAuth();
-  const [balance, setBalance] = useState<CrossGroupBalance | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadBalance = useCallback(() => {
-    if (!accessToken) return;
-    fetch(`${API_URL}/balance/me`, { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((r) => r.json())
-      .then(setBalance)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [accessToken]);
-
-  useEffect(() => { loadBalance(); }, [loadBalance]);
-  useEffect(() => {
-    const interval = setInterval(loadBalance, 30_000);
-    return () => clearInterval(interval);
-  }, [loadBalance]);
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") loadBalance(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [loadBalance]);
+  const { user } = useAuth();
+  // Cached + persisted: shows the last known balance instantly, refreshes on focus.
+  const { data: balance, isPending } = useMyBalance<CrossGroupBalance>();
+  const loading = isPending && !balance;
 
   if (!authed) return null;
 
@@ -85,7 +66,7 @@ export default function DashboardPage() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.1, duration: 0.4, type: "spring", bounce: 0.4 }}
-            className={`bg-white rounded-[24px] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] relative overflow-hidden flex flex-col gap-2 ${
+            className={`bg-white rounded-[24px] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[var(--hairline)] relative overflow-hidden flex flex-col gap-2 ${
               direction === "owed" ? "border-l-4 border-l-[var(--positive)]" : 
               direction === "owes" ? "border-l-4 border-l-[var(--negative)]" : 
               ""

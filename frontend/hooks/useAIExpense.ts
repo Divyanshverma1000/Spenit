@@ -1,10 +1,10 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
 import { useState, useCallback, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { ParsedExpenseDraft, AIFallback } from "./types/ai";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export type AIExpenseState =
   | "idle"

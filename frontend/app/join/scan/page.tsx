@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Scanner } from "@yudiel/react-qr-scanner";
+import dynamic from "next/dynamic";
+
+// Camera/QR decoding library: load only on this screen.
+const Scanner = dynamic(() => import("@yudiel/react-qr-scanner").then((m) => m.Scanner), { ssr: false });
 import { ChevronLeft, QrCode, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { useRequireAuth } from "@/hooks/useRequireAuth";

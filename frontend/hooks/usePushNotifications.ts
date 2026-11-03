@@ -1,9 +1,10 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
+import { SW_URL } from "@/lib/sw";
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 
 /**
@@ -106,7 +107,7 @@ export function usePushNotifications() {
     setLoading(true);
     try {
       // 1. Register (or get existing) service worker
-      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const registration = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
       await navigator.serviceWorker.ready;
 
       // 2. Subscribe via PushManager

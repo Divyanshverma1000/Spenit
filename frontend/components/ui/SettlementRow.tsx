@@ -17,7 +17,7 @@ export function SettlementRow({ settlement }: { settlement: Settlement }) {
   });
 
   return (
-    <div className="w-full text-left bg-white p-4 flex flex-col border-b border-[rgba(0,0,0,0.03)] outline-none">
+    <div className="w-full text-left bg-white p-4 flex flex-col border-b border-[var(--hairline)] outline-none">
       <div className="flex items-center gap-3 w-full">
         <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-full bg-green-50 border border-green-100">
           {settlement.status === "confirmed" ? (

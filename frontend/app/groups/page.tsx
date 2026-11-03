@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { API_URL } from "@/lib/api";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { useAuth } from "@/context/AuthContext";
+import { useGroups } from "@/lib/queries";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { GroupCard } from "@/components/ui/GroupCard";
 import { Plus, Search } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface Group {
   id: string;
@@ -23,30 +23,11 @@ interface Group {
 
 export default function GroupsPage() {
   const authed = useRequireAuth();
-  const { accessToken } = useAuth();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cached + persisted: the list paints instantly and refreshes in the background.
+  const { data, isPending } = useGroups();
+  const groups = (data ?? []) as unknown as Group[];
+  const loading = isPending && !data;
   const [searchQuery, setSearchQuery] = useState("");
-
-  function loadGroups() {
-    if (!accessToken) return;
-    fetch(`${API_URL}/groups`, { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((r) => r.json())
-      .then((data) => {
-        const arr = Array.isArray(data) ? data : (data?.groups ?? []);
-        setGroups(arr);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => { loadGroups(); }, [accessToken]); // eslint-disable-line
-
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") loadGroups(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [accessToken]); // eslint-disable-line
 
   const filteredGroups = useMemo(() => {
     return groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -58,7 +39,7 @@ export default function GroupsPage() {
     <>
       <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb">
         {/* ── Sticky Premium Header ────────────────────────────────────────── */}
-        <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-6 pt-14 pb-4 border-b border-[rgba(0,0,0,0.03)]">
+        <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-6 pt-14 pb-4 border-b border-[var(--hairline)]">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
@@ -80,7 +61,7 @@ export default function GroupsPage() {
               placeholder="Search groups..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white rounded-xl pl-10 pr-4 py-3 text-[15px] font-medium text-[var(--text-primary)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.02)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] transition-shadow placeholder:text-[var(--text-muted)]"
+              className="w-full bg-white rounded-xl pl-10 pr-4 py-3 text-[15px] font-medium text-[var(--text-primary)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] border border-[var(--hairline)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] transition-shadow placeholder:text-[var(--text-muted)]"
             />
           </div>
         </div>

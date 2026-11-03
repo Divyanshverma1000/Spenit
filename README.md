@@ -142,3 +142,7 @@ See [`Architecture.md`](./Architecture.md) §1 for the full rationale. Summary:
 | [`Usecase_flow.md`](./Usecase_flow.md) | Step-by-step user journeys |
 | [`ProgressTracker.md`](./ProgressTracker.md) | Stage-by-stage build log — source of truth for current status |
 | [`AI_Prompts.md`](./AI_Prompts.md) | Prompts used with AI coding tools, per stage |
+
+## Deploying
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the free, always-on setup (Vercel + Render + Supabase), including capacity numbers, step-by-step instructions, and troubleshooting.

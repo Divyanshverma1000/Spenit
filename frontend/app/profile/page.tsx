@@ -1,5 +1,6 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -11,8 +12,9 @@ import { SettingsList } from "@/components/ui/SettingsList";
 import { SettingsRow } from "@/components/ui/SettingsRow";
 import { LogOut, User, Bell, Cpu, Key, CheckCircle, AlertCircle, Wallet, Edit2, Copy, Check, Lock, HelpCircle, FileText, Info, Trash2, RefreshCw, ShieldCheck } from "lucide-react";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { Palette } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface UserProfile {
   id: string;
@@ -148,7 +150,7 @@ export default function ProfilePage() {
       <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb pb-24">
         
         {/* Sticky Header */}
-        <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-5 pt-14 pb-4 border-b border-[rgba(0,0,0,0.03)]">
+        <div className="sticky top-0 z-10 bg-[var(--ink)]/80 backdrop-blur-xl px-5 pt-14 pb-4 border-b border-[var(--hairline)]">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">
             Settings
           </h1>
@@ -176,7 +178,7 @@ export default function ProfilePage() {
                   <div className="relative flex-shrink-0">
                     {profile.avatarUrl ? (
                       <Image src={profile.avatarUrl} alt={profile.name} width={56} height={56}
-                        className="rounded-full border border-[rgba(0,0,0,0.05)]" />
+                        className="rounded-full border border-[var(--hairline)]" />
                     ) : (
                       <div className="h-14 w-14 rounded-full bg-[var(--paper-dim)] flex items-center justify-center text-[18px] font-bold text-[var(--accent)]">
                         {profile.name.charAt(0).toUpperCase()}
@@ -231,7 +233,7 @@ export default function ProfilePage() {
                         value={upiId}
                         onChange={(e) => setUpiId(e.target.value)}
                         placeholder="yourname@upi"
-                        className="flex-1 bg-[var(--ink)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2 text-[14px] font-medium outline-none focus:ring-2 ring-[var(--accent-subtle)]"
+                        className="flex-1 bg-[var(--ink)] border border-[var(--hairline)] rounded-[12px] px-3 py-2 text-[14px] font-medium outline-none focus:ring-2 ring-[var(--accent-subtle)]"
                       />
                       <button 
                         onClick={handleSaveUpi}
@@ -242,7 +244,7 @@ export default function ProfilePage() {
                       </button>
                     </div>
                   ) : (
-                    <div className="bg-[var(--ink)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 overflow-hidden flex items-center">
+                    <div className="bg-[var(--ink)] border border-[var(--hairline)] rounded-[12px] px-3 py-2.5 overflow-hidden flex items-center">
                       <div className="w-full overflow-hidden whitespace-nowrap">
                         {profile.upiId ? (
                           <div className="inline-block animate-marquee hover:paused active:paused font-mono text-[14px] font-medium text-[var(--text-primary)] w-full">
@@ -265,6 +267,13 @@ export default function ProfilePage() {
             {/* ── Notifications ───────────────────────────────────────────────── */}
             <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-6">
               <SettingsList title="Preferences">
+                <div className="flex flex-wrap items-center justify-between gap-3 w-full px-5 py-4 bg-white">
+                  <div className="flex items-center gap-3">
+                    <div className="p-1.5 rounded-[10px] bg-[var(--paper-dim)] text-[var(--text-primary)]"><Palette size={18} /></div>
+                    <div className="text-[16px] font-semibold text-[var(--text-primary)] tracking-tight">Appearance</div>
+                  </div>
+                  <ThemeToggle className="w-full" />
+                </div>
                 <div className="flex items-center justify-between w-full px-5 py-4 bg-white">
                   <div className="flex items-center gap-3">
                     <div className="p-1.5 rounded-[10px] bg-[var(--paper-dim)] text-[var(--text-primary)]"><Bell size={18} /></div>
@@ -277,7 +286,7 @@ export default function ProfilePage() {
                     onClick={isSubscribed ? unsubscribe : subscribe}
                     className={`relative inline-flex h-[26px] w-[46px] items-center rounded-full transition-colors ${isSubscribed ? 'bg-[var(--positive)]' : 'bg-[#E5E5EA]'}`}
                   >
-                    <span className={`inline-block h-[22px] w-[22px] transform rounded-full bg-white shadow-sm transition-transform ${isSubscribed ? 'translate-x-[22px]' : 'translate-x-[2px]'}`} />
+                    <span className={`inline-block h-[22px] w-[22px] transform rounded-full bg-[#FFFFFF] shadow-sm transition-transform ${isSubscribed ? 'translate-x-[22px]' : 'translate-x-[2px]'}`} />
                   </button>
                 </div>
               </SettingsList>
@@ -308,7 +317,7 @@ export default function ProfilePage() {
                           value={groqKey}
                           onChange={(e) => setGroqKey(e.target.value)}
                           placeholder="gsk_..."
-                          className="w-full pl-9 pr-3 py-2.5 bg-[var(--bg-main)] border border-[rgba(0,0,0,0.08)] rounded-[12px] text-[13px] font-medium outline-none focus:border-[var(--accent)] transition-colors"
+                          className="w-full pl-9 pr-3 py-2.5 bg-[var(--bg-main)] border border-[var(--hairline)] rounded-[12px] text-[13px] font-medium outline-none focus:border-[var(--accent)] transition-colors"
                           autoFocus
                         />
                       </div>
@@ -317,7 +326,7 @@ export default function ProfilePage() {
                       </button>
                     </form>
                   ) : profile.hasGroqKey ? (
-                    <div className="flex items-center justify-between bg-[var(--bg-main)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
+                    <div className="flex items-center justify-between bg-[var(--bg-main)] border border-[var(--hairline)] rounded-[12px] px-3 py-2.5 mb-3">
                       <code className="font-mono text-[13px] font-medium text-[var(--text-secondary)]">{profile.groqKeyMasked}</code>
                       <div className="flex gap-2">
                         <button onClick={() => setCopiedGroq(true)} className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
@@ -329,7 +338,7 @@ export default function ProfilePage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-[var(--bg-main)] border border-[rgba(0,0,0,0.05)] rounded-[12px] px-3 py-2.5 mb-3">
+                    <div className="bg-[var(--bg-main)] border border-[var(--hairline)] rounded-[12px] px-3 py-2.5 mb-3">
                       <span className="text-[13px] text-[var(--text-muted)] font-medium">No API Key configured</span>
                     </div>
                   )}

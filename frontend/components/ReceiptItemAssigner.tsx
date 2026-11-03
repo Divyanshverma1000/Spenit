@@ -125,14 +125,14 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
   if (members.length === 0) return null; // Hide in personal contexts
 
   return (
-    <div className="bg-white rounded-[24px] border border-[rgba(0,0,0,0.03)] shadow-sm overflow-hidden mb-4">
-      <div className="p-4 bg-[var(--paper-dim)] border-b border-[rgba(0,0,0,0.03)] flex justify-between items-center">
+    <div className="bg-white rounded-[24px] border border-[var(--hairline)] shadow-sm overflow-hidden mb-4">
+      <div className="p-4 bg-[var(--paper-dim)] border-b border-[var(--hairline)] flex justify-between items-center">
         <div>
           <h3 className="font-bold text-[14px] text-[var(--text-primary)]">Assign Items</h3>
           <p className="text-[12px] text-[var(--text-secondary)]">Tap avatars to split item costs.</p>
         </div>
       </div>
-      <div className="divide-y divide-[rgba(0,0,0,0.03)]">
+      <div className="divide-y divide-[var(--hairline)]">
         {items.map((item, idx) => {
           const isAllSelected = (assignments[idx] || []).length === members.length;
           return (
@@ -168,7 +168,7 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
                   type="button"
                   onClick={() => toggleSelectAll(idx)}
                   className={`h-8 px-3 flex-shrink-0 rounded-full flex items-center justify-center gap-1.5 font-bold text-[12px] border-2 transition-colors ${
-                    isAllSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-[rgba(0,0,0,0.05)] bg-[var(--paper-dim)] text-[var(--text-secondary)]"
+                    isAllSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-[var(--hairline)] bg-[var(--paper-dim)] text-[var(--text-secondary)]"
                   }`}
                 >
                   <Users size={14} /> All
@@ -200,7 +200,7 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
       </div>
       <button 
         onClick={addItem}
-        className="w-full p-3 bg-[var(--paper-dim)] text-[var(--text-secondary)] font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[var(--paper)] transition-colors border-t border-[rgba(0,0,0,0.03)]"
+        className="w-full p-3 bg-[var(--paper-dim)] text-[var(--text-secondary)] font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-[var(--paper)] transition-colors border-t border-[var(--hairline)]"
       >
         <Plus size={16} /> Add Item
       </button>

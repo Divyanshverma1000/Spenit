@@ -11,6 +11,12 @@ export interface Expense {
   splitType: string;
   createdAt: string;
   category?: string;
+  /** true while the expense is queued locally and not yet saved on the server */
+  pending?: boolean;
+  /** set when the expense was changed after it was created */
+  editedAt?: string | null;
+  /** specific items saved with the expense (used by Repeat) */
+  receiptData?: unknown;
   payers: { userId: string; name: string; amountPaid: string }[];
   splits: { userId: string; name: string; shareAmount: string }[];
 }
@@ -67,13 +73,13 @@ export function ExpenseRow({ expense, onClick }: { expense: Expense; onClick?: (
             exit={{ height: 0, opacity: 0, marginTop: 0 }}
             className="overflow-hidden w-full pl-11 pr-2"
           >
-            <div className="pt-3 border-t border-[rgba(0,0,0,0.03)] flex flex-col gap-2">
+            <div className="pt-3 border-t border-[var(--hairline)] flex flex-col gap-2">
               <span className="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Shared among</span>
               <div className="flex flex-wrap gap-1.5">
                 {expense.splits.map((s) => (
                   <span
                     key={s.userId}
-                    className="text-[12px] px-2 py-1 rounded-[10px] bg-[var(--paper-dim)] text-[var(--text-primary)] font-medium border border-[rgba(0,0,0,0.03)]"
+                    className="text-[12px] px-2 py-1 rounded-[10px] bg-[var(--paper-dim)] text-[var(--text-primary)] font-medium border border-[var(--hairline)]"
                   >
                     {s.name} <span className="text-[var(--text-secondary)]">₹{parseFloat(s.shareAmount).toFixed(0)}</span>
                   </span>

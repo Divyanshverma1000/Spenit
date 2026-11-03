@@ -31,7 +31,7 @@ export function GroupCard({ id, name, members, netAmount, direction, lastActivit
     <Link href={`/groups/${id}`} className="block outline-none">
       <motion.div 
         whileTap={{ scale: 0.98 }}
-        className="bg-white rounded-[24px] p-4 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.03)] flex flex-col gap-3"
+        className="bg-white rounded-[24px] p-4 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[var(--hairline)] flex flex-col gap-3"
       >
         <div className="flex justify-between items-start">
           <div className="flex gap-3 items-center">

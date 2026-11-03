@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
+import { fileToCompressedDataUrl } from "@/lib/image";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -11,7 +13,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAIExpense } from "@/hooks/useAIExpense";
 import ExpenseConfirmCard from "@/components/ExpenseConfirmCard";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export default function GlobalScanPage() {
   const authed = useRequireAuth();
@@ -42,12 +43,8 @@ export default function GlobalScanPage() {
     const newImages: string[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve) => {
-        reader.onload = (event) => resolve(event.target?.result as string);
-        reader.readAsDataURL(file);
-      });
-      newImages.push(base64);
+      // Shrunk in the browser first: faster on weak networks, safely under the upload limit.
+      newImages.push(await fileToCompressedDataUrl(file));
     }
 
     setSelectedImages(prev => [...prev, ...newImages]);
@@ -154,7 +151,7 @@ export default function GlobalScanPage() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-main)] pb-24 flex flex-col">
-      <header className="px-5 py-4 flex items-center gap-4 bg-[var(--bg-main)]/80 backdrop-blur-md sticky top-0 z-10 border-b border-[rgba(0,0,0,0.05)]">
+      <header className="px-5 py-4 flex items-center gap-4 bg-[var(--bg-main)]/80 backdrop-blur-md sticky top-0 z-10 border-b border-[var(--hairline)]">
         <Link href="/dashboard" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-1 -ml-1 active:scale-95 transition-transform">
           <ChevronLeft size={24} />
         </Link>
@@ -169,7 +166,7 @@ export default function GlobalScanPage() {
             </h2>
             <div className="grid grid-cols-2 gap-3 w-full mb-8 max-h-[50vh] overflow-y-auto pr-2 pb-2">
               {selectedImages.map((img, idx) => (
-                <div key={idx} className="relative rounded-[16px] overflow-hidden aspect-[3/4] border border-[rgba(0,0,0,0.05)] shadow-sm">
+                <div key={idx} className="relative rounded-[16px] overflow-hidden aspect-[3/4] border border-[var(--hairline)] shadow-sm">
                   <img src={img} alt={`Receipt ${idx + 1}`} className="w-full h-full object-cover" />
                   <button 
                     onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))}
@@ -197,7 +194,7 @@ export default function GlobalScanPage() {
                     fileInputRef.current.click();
                   }
                 }}
-                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[rgba(0,0,0,0.05)] active:scale-95 transition-transform"
+                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[var(--hairline)] active:scale-95 transition-transform"
               >
                 + Add More Photos
               </button>
@@ -234,7 +231,7 @@ export default function GlobalScanPage() {
                     fileInputRef.current.click();
                   }
                 }}
-                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[rgba(0,0,0,0.05)] active:scale-95 transition-transform flex items-center justify-center gap-2"
+                className="w-full bg-[var(--paper)] text-[var(--text-primary)] font-bold text-[15px] py-4 rounded-[16px] border border-[var(--hairline)] active:scale-95 transition-transform flex items-center justify-center gap-2"
               >
                 <ImageIcon size={20} /> Choose from Gallery
               </button>
@@ -300,7 +297,7 @@ export default function GlobalScanPage() {
                   <button 
                     key={g.id}
                     onClick={() => handleSelectContext(g.id)}
-                    className="w-full text-left bg-[var(--paper)] border border-[rgba(0,0,0,0.05)] p-4 rounded-[16px] flex items-center gap-4 active:scale-95 transition-transform"
+                    className="w-full text-left bg-[var(--paper)] border border-[var(--hairline)] p-4 rounded-[16px] flex items-center gap-4 active:scale-95 transition-transform"
                   >
                     <div className="w-12 h-12 rounded-full bg-[var(--paper-dim)] flex items-center justify-center text-[var(--text-secondary)]">
                       <Users size={24} />

@@ -27,7 +27,8 @@ import { EXPENSE_CATEGORIES } from "./AIProvider";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 10_000;
-const GROQ_MODEL = process.env.GROQ_MODEL || "mixtral-8x7b-32768";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "qwen/qwen3.6-27b";
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ If there are items, you MUST include them in the "items" array.`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "qwen/qwen3.6-27b",
+          model: GROQ_VISION_MODEL,
           messages: [
             {
               role: "user",

@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
+import { fileToCompressedDataUrl } from "@/lib/image";
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -12,7 +14,6 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Mic, Camera, Send, Sparkles } from "lucide-react";
 import type { ParsedExpenseDraft } from "@/hooks/types/ai";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface Member {
   id: string;
@@ -92,17 +93,15 @@ export default function AIExpensePage() {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
+    // Shrink the photo in the browser first: faster on weak networks, under the upload limit.
+    fileToCompressedDataUrl(file).then(async (base64) => {
       if (base64 && groupId) {
         setReceiptFile(file);
         setReceiptToast(true);
         setTimeout(() => setReceiptToast(false), 2500);
         await ai.parseReceipt([base64], groupId);
       }
-    };
-    reader.readAsDataURL(file);
+    });
   }
 
   async function handleParse() {

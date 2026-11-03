@@ -15,22 +15,27 @@
 import webpush from "web-push";
 import pool from "./db/pool";
 
-// ── VAPID configuration (initialised once on import) ──────────────────────────
-const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_MAILTO } = process.env;
+// ── VAPID configuration ───────────────────────────────────────────────────────
+// Read lazily (not at import time): on Cloudflare Workers the environment is only
+// guaranteed to be available once a request is being handled.
+let vapidReady: boolean | null = null;
 
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-  console.warn(
-    "[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push notifications disabled"
-  );
-} else {
-  webpush.setVapidDetails(
-    VAPID_MAILTO || "mailto:spenit@example.com",
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY
-  );
+function ensureVapid(): boolean {
+  if (vapidReady !== null) return vapidReady;
+  const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_MAILTO } = process.env;
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    console.warn("[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push notifications disabled");
+    vapidReady = false;
+  } else {
+    webpush.setVapidDetails(VAPID_MAILTO || "mailto:spenit@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    vapidReady = true;
+  }
+  return vapidReady;
 }
 
-export const vapidPublicKey = VAPID_PUBLIC_KEY || "";
+export function vapidPublicKey(): string {
+  return process.env.VAPID_PUBLIC_KEY || "";
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -52,7 +57,7 @@ export interface PushPayload {
  * This function NEVER throws — all errors are caught and logged.
  */
 export async function sendToUser(userId: string, payload: PushPayload): Promise<void> {
-  if (!VAPID_PUBLIC_KEY) return; // Push disabled
+  if (!ensureVapid()) return; // Push disabled
 
   let subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[];
   try {
@@ -81,22 +86,28 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
   await Promise.allSettled(
     subscriptions.map(async (sub) => {
       try {
-        await webpush.sendNotification(
-          {
-            endpoint: sub.endpoint,
-            keys: { p256dh: sub.p256dh, auth: sub.auth },
-          },
+        // web-push builds the encrypted, VAPID-signed request; we send it with fetch so the same
+        // code works on Node and on Cloudflare Workers (web-push's own sender needs Node's https).
+        const req = webpush.generateRequestDetails(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           body,
           { TTL: 60 * 60 * 24 } // 24h TTL — deliver even if device is offline
         );
-      } catch (err: unknown) {
-        const status = (err as { statusCode?: number }).statusCode;
-        if (status === 410 || status === 404) {
+        const { "Content-Length": _len, ...headers } = (req.headers ?? {}) as Record<string, string>;
+        const res = await fetch(req.endpoint, {
+          method: req.method,
+          headers,
+          body: req.body as unknown as Buffer,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.status === 410 || res.status === 404) {
           // Subscription is gone — schedule for removal
           staleIds.push(sub.id);
-        } else {
-          console.warn(`[push] sendNotification failed for sub ${sub.id}:`, (err as Error).message);
+        } else if (!res.ok) {
+          console.warn(`[push] push service answered ${res.status} for sub ${sub.id}`);
         }
+      } catch (err: unknown) {
+        console.warn(`[push] sending failed for sub ${sub.id}:`, (err as Error).message);
       }
     })
   );

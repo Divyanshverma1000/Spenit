@@ -7,7 +7,7 @@ import BottomNav from "@/components/BottomNav";
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-[var(--bg-main)] pb-24 text-[var(--text-primary)]">
-      <header className="px-5 py-4 flex items-center gap-4 bg-[var(--bg-main)]/80 backdrop-blur-md sticky top-0 z-10 border-b border-[rgba(0,0,0,0.05)]">
+      <header className="px-5 py-4 flex items-center gap-4 bg-[var(--bg-main)]/80 backdrop-blur-md sticky top-0 z-10 border-b border-[var(--hairline)]">
         <Link href="/profile" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-1 -ml-1 active:scale-95 transition-transform">
           <ChevronLeft size={24} />
         </Link>

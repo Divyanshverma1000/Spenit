@@ -13,7 +13,7 @@ export function SettingsList({ children, title }: { children: React.ReactNode; t
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="bg-white rounded-[24px] overflow-hidden shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[rgba(0,0,0,0.02)]"
+        className="bg-white rounded-[24px] overflow-hidden shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[var(--hairline)]"
       >
         <div className="flex flex-col divide-y divide-[var(--paper-dim)]">
           {children}

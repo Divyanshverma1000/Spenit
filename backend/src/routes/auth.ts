@@ -1,10 +1,9 @@
 import { Router, Request, Response } from "express";
-import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import pool from "../db/pool";
+import { verifyGoogleIdToken } from "../lib/googleToken";
 
 const router = Router();
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ─── JWT helpers ──────────────────────────────────────────────────────────────
 
@@ -81,11 +80,7 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
   // 1. Verify the Google ID token
   let googlePayload;
   try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    googlePayload = ticket.getPayload();
+    googlePayload = await verifyGoogleIdToken(idToken, process.env.GOOGLE_CLIENT_ID as string);
   } catch {
     res.status(401).json({ error: "Invalid Google ID token" });
     return;
@@ -140,7 +135,9 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: REFRESH_COOKIE_MAX_AGE_MS,
-    path: "/auth",  // scoped to /auth/* so /auth/refresh receives it
+    // "/" (not "/auth"): behind the frontend proxy the API is served under /api/auth/*,
+    // so a "/auth" path would never match and the cookie would not be sent.
+    path: "/",
   });
 
   res.json({
@@ -202,6 +199,8 @@ router.post("/refresh", async (req: Request, res: Response): Promise<void> => {
 // ─── POST /auth/logout ────────────────────────────────────────────────────────
 
 router.post("/logout", (_req: Request, res: Response): void => {
+  // Clear both the current path and the legacy "/auth" one from older sessions.
+  res.clearCookie("refresh_token", { path: "/" });
   res.clearCookie("refresh_token", { path: "/auth" });
   res.json({ message: "Logged out" });
 });

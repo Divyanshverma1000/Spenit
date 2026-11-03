@@ -2,6 +2,17 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
+import { invalidateGroupBalanceCache, getGroupBalance } from "./balance";
+import { listGroupExpenses } from "./expenses";
+import { listGroupSettlements } from "./settlements";
+import {
+  normalizeNickname,
+  getMemberRole,
+  isDisplayNameTaken,
+  suggestNickname,
+  transferUserReferences,
+  userHasHistory,
+} from "../lib/members";
 
 const router = Router();
 
@@ -23,7 +34,8 @@ function generateInviteToken(): string {
  * Auth: required
  */
 router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const { name, icon } = req.body as { name?: string; icon?: string };
+  const { name, icon, nickname: rawNickname } = req.body as { name?: string; icon?: string; nickname?: string };
+  const nickname = normalizeNickname(rawNickname);
 
   if (!name || name.trim().length === 0) {
     res.status(400).json({ error: "Group name is required" });
@@ -59,9 +71,9 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
 
     // Automatically add the creator as a GroupMember with role 'admin'
     await client.query(
-      `insert into "GroupMember" (group_id, user_id, role)
-       values ($1, $2, 'admin')`,
-      [group.id, userId]
+      `insert into "GroupMember" (group_id, user_id, role, nickname)
+       values ($1, $2, 'admin', $3)`,
+      [group.id, userId, nickname]
     );
 
     await client.query("COMMIT");
@@ -164,10 +176,23 @@ router.get("/preview/:token", async (req: Request, res: Response): Promise<void>
     return;
   }
 
+  // Placeholders the admin added who haven't joined yet — lets a joiner say
+  // "I'm Rahul" and inherit the expenses already recorded for them.
+  // Only admin-chosen nicknames are exposed, never ids of real members' data.
+  const unclaimed = await pool.query(
+    `select gm.user_id as id, coalesce(gm.nickname, u.name) as nickname
+     from "GroupMember" gm
+     join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and u.is_placeholder = true
+     order by gm.joined_at asc`,
+    [group.id]
+  );
+
   res.json({
     name: group.name,
     icon: group.icon,
     memberCount: group.member_count,
+    unclaimedMembers: unclaimed.rows,
   });
 });
 
@@ -184,8 +209,12 @@ router.get("/preview/:token", async (req: Request, res: Response): Promise<void>
 router.post("/join/:token", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { token } = req.params;
   const userId = req.user!.userId;
+  const { nickname: rawNickname, claimMemberId } = (req.body || {}) as {
+    nickname?: string;
+    claimMemberId?: string;
+  };
+  const nickname = normalizeNickname(rawNickname);
 
-  // Look up the group by invite token
   const { rows } = await pool.query(
     `select id, name, icon, invite_token_expires_at
      from "Group"
@@ -205,21 +234,154 @@ router.post("/join/:token", requireAuth, async (req: Request, res: Response): Pr
     return;
   }
 
-  // Upsert GroupMember — idempotent (already a member? return their existing row)
-  await pool.query(
-    `insert into "GroupMember" (group_id, user_id, role)
-     values ($1, $2, 'member')
-     on conflict (group_id, user_id) do nothing`,
-    [group.id, userId]
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const me = await client.query('select name from "User" where id = $1', [userId]);
+    const myName: string = me.rows[0]?.name || "Member";
+
+    const existing = await client.query(
+      'select 1 from "GroupMember" where group_id = $1 and user_id = $2',
+      [group.id, userId]
+    );
+
+    // Already a member: idempotent; allow setting a nickname on re-visit.
+    if (existing.rows.length > 0) {
+      if (nickname) {
+        if (await isDisplayNameTaken(client, group.id, nickname, userId)) {
+          await client.query("ROLLBACK");
+          res.status(409).json({ error: `"${nickname}" is already used in this group`, code: "NICKNAME_TAKEN" });
+          return;
+        }
+        await client.query(
+          'update "GroupMember" set nickname = $3 where group_id = $1 and user_id = $2',
+          [group.id, userId, nickname]
+        );
+      }
+      await client.query("COMMIT");
+      res.json({ message: "Already a member", groupId: group.id, groupName: group.name, groupIcon: group.icon });
+      return;
+    }
+
+    if (claimMemberId) {
+      // Claim a placeholder: take over the history recorded for them.
+      const ph = await client.query(
+        `select gm.nickname, u.name
+         from "GroupMember" gm join "User" u on u.id = gm.user_id
+         where gm.group_id = $1 and gm.user_id = $2 and u.is_placeholder = true
+         for update of gm`,
+        [group.id, claimMemberId]
+      );
+      if (ph.rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "That person was already claimed or doesn't exist", code: "PLACEHOLDER_GONE" });
+        return;
+      }
+
+      const finalNickname: string = nickname || ph.rows[0].nickname || ph.rows[0].name;
+      await transferUserReferences(client, claimMemberId, userId);
+      // Remove the placeholder first so its nickname is free to reuse.
+      await client.query(
+        'delete from "GroupMember" where group_id = $1 and user_id = $2',
+        [group.id, claimMemberId]
+      );
+      await client.query('update "User" set deleted_at = now() where id = $1', [claimMemberId]);
+      if (await isDisplayNameTaken(client, group.id, finalNickname)) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: `"${finalNickname}" is already used in this group`, code: "NICKNAME_TAKEN" });
+        return;
+      }
+      await client.query(
+        `insert into "GroupMember" (group_id, user_id, role, nickname)
+         values ($1, $2, 'member', $3)`,
+        [group.id, userId, finalNickname]
+      );
+    } else {
+      // Fresh join: a nickname is needed only if the name would be ambiguous.
+      const effective = nickname || myName;
+      if (await isDisplayNameTaken(client, group.id, effective)) {
+        const suggestion = await suggestNickname(client, group.id, effective);
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          error: nickname
+            ? `"${nickname}" is already used in this group`
+            : `Someone named "${myName}" is already in this group, please pick a nickname`,
+          code: nickname ? "NICKNAME_TAKEN" : "NICKNAME_REQUIRED",
+          suggestion,
+        });
+        return;
+      }
+      await client.query(
+        `insert into "GroupMember" (group_id, user_id, role, nickname)
+         values ($1, $2, 'member', $3)`,
+        [group.id, userId, nickname]
+      );
+    }
+
+    await client.query("COMMIT");
+    invalidateGroupBalanceCache(group.id).catch(() => {});
+
+    res.json({
+      message: "Joined successfully",
+      groupId: group.id,
+      groupName: group.name,
+      groupIcon: group.icon,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /groups/join error:", err);
+    res.status(500).json({ error: "Failed to join group" });
+  } finally {
+    client.release();
+  }
+});
+
+/** Group + members for the group page. Caller must already have verified membership. */
+export async function getGroupDetail(id: string, myRole: string) {
+  // Fetch the group
+  const groupResult = await pool.query(
+    'select id, name, icon, invite_token, created_by, created_at from "Group" where id = $1 and deleted_at is null',
+    [id]
   );
 
-  res.json({
-    message: "Joined successfully",
-    groupId: group.id,
-    groupName: group.name,
-    groupIcon: group.icon,
-  });
-});
+  if (groupResult.rows.length === 0) {
+    return null;
+  }
+
+  const group = groupResult.rows[0];
+
+  // Fetch members
+  const membersResult = await pool.query(
+    `select u.id, u.name, u.username, u.avatar_url, u.is_placeholder, gm.nickname, gm.role, gm.joined_at
+     from "GroupMember" gm
+     join "User" u on u.id = gm.user_id
+     where gm.group_id = $1
+     order by gm.joined_at asc`,
+    [id]
+  );
+
+  return {
+    id: group.id,
+    name: group.name,
+    icon: group.icon,
+    inviteToken: group.invite_token,
+    createdBy: group.created_by,
+    createdAt: group.created_at,
+    myRole: myRole,
+    members: membersResult.rows.map((m) => ({
+      id: m.id,
+      name: m.nickname || m.name, // display name used everywhere in the UI
+      realName: m.is_placeholder ? null : m.name,
+      nickname: m.nickname,
+      username: m.is_placeholder ? null : m.username,
+      avatarUrl: m.avatar_url,
+      role: m.role,
+      isPlaceholder: m.is_placeholder,
+      joinedAt: m.joined_at,
+    })),
+  };
+}
 
 // ─── GET /groups/:id ─────────────────────────────────────────────────────────
 /**
@@ -241,46 +403,195 @@ router.get("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
     return;
   }
 
-  // Fetch the group
-  const groupResult = await pool.query(
-    'select id, name, icon, invite_token, created_by, created_at from "Group" where id = $1 and deleted_at is null',
-    [id]
-  );
-
-  if (groupResult.rows.length === 0) {
+  const detail = await getGroupDetail(id, membership.rows[0].role);
+  if (!detail) {
     res.status(404).json({ error: "Group not found" });
     return;
   }
+  res.json(detail);
+});
 
-  const group = groupResult.rows[0];
+// ─── GET /groups/:id/overview ────────────────────────────────────────────────
+/**
+ * Everything the group page needs in ONE round trip: details + members,
+ * expenses, settlements and balances. Replaces five separate requests, which
+ * matters most on slow mobile networks.
+ */
+router.get("/:id/overview", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
 
-  // Fetch members
-  const membersResult = await pool.query(
-    `select u.id, u.name, u.username, u.avatar_url, gm.role, gm.joined_at
-     from "GroupMember" gm
-     join "User" u on u.id = gm.user_id
-     where gm.group_id = $1
-     order by gm.joined_at asc`,
-    [id]
+  const role = await getMemberRole(id, userId);
+  if (!role) {
+    res.status(403).json({ error: "You are not a member of this group" });
+    return;
+  }
+
+  const [group, expenses, settlements, balance] = await Promise.all([
+    getGroupDetail(id, role),
+    listGroupExpenses(id),
+    listGroupSettlements(id, userId),
+    getGroupBalance(id, userId),
+  ]);
+  if (!group) {
+    res.status(404).json({ error: "Group not found" });
+    return;
+  }
+  res.json({ group, expenses, settlements, balance });
+});
+
+// ─── POST /groups/:id/members ────────────────────────────────────────────────
+/**
+ * Admin adds a person who hasn't joined yet (a placeholder).
+ * They can be used as payer / participant straight away; when the real person
+ * opens the invite link they can claim this name and inherit everything.
+ *
+ * Body: { nickname: string }
+ */
+router.post("/:id/members", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+  const nickname = normalizeNickname((req.body || {}).nickname);
+
+  if ((await getMemberRole(id, userId)) !== "admin") {
+    res.status(403).json({ error: "Only the group admin can add people" });
+    return;
+  }
+  if (!nickname) {
+    res.status(400).json({ error: "A name is required" });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (await isDisplayNameTaken(client, id, nickname)) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: `"${nickname}" is already in this group`, code: "NICKNAME_TAKEN" });
+      return;
+    }
+
+    const username = `ph_${crypto.randomBytes(6).toString("hex")}`;
+    const user = await client.query(
+      `insert into "User" (username, name, is_placeholder)
+       values ($1, $2, true)
+       returning id`,
+      [username, nickname]
+    );
+    await client.query(
+      `insert into "GroupMember" (group_id, user_id, role, nickname, added_by)
+       values ($1, $2, 'member', $3, $4)`,
+      [id, user.rows[0].id, nickname, userId]
+    );
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      id: user.rows[0].id,
+      name: nickname,
+      nickname,
+      isPlaceholder: true,
+      role: "member",
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /groups/:id/members error:", err);
+    res.status(500).json({ error: "Failed to add person" });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── PATCH /groups/:id/members/:userId ───────────────────────────────────────
+/**
+ * Change a nickname. Members can rename themselves; the admin can rename
+ * placeholders (people who haven't joined).
+ * Body: { nickname: string | null }   (null clears it, falling back to real name)
+ */
+router.patch("/:id/members/:userId", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id, userId: targetId } = req.params;
+  const userId = req.user!.userId;
+  const nickname = normalizeNickname((req.body || {}).nickname);
+
+  const myRole = await getMemberRole(id, userId);
+  if (!myRole) {
+    res.status(403).json({ error: "You are not a member of this group" });
+    return;
+  }
+
+  const target = await pool.query(
+    `select u.is_placeholder, u.name
+     from "GroupMember" gm join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and gm.user_id = $2`,
+    [id, targetId]
   );
+  if (target.rows.length === 0) {
+    res.status(404).json({ error: "Member not found" });
+    return;
+  }
 
-  res.json({
-    id: group.id,
-    name: group.name,
-    icon: group.icon,
-    inviteToken: group.invite_token,
-    createdBy: group.created_by,
-    createdAt: group.created_at,
-    myRole: membership.rows[0].role,
-    members: membersResult.rows.map((m) => ({
-      id: m.id,
-      name: m.name,
-      username: m.username,
-      avatarUrl: m.avatar_url,
-      role: m.role,
-      joinedAt: m.joined_at,
-    })),
-  });
+  const isSelf = targetId === userId;
+  const adminOnPlaceholder = myRole === "admin" && target.rows[0].is_placeholder;
+  if (!isSelf && !adminOnPlaceholder) {
+    res.status(403).json({ error: "You can only change your own nickname" });
+    return;
+  }
+  if (!nickname && target.rows[0].is_placeholder) {
+    res.status(400).json({ error: "A name is required" });
+    return;
+  }
+
+  const finalName: string = nickname || target.rows[0].name;
+  if (await isDisplayNameTaken(pool, id, finalName, targetId)) {
+    res.status(409).json({ error: `"${finalName}" is already used in this group`, code: "NICKNAME_TAKEN" });
+    return;
+  }
+
+  await pool.query(
+    'update "GroupMember" set nickname = $3 where group_id = $1 and user_id = $2',
+    [id, targetId, nickname]
+  );
+  invalidateGroupBalanceCache(id).catch(() => {});
+
+  res.json({ id: targetId, nickname, name: finalName });
+});
+
+// ─── DELETE /groups/:id/members/:userId ──────────────────────────────────────
+/**
+ * Admin removes a placeholder who has no expenses or settlements yet
+ * (e.g. added by mistake). People with history can't be removed, since that
+ * would corrupt the balances.
+ */
+router.delete("/:id/members/:userId", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id, userId: targetId } = req.params;
+  const userId = req.user!.userId;
+
+  if ((await getMemberRole(id, userId)) !== "admin") {
+    res.status(403).json({ error: "Only the group admin can remove people" });
+    return;
+  }
+
+  const target = await pool.query(
+    `select u.is_placeholder
+     from "GroupMember" gm join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and gm.user_id = $2`,
+    [id, targetId]
+  );
+  if (target.rows.length === 0) {
+    res.status(404).json({ error: "Member not found" });
+    return;
+  }
+  if (!target.rows[0].is_placeholder) {
+    res.status(403).json({ error: "Only people who haven't joined can be removed" });
+    return;
+  }
+  if (await userHasHistory(pool, targetId)) {
+    res.status(409).json({ error: "This person already has expenses. Delete those first." });
+    return;
+  }
+
+  await pool.query('delete from "GroupMember" where group_id = $1 and user_id = $2', [id, targetId]);
+  await pool.query('update "User" set deleted_at = now() where id = $1', [targetId]);
+  res.json({ message: "Removed", id: targetId });
 });
 
 export default router;

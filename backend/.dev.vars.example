@@ -1,0 +1,9 @@
+# Local secrets for `npm run cf:dev` (copy to .dev.vars; never commit it).
+NODE_ENV=production
+FRONTEND_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+JWT_ACCESS_SECRET=any_long_random_string_at_least_32_chars
+JWT_REFRESH_SECRET=a_different_long_random_string_at_least_32
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_MAILTO=mailto:you@example.com

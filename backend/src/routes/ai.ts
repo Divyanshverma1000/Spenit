@@ -64,11 +64,11 @@ router.post(
       name: string;
       username: string;
     }>(
-      `SELECT u.id, u.name, u.username
+      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username
        FROM "GroupMember" gm
        JOIN "User" u ON u.id = gm.user_id
        WHERE gm.group_id = $1
-       ORDER BY (gm.user_id = $2) DESC, u.name ASC`,
+       ORDER BY (gm.user_id = $2) DESC, COALESCE(gm.nickname, u.name) ASC`,
       [groupId, userId]
     );
 
@@ -219,11 +219,11 @@ router.post(
 
       // Fetch group members
       const membersRes = await pool.query<{ id: string; name: string; username: string; }>(
-        `SELECT u.id, u.name, u.username
+        `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username
          FROM "GroupMember" gm
          JOIN "User" u ON u.id = gm.user_id
          WHERE gm.group_id = $1
-         ORDER BY (gm.user_id = $2) DESC, u.name ASC`,
+         ORDER BY (gm.user_id = $2) DESC, COALESCE(gm.nickname, u.name) ASC`,
         [groupId, userId]
       );
       membersList = membersRes.rows;
@@ -320,17 +320,18 @@ router.post(
     // 3. Fetch all context (Members, Expenses, Settlements, Balances)
     // We reuse existing balance/expense endpoints logic here by fetching directly
     const membersRes = await pool.query(
-      `SELECT u.id, u.name, u.username
+      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username
        FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
-       WHERE gm.group_id = $1 ORDER BY (gm.user_id = $2) DESC, u.name ASC`,
+       WHERE gm.group_id = $1 ORDER BY (gm.user_id = $2) DESC, COALESCE(gm.nickname, u.name) ASC`,
       [groupId, userId]
     );
     const members = membersRes.rows;
 
     const expensesRes = await pool.query(
-      `SELECT e.id, e.description, e.amount, e.currency, e.category, e.created_at, u.name as added_by
+      `SELECT e.id, e.description, e.amount, e.currency, e.category, e.created_at, COALESCE(agm.nickname, u.name) as added_by
        FROM "Expense" e
        JOIN "User" u ON u.id = e.created_by
+       LEFT JOIN "GroupMember" agm ON agm.group_id = e.group_id AND agm.user_id = e.created_by
        WHERE e.group_id = $1 AND e.deleted_at IS NULL
        ORDER BY e.created_at DESC LIMIT 50`,
       [groupId]
@@ -341,10 +342,12 @@ router.post(
     // It's cleaner to just fetch what we can. For Stage 6B, AI needs raw context.
     const settlementsRes = await pool.query(
       `SELECT s.id, s.amount, s.status, s.method, s.created_at,
-              f.name as from_user, t.name as to_user
+              COALESCE(fgm.nickname, f.name) as from_user, COALESCE(tgm.nickname, t.name) as to_user
        FROM "Settlement" s
        JOIN "User" f ON f.id = s.from_user
        JOIN "User" t ON t.id = s.to_user
+       LEFT JOIN "GroupMember" fgm ON fgm.group_id = s.group_id AND fgm.user_id = s.from_user
+       LEFT JOIN "GroupMember" tgm ON tgm.group_id = s.group_id AND tgm.user_id = s.to_user
        WHERE s.group_id = $1 AND s.deleted_at IS NULL
        ORDER BY s.created_at DESC`,
       [groupId]

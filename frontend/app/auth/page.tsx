@@ -1,5 +1,6 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { GoogleLogin, CredentialResponse } from "@react-oauth/google";
@@ -7,7 +8,6 @@ import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
 import { Link, Sparkles, ShieldCheck, Shield } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export default function AuthPage() {
   const { login, isAuthenticated, initializing } = useAuth();
@@ -19,7 +19,7 @@ export default function AuthPage() {
 
   if (initializing) {
     return (
-      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--ink)] flex items-center justify-center">
         <div className="spinner border-[var(--accent)]" />
       </div>
     );
@@ -44,7 +44,7 @@ export default function AuthPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#F9FAFB] flex flex-col items-center p-6 sm:p-8 page-content relative overflow-x-hidden pb-32">
+    <main className="min-h-screen bg-[var(--ink)] flex flex-col items-center p-6 sm:p-8 page-content relative overflow-x-hidden pb-32">
       {/* Container to restrict max width for desktop viewing, but optimized for mobile */}
       <div className="w-full max-w-md flex flex-col space-y-8 mt-4">
         
@@ -128,7 +128,7 @@ export default function AuthPage() {
       </div>
 
       {/* Sticky Bottom CTA Section */}
-      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#F9FAFB] via-[#F9FAFB] to-transparent pt-12 pb-6 px-6 sm:px-8 flex flex-col items-center justify-end z-50">
+      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[var(--ink)] via-[var(--ink)] to-transparent pt-12 pb-6 px-6 sm:px-8 flex flex-col items-center justify-end z-50">
         <div className="w-full max-w-md flex flex-col items-center space-y-4">
           <div className="w-full overflow-hidden rounded-2xl relative shadow-xl shadow-orange-500/20 group hover:shadow-orange-500/30 transition-shadow">
             {/* We overlay the invisible GoogleLogin button over a custom beautiful button to match the mockup perfectly */}

@@ -1,0 +1,58 @@
+# ALTERNATIVE deployment. The primary one is Cloudflare Workers (see DEPLOYMENT.md).
+# Render blueprint for the Spenit backend (free web service).
+#
+# Architecture (all free):
+#   Vercel (frontend + /api proxy)  ->  Render (this API)  ->  Supabase (Postgres)
+#
+# See DEPLOYMENT.md for the full step-by-step. In short:
+#   1. Create the Supabase project (Singapore) and copy its *Session pooler* connection string.
+#   2. In Render: New + > Blueprint, pick this repo. Fill the variables marked "sync: false".
+#   3. Point an UptimeRobot monitor at https://<service>.onrender.com/ping every 5 minutes.
+services:
+  - type: web
+    name: spenit-backend
+    runtime: node
+    plan: free
+    region: singapore          # closest free Render region to India
+    rootDir: backend
+    # --include=dev: NODE_ENV=production would otherwise skip TypeScript and the build would fail.
+    buildCommand: npm ci --include=dev && npm run build
+    # Apply new SQL migrations, then start the API.
+    startCommand: npm run start:prod
+    healthCheckPath: /ping     # no DB: a deploy never fails just because the database is waking up
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # ── Database (Supabase "Session pooler" string, or Neon) ──
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      # ── Who may call the API from a browser: your Vercel URL(s), comma-separated ──
+      - key: FRONTEND_URL
+        sync: false            # e.g. https://spenit.vercel.app
+      # ── Secrets: run `npm run gen:secrets` in /backend and paste the output ──
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # ── Google sign-in ──
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      # ── Web push (optional) ──
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_MAILTO
+        value: mailto:admin@example.com
+      # ── AI assistant (optional; users can also bring their own Groq key) ──
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      # REDIS_URL is intentionally NOT set: the API runs on an in-memory cache, which is right
+      # for a single instance and has no quota. Add an Upstash URL later only if you scale out.

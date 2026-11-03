@@ -1,20 +1,28 @@
 import React, { useEffect, useRef } from "react";
-import { X, Trash2 } from "lucide-react";
+import { X, Trash2, Repeat, Pencil } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
 
 interface ExpenseDetailModalProps {
   expense: any;
   currentUserId?: string;
+  isAdmin?: boolean;
   onClose: () => void;
   onDelete?: (id: string) => void;
+  /** Start a new expense pre-filled from this one (description + amount) */
+  onRepeat?: (expense: any) => void;
+  /** Change this expense in place (creator or group admin) */
+  onEdit?: (expense: any) => void;
   isDeleting?: boolean;
 }
 
 export function ExpenseDetailModal({
   expense,
   currentUserId,
+  isAdmin,
   onClose,
   onDelete,
+  onRepeat,
+  onEdit,
   isDeleting,
 }: ExpenseDetailModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
@@ -39,7 +47,7 @@ export function ExpenseDetailModal({
 
   if (!expense) return null;
 
-  const canDelete = expense.createdBy?.id === currentUserId;
+  const canDelete = expense.createdBy?.id === currentUserId || !!isAdmin;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -76,7 +84,7 @@ export function ExpenseDetailModal({
                 })}
               </p>
               <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-md text-xs font-semibold text-gray-600">
-                Added by {expense.createdBy?.name || "Someone"}
+                {`Added by ${expense.createdBy?.name || "Someone"}${expense.editedAt ? " · edited " + new Date(expense.editedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}`}
               </div>
             </div>
             <div className="text-right">
@@ -156,17 +164,37 @@ export function ExpenseDetailModal({
           
         </div>
 
-        {/* Footer (Delete Action) */}
-        {canDelete && onDelete && (
-          <div className="px-5 py-4 bg-white border-t border-[var(--border)]">
-            <button
-              onClick={() => onDelete(expense.id)}
-              disabled={isDeleting}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-red-500 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
-            >
-              {isDeleting ? <div className="spinner-sm border-red-500" /> : <Trash2 size={18} />}
-              {isDeleting ? "Deleting..." : "Delete Expense"}
-            </button>
+        {/* Footer actions */}
+        {((canDelete && onDelete) || onRepeat || (canDelete && onEdit)) && (
+          <div className="px-5 py-4 bg-white border-t border-[var(--border)] flex gap-3">
+            {canDelete && onEdit && (
+              <button
+                onClick={() => onEdit(expense)}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-[var(--text-primary)] bg-[var(--paper-dim)] transition-colors"
+              >
+                <Pencil size={18} />
+                Edit
+              </button>
+            )}
+            {onRepeat && (
+              <button
+                onClick={() => onRepeat(expense)}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-[var(--accent)] bg-[var(--accent-subtle)] transition-colors"
+              >
+                <Repeat size={18} />
+                Repeat
+              </button>
+            )}
+            {canDelete && onDelete && (
+              <button
+                onClick={() => onDelete(expense.id)}
+                disabled={isDeleting}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-red-500 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? <div className="spinner-sm border-red-500" /> : <Trash2 size={18} />}
+                {isDeleting ? "Deleting..." : "Delete"}
+              </button>
+            )}
           </div>
         )}
         

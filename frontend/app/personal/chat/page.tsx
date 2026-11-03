@@ -1,12 +1,12 @@
 "use client";
 
+import { API_URL } from "@/lib/api";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Send, Sparkles } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface ChatMessage {
   id: string;
@@ -82,7 +82,7 @@ export default function PersonalChatPage() {
             <div className={`px-4 py-3 rounded-2xl max-w-[85%] ${
               msg.role === 'user' 
                 ? 'bg-[var(--accent)] text-[var(--paper)] rounded-tr-sm' 
-                : 'bg-[var(--paper)] text-[var(--text-primary)] border border-[rgba(0,0,0,0.05)] rounded-tl-sm'
+                : 'bg-[var(--paper)] text-[var(--text-primary)] border border-[var(--hairline)] rounded-tl-sm'
             }`}>
               <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
             </div>
@@ -91,7 +91,7 @@ export default function PersonalChatPage() {
 
         {loading && (
           <div className="flex justify-start">
-            <div className="px-4 py-3 bg-[var(--paper)] border border-[rgba(0,0,0,0.05)] rounded-2xl rounded-tl-sm flex items-center gap-1.5">
+            <div className="px-4 py-3 bg-[var(--paper)] border border-[var(--hairline)] rounded-2xl rounded-tl-sm flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce" />
               <div className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce [animation-delay:-0.15s]" />
               <div className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce [animation-delay:-0.3s]" />
@@ -101,7 +101,7 @@ export default function PersonalChatPage() {
         <div ref={endRef} />
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-[var(--bg-main)]/90 backdrop-blur-md border-t border-[rgba(0,0,0,0.03)] flex justify-center">
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-[var(--bg-main)]/90 backdrop-blur-md border-t border-[var(--hairline)] flex justify-center">
         <div className="max-w-lg w-full flex items-center gap-2">
           <input
             type="text"

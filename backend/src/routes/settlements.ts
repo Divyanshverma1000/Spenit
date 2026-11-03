@@ -24,6 +24,20 @@ import { sendToUser } from "../push";
 
 const router = Router();
 
+/** True if `actorId` is the group's admin and `targetUserId` hasn't joined (placeholder). */
+async function adminActsForPlaceholder(groupId: string, actorId: string, targetUserId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1
+     FROM "GroupMember" a
+     JOIN "GroupMember" t ON t.group_id = a.group_id
+     JOIN "User" u ON u.id = t.user_id
+     WHERE a.group_id = $1 AND a.user_id = $2 AND a.role = 'admin'
+       AND t.user_id = $3 AND u.is_placeholder = true`,
+    [groupId, actorId, targetUserId]
+  );
+  return rows.length > 0;
+}
+
 // ─── POST /settlements ────────────────────────────────────────────────────────
 /**
  * Create a new settlement (status = 'pending').
@@ -38,8 +52,9 @@ const router = Router();
  * Two-way confirmation enforced: balance only clears on /confirm.
  */
 router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const { groupId, toUserId, amount, method = "upi" } = req.body;
+  const callerId = req.user!.userId;
+  const { groupId, toUserId, amount, method = "upi", fromUserId } = req.body;
+  let userId = callerId; // the paying side
 
   if (!groupId || !toUserId || !amount) {
     res.status(400).json({ error: "groupId, toUserId, and amount are required" });
@@ -49,6 +64,22 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   if (!["upi", "cash", "other"].includes(method)) {
     res.status(400).json({ error: "method must be 'upi', 'cash', or 'other'" });
     return;
+  }
+
+  // Group admin may record a payment on behalf of someone who hasn't joined yet.
+  if (fromUserId && fromUserId !== callerId) {
+    const check = await pool.query(
+      `SELECT
+         (SELECT role FROM "GroupMember" WHERE group_id = $1 AND user_id = $2) AS caller_role,
+         (SELECT u.is_placeholder FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
+           WHERE gm.group_id = $1 AND gm.user_id = $3) AS from_is_placeholder`,
+      [groupId, callerId, fromUserId]
+    );
+    if (check.rows[0]?.caller_role !== "admin" || check.rows[0]?.from_is_placeholder !== true) {
+      res.status(403).json({ error: "Only the admin can record a payment for someone who hasn't joined" });
+      return;
+    }
+    userId = fromUserId;
   }
 
   if (userId === toUserId) {
@@ -76,7 +107,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     `INSERT INTO "Settlement" (group_id, from_user, to_user, amount, method, status, initiated_by)
      VALUES ($1, $2, $3, $4, $5, 'pending', $6)
      RETURNING id, group_id, from_user, to_user, amount, method, status, initiated_by, created_at`,
-    [groupId, userId, toUserId, amount, method, userId]
+    [groupId, userId, toUserId, amount, method, callerId]
   );
 
   const settlement = result.rows[0];
@@ -155,8 +186,9 @@ router.post("/:id/confirm", requireAuth, async (req: Request, res: Response): Pr
 
   const s = settlementRow.rows[0];
 
-  // Two-way confirmation enforced: ONLY the to_user (recipient) can confirm
-  if (s.to_user !== userId) {
+  // Two-way confirmation enforced: ONLY the to_user (recipient) can confirm,
+  // or the group admin when the recipient hasn't joined (nobody else could).
+  if (s.to_user !== userId && !(await adminActsForPlaceholder(s.group_id, userId, s.to_user))) {
     res.status(403).json({
       error: "Only the recipient (to_user) can confirm a settlement. The balance clears only after the recipient confirms they received the payment.",
     });
@@ -222,7 +254,7 @@ router.post("/:id/reject", requireAuth, async (req: Request, res: Response): Pro
 
   const s = settlementRow.rows[0];
 
-  if (s.to_user !== userId) {
+  if (s.to_user !== userId && !(await adminActsForPlaceholder(s.group_id, userId, s.to_user))) {
     res.status(403).json({ error: "Only the recipient can reject a settlement" });
     return;
   }
@@ -240,6 +272,65 @@ router.post("/:id/reject", requireAuth, async (req: Request, res: Response): Pro
 
   res.json(updated.rows[0]);
 });
+
+/** All non-deleted settlements for a group, from the viewer's point of view. */
+export async function listGroupSettlements(groupId: string, userId: string) {
+  const result = await pool.query(
+    `SELECT
+       s.id, s.group_id, s.amount, s.method, s.status,
+       s.created_at, s.confirmed_at,
+       fu.is_placeholder as from_is_placeholder, tu.is_placeholder as to_is_placeholder,
+       fu.id as from_user_id, COALESCE(fgm.nickname, fu.name) as from_user_name, fu.username as from_user_username, fu.avatar_url as from_user_avatar,
+       tu.id as to_user_id, COALESCE(tgm.nickname, tu.name) as to_user_name, tu.username as to_user_username, tu.avatar_url as to_user_avatar,
+       COALESCE(igm.nickname, ib.name) as initiated_by_name
+     FROM "Settlement" s
+     JOIN "User" fu ON fu.id = s.from_user
+     JOIN "User" tu ON tu.id = s.to_user
+     JOIN "User" ib ON ib.id = s.initiated_by
+     LEFT JOIN "GroupMember" fgm ON fgm.group_id = s.group_id AND fgm.user_id = s.from_user
+     LEFT JOIN "GroupMember" tgm ON tgm.group_id = s.group_id AND tgm.user_id = s.to_user
+     LEFT JOIN "GroupMember" igm ON igm.group_id = s.group_id AND igm.user_id = s.initiated_by
+     WHERE s.group_id = $1 AND s.deleted_at IS NULL
+     ORDER BY s.created_at DESC`,
+    [groupId]
+  );
+
+  const viewerRole = (await pool.query(
+    'SELECT role FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
+    [groupId, userId]
+  )).rows[0]?.role;
+
+  const settlements = result.rows.map((r) => ({
+    id: r.id,
+    groupId: r.group_id,
+    amount: r.amount,
+    method: r.method,
+    status: r.status,
+    createdAt: r.created_at,
+    confirmedAt: r.confirmed_at,
+    fromUser: {
+      id: r.from_user_id,
+      name: r.from_user_name,
+      username: r.from_user_username,
+      avatarUrl: r.from_user_avatar,
+    },
+    toUser: {
+      id: r.to_user_id,
+      name: r.to_user_name,
+      username: r.to_user_username,
+      avatarUrl: r.to_user_avatar,
+    },
+    initiatedByName: r.initiated_by_name,
+    isIncoming: r.to_user_id === userId, // true = someone is paying me
+    isOutgoing: r.from_user_id === userId, // true = I am paying someone
+    // Recipient can confirm; so can the admin when the recipient hasn't joined yet.
+    canRespond: r.to_user_id === userId || (viewerRole === "admin" && r.to_is_placeholder === true),
+    fromIsPlaceholder: r.from_is_placeholder,
+    toIsPlaceholder: r.to_is_placeholder,
+  }));
+
+  return settlements;
+}
 
 // ─── GET /settlements?groupId= ────────────────────────────────────────────────
 /**
@@ -265,48 +356,7 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const result = await pool.query(
-    `SELECT
-       s.id, s.group_id, s.amount, s.method, s.status,
-       s.created_at, s.confirmed_at,
-       fu.id as from_user_id, fu.name as from_user_name, fu.username as from_user_username, fu.avatar_url as from_user_avatar,
-       tu.id as to_user_id, tu.name as to_user_name, tu.username as to_user_username, tu.avatar_url as to_user_avatar,
-       ib.name as initiated_by_name
-     FROM "Settlement" s
-     JOIN "User" fu ON fu.id = s.from_user
-     JOIN "User" tu ON tu.id = s.to_user
-     JOIN "User" ib ON ib.id = s.initiated_by
-     WHERE s.group_id = $1 AND s.deleted_at IS NULL
-     ORDER BY s.created_at DESC`,
-    [groupId]
-  );
-
-  const settlements = result.rows.map((r) => ({
-    id: r.id,
-    groupId: r.group_id,
-    amount: r.amount,
-    method: r.method,
-    status: r.status,
-    createdAt: r.created_at,
-    confirmedAt: r.confirmed_at,
-    fromUser: {
-      id: r.from_user_id,
-      name: r.from_user_name,
-      username: r.from_user_username,
-      avatarUrl: r.from_user_avatar,
-    },
-    toUser: {
-      id: r.to_user_id,
-      name: r.to_user_name,
-      username: r.to_user_username,
-      avatarUrl: r.to_user_avatar,
-    },
-    initiatedByName: r.initiated_by_name,
-    isIncoming: r.to_user_id === userId, // true = someone is paying me
-    isOutgoing: r.from_user_id === userId, // true = I am paying someone
-  }));
-
-  res.json(settlements);
+  res.json(await listGroupSettlements(String(groupId), userId));
 });
 
 export default router;

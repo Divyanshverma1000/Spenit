@@ -12,12 +12,12 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, onBack, rightAction }: PageHeaderProps) {
   return (
-    <header className="bg-[var(--ink)] text-white px-5 pt-14 pb-3 flex items-center justify-between">
+    <header className="bg-[var(--ink)] text-[var(--text-primary)] px-5 pt-14 pb-3 flex items-center justify-between">
       <div className="flex items-center gap-3">
         {onBack && (
           <button 
             onClick={onBack} 
-            className="p-1 -ml-1 text-white hover:text-gray-300 transition-colors"
+            className="p-1 -ml-1 text-[var(--text-primary)] hover:text-[var(--text-secondary)] transition-colors"
             aria-label="Go back"
           >
             <ArrowLeft size={20} strokeWidth={1.5} />
@@ -28,7 +28,7 @@ export function PageHeader({ title, subtitle, onBack, rightAction }: PageHeaderP
             {title}
           </h1>
           {subtitle && (
-            <p className="font-[family-name:var(--font-body)] text-xs text-white/60">
+            <p className="font-[family-name:var(--font-body)] text-xs text-[var(--text-secondary)]">
               {subtitle}
             </p>
           )}

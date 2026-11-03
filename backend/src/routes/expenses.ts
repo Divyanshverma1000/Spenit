@@ -14,7 +14,6 @@
 import { Router, Request, Response } from "express";
 import { Decimal } from "decimal.js";
 import pool from "../db/pool";
-import redis from "../db/redis";
 import { requireAuth } from "../middleware/auth";
 import { invalidateGroupBalanceCache } from "./balance";
 import { sendToUsers } from "../push";
@@ -81,28 +80,33 @@ function computeEqualShares(totalAmount: Decimal, participantCount: number): Dec
   });
 }
 
-// Idempotency key TTL — 24 hours in seconds
-const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+/** Idempotency keys are kept for 7 days (see index.ts for the periodic cleanup). */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 100;
 
-// ─── POST /expenses ───────────────────────────────────────────────────────────
+/** Everything validated and computed, ready to be written. */
+interface PreparedExpense {
+  groupId: string;
+  description: string;
+  amount: Decimal;
+  currency: string;
+  splitType: "equal" | "exact" | "fairshare";
+  category: string | null;
+  receiptData: unknown;
+  payers: PayerInput[];
+  splitShares: { userId: string; shareAmount: Decimal }[];
+}
 
-router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  // ── 1. Idempotency key check ──────────────────────────────────────────────
-  const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
-  const userId = req.user!.userId;
-
-  if (idempotencyKey) {
-    const redisKey = `idempotency:expense:${userId}:${idempotencyKey}`;
-    const cached = await redis.get(redisKey);
-    if (cached) {
-      // Return the exact same response as the original successful request
-      res.status(200).json(JSON.parse(cached));
-      return;
-    }
-  }
-
+/**
+ * Validate an expense payload and compute the split shares. Shared by create and edit,
+ * so editing can never bypass a rule that creating enforces.
+ * On failure it has already sent the 400/403 response and returns null.
+ */
+async function prepareExpense(
+  body: CreateExpenseBody,
+  userId: string,
+  res: Response
+): Promise<PreparedExpense | null> {
   // ── 2. Parse & basic validation ───────────────────────────────────────────
-  const body = req.body as CreateExpenseBody;
   const {
     groupId,
     description,
@@ -114,12 +118,12 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     category = null,
   } = body;
 
-  if (!groupId) { res.status(400).json({ error: "groupId is required" }); return; }
-  if (!description || description.trim().length === 0) { res.status(400).json({ error: "description is required" }); return; }
-  if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0) { res.status(400).json({ error: "amount must be a positive number" }); return; }
-  if (!["equal", "exact", "fairshare"].includes(splitType)) { res.status(400).json({ error: "splitType must be 'equal', 'exact', or 'fairshare'" }); return; }
-  if (payers.length === 0) { res.status(400).json({ error: "At least one payer is required" }); return; }
-  if (participants.length === 0) { res.status(400).json({ error: "At least one participant is required" }); return; }
+  if (!groupId) { res.status(400).json({ error: "groupId is required" }); return null; }
+  if (!description || description.trim().length === 0) { res.status(400).json({ error: "description is required" }); return null; }
+  if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0) { res.status(400).json({ error: "amount must be a positive number" }); return null; }
+  if (!["equal", "exact", "fairshare"].includes(splitType)) { res.status(400).json({ error: "splitType must be 'equal', 'exact', or 'fairshare'" }); return null; }
+  if (payers.length === 0) { res.status(400).json({ error: "At least one payer is required" }); return null; }
+  if (participants.length === 0) { res.status(400).json({ error: "At least one participant is required" }); return null; }
 
   const amount = toDecimal(rawAmount);
 
@@ -130,7 +134,20 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   );
   if (memberCheck.rows.length === 0) {
     res.status(403).json({ error: "You are not a member of this group" });
-    return;
+    return null;
+  }
+
+  // Every payer and participant must belong to this group (real or not-yet-joined).
+  const referencedIds = Array.from(
+    new Set([...payers.map((p) => p.userId), ...participants.map((p) => p.userId)])
+  );
+  const validMembers = await pool.query(
+    'SELECT user_id FROM "GroupMember" WHERE group_id = $1 AND user_id = ANY($2::uuid[])',
+    [groupId, referencedIds]
+  );
+  if (validMembers.rows.length !== referencedIds.length) {
+    res.status(400).json({ error: "All payers and participants must be members of the group" });
+    return null;
   }
 
   // ── 4. Auto-fill single payer and validate payer amounts ─────────────────
@@ -147,7 +164,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     res.status(400).json({
       error: `Payer amounts sum to ${payerTotal.toFixed(2)} but expense amount is ${amount.toFixed(2)}. They must be equal.`,
     });
-    return;
+    return null;
   }
 
   // ── 5. Compute split shares ───────────────────────────────────────────────
@@ -180,7 +197,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       res.status(400).json({
         error: `Personal items total (${totalPersonal.toFixed(2)}) exceeds the bill total (${amount.toFixed(2)}). Personal items cannot exceed the bill.`,
       });
-      return;
+      return null;
     }
     const sharedPool = amount.minus(totalPersonal);
     const equalShares = computeEqualShares(sharedPool, participants.length);
@@ -195,7 +212,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
         res.status(400).json({
           error: `Participant ${p.userId} is missing shareAmount (required for split_type 'exact')`,
         });
-        return;
+        return null;
       }
     }
     splitShares = participants.map((p) => ({
@@ -212,9 +229,51 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       res.status(400).json({
         error: `Participant share amounts sum to ${splitTotal.toFixed(2)} but expense amount is ${amount.toFixed(2)}. They must be equal.`,
       });
+      return null;
+    }
+  }
+
+  return {
+    groupId,
+    description: description.trim(),
+    amount,
+    currency,
+    splitType,
+    category: category || null,
+    receiptData: body.receiptData ?? null,
+    payers,
+    splitShares,
+  };
+}
+
+// ─── POST /expenses ───────────────────────────────────────────────────────────
+
+router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  // ── 1. Idempotency key check ──────────────────────────────────────────────
+  const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
+  const userId = req.user!.userId;
+
+  if (idempotencyKey) {
+    if (idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+      res.status(400).json({ error: "Idempotency-Key is too long" });
+      return;
+    }
+    // A retry of a request that already succeeded: return the exact same response.
+    const prior = await pool.query(
+      'SELECT response FROM "IdempotencyKey" WHERE user_id = $1 AND key = $2',
+      [userId, idempotencyKey]
+    );
+    if (prior.rows.length > 0) {
+      res.status(200).json(prior.rows[0].response);
       return;
     }
   }
+
+  // ── 2–5. Validate + compute shares (shared with edit) ────────────────────
+  const body = req.body as CreateExpenseBody;
+  const prepared = await prepareExpense(body, userId, res);
+  if (!prepared) return;
+  const { groupId, description, amount, currency, splitType, category, payers, splitShares } = prepared;
 
   // ── 6. Persist in a transaction ───────────────────────────────────────────
   const client = await pool.connect();
@@ -249,8 +308,6 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       );
     }
 
-    await client.query("COMMIT");
-
     expenseResult = {
       id: expense.id,
       groupId: expense.group_id,
@@ -270,6 +327,27 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
         shareAmount: s.shareAmount.toFixed(2),
       })),
     };
+
+    // Record the idempotency key in the SAME transaction as the expense. If a concurrent
+    // duplicate request got there first, undo ours and return its stored response.
+    if (idempotencyKey) {
+      const stored = await client.query(
+        `INSERT INTO "IdempotencyKey" (user_id, key, response) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, key) DO NOTHING RETURNING key`,
+        [userId, idempotencyKey, JSON.stringify(expenseResult)]
+      );
+      if (stored.rows.length === 0) {
+        await client.query("ROLLBACK");
+        const winner = await pool.query(
+          'SELECT response FROM "IdempotencyKey" WHERE user_id = $1 AND key = $2',
+          [userId, idempotencyKey]
+        );
+        res.status(200).json(winner.rows[0]?.response ?? expenseResult);
+        return;
+      }
+    }
+
+    await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("POST /expenses error:", err);
@@ -279,15 +357,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     client.release();
   }
 
-  // ── 7. Cache idempotency result + invalidate balance cache ────────────────
-  if (idempotencyKey) {
-    const redisKey = `idempotency:expense:${userId}:${idempotencyKey}`;
-    // Fire-and-forget — don't block response on Redis write
-    redis
-      .set(redisKey, JSON.stringify(expenseResult), "EX", IDEMPOTENCY_TTL_SECONDS)
-      .catch((err) => console.error("Redis idempotency write failed:", err));
-  }
-
+  // ── 7. Invalidate the balance cache ───────────────────────────────────────
   // Invalidate balance cache for this group (Architecture.md §4)
   // Fire-and-forget — cache miss just means next read recomputes from DB
   invalidateGroupBalanceCache(body.groupId).catch((err) =>
@@ -300,7 +370,12 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     try {
       const [membersRes, creatorRes] = await Promise.all([
         pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [body.groupId]),
-        pool.query('SELECT name FROM "User" WHERE id = $1', [userId]),
+        pool.query(
+          `SELECT COALESCE(gm.nickname, u.name) AS name
+           FROM "User" u LEFT JOIN "GroupMember" gm ON gm.group_id = $2 AND gm.user_id = u.id
+           WHERE u.id = $1`,
+          [userId, body.groupId]
+        ),
       ]);
       const memberIds = membersRes.rows.map((r: { user_id: string }) => r.user_id);
       const addedByName = creatorRes.rows[0]?.name || "Someone";
@@ -317,6 +392,86 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
 
   res.status(201).json(expenseResult);
 });
+
+/** Non-deleted expenses for a group with payers/splits (display names = nicknames). */
+export async function listGroupExpenses(groupId: string) {
+  // Fetch expenses with payers and splits in a single query set
+  const expenses = await pool.query(
+      `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data, e.category,
+              e.created_by, e.created_at, e.updated_at,
+              COALESCE(gm.nickname, u.name) AS created_by_name, u.username AS created_by_username
+     FROM "Expense" e
+     JOIN "User" u ON u.id = e.created_by
+     LEFT JOIN "GroupMember" gm ON gm.group_id = e.group_id AND gm.user_id = e.created_by
+     WHERE e.group_id = $1 AND e.deleted_at IS NULL
+     ORDER BY e.created_at DESC`,
+    [groupId]
+  );
+
+  if (expenses.rows.length === 0) {
+    return [];
+  }
+
+  const expenseIds = expenses.rows.map((e) => e.id);
+
+  // Batch-fetch payers and splits
+  const payers = await pool.query(
+    `SELECT ep.expense_id, ep.user_id, ep.amount_paid, COALESCE(gm.nickname, u.name) AS name, u.username
+     FROM "ExpensePayer" ep
+     JOIN "User" u ON u.id = ep.user_id
+     LEFT JOIN "GroupMember" gm ON gm.group_id = $2 AND gm.user_id = ep.user_id
+     WHERE ep.expense_id = ANY($1)`,
+    [expenseIds, groupId]
+  );
+
+  const splits = await pool.query(
+    `SELECT es.expense_id, es.user_id, es.share_amount, COALESCE(gm.nickname, u.name) AS name, u.username
+     FROM "ExpenseSplit" es
+     JOIN "User" u ON u.id = es.user_id
+     LEFT JOIN "GroupMember" gm ON gm.group_id = $2 AND gm.user_id = es.user_id
+     WHERE es.expense_id = ANY($1)`,
+    [expenseIds, groupId]
+  );
+
+  // Build lookup maps
+  const payersByExpense: Record<string, typeof payers.rows> = {};
+  for (const p of payers.rows) {
+    if (!payersByExpense[p.expense_id]) payersByExpense[p.expense_id] = [];
+    payersByExpense[p.expense_id].push(p);
+  }
+
+  const splitsByExpense: Record<string, typeof splits.rows> = {};
+  for (const s of splits.rows) {
+    if (!splitsByExpense[s.expense_id]) splitsByExpense[s.expense_id] = [];
+    splitsByExpense[s.expense_id].push(s);
+  }
+
+  return expenses.rows.map((e) => ({
+      id: e.id,
+      description: e.description,
+      amount: e.amount,
+      currency: e.currency,
+      splitType: e.split_type,
+      category: e.category,
+      receiptData: e.receipt_data,
+      createdBy: { id: e.created_by, name: e.created_by_name, username: e.created_by_username },
+      createdAt: e.created_at,
+      // set only when the expense was changed after being created
+      editedAt: new Date(e.updated_at).getTime() - new Date(e.created_at).getTime() > 5000 ? e.updated_at : null,
+      payers: (payersByExpense[e.id] || []).map((p) => ({
+        userId: p.user_id,
+        name: p.name,
+        username: p.username,
+        amountPaid: p.amount_paid,
+      })),
+      splits: (splitsByExpense[e.id] || []).map((s) => ({
+        userId: s.user_id,
+        name: s.name,
+        username: s.username,
+        shareAmount: s.share_amount,
+      })),
+  }));
+}
 
 // ─── GET /expenses?groupId=:groupId ──────────────────────────────────────────
 /**
@@ -339,78 +494,120 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // Fetch expenses with payers and splits in a single query set
-  const expenses = await pool.query(
-      `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data, e.category,
-              e.created_by, e.created_at,
-              u.name AS created_by_name, u.username AS created_by_username
-     FROM "Expense" e
-     JOIN "User" u ON u.id = e.created_by
-     WHERE e.group_id = $1 AND e.deleted_at IS NULL
-     ORDER BY e.created_at DESC`,
-    [groupId]
-  );
+  res.json(await listGroupExpenses(groupId));
+});
 
-  if (expenses.rows.length === 0) {
-    res.json([]);
+// ─── PUT /expenses/:id (edit) ─────────────────────────────────────────────────
+/**
+ * Edit an expense in place. Allowed for the creator or the group admin.
+ * The whole payload is re-validated exactly like a create (same rules), then the
+ * expense row is updated and its payer/split rows are replaced in ONE transaction.
+ * The group can't be changed. updated_at records that it was edited.
+ */
+router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+
+  const existing = await pool.query(
+    'SELECT id, group_id, created_by FROM "Expense" WHERE id = $1 AND deleted_at IS NULL',
+    [id]
+  );
+  if (existing.rows.length === 0) {
+    res.status(404).json({ error: "Expense not found" });
     return;
   }
+  const e = existing.rows[0];
 
-  const expenseIds = expenses.rows.map((e) => e.id);
-
-  // Batch-fetch payers and splits
-  const payers = await pool.query(
-    `SELECT ep.expense_id, ep.user_id, ep.amount_paid, u.name, u.username
-     FROM "ExpensePayer" ep JOIN "User" u ON u.id = ep.user_id
-     WHERE ep.expense_id = ANY($1)`,
-    [expenseIds]
-  );
-
-  const splits = await pool.query(
-    `SELECT es.expense_id, es.user_id, es.share_amount, u.name, u.username
-     FROM "ExpenseSplit" es JOIN "User" u ON u.id = es.user_id
-     WHERE es.expense_id = ANY($1)`,
-    [expenseIds]
-  );
-
-  // Build lookup maps
-  const payersByExpense: Record<string, typeof payers.rows> = {};
-  for (const p of payers.rows) {
-    if (!payersByExpense[p.expense_id]) payersByExpense[p.expense_id] = [];
-    payersByExpense[p.expense_id].push(p);
+  if (e.created_by !== userId) {
+    const roleRes = await pool.query(
+      'SELECT role FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
+      [e.group_id, userId]
+    );
+    if (roleRes.rows[0]?.role !== "admin") {
+      res.status(403).json({ error: "Only the expense creator or the group admin can edit this expense" });
+      return;
+    }
   }
 
-  const splitsByExpense: Record<string, typeof splits.rows> = {};
-  for (const s of splits.rows) {
-    if (!splitsByExpense[s.expense_id]) splitsByExpense[s.expense_id] = [];
-    splitsByExpense[s.expense_id].push(s);
+  const body = { ...(req.body as CreateExpenseBody), groupId: e.group_id };
+  const prepared = await prepareExpense(body, userId, res);
+  if (!prepared) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE "Expense"
+       SET description = $2, amount = $3, currency = $4, split_type = $5,
+           category = $6, receipt_data = $7, updated_at = now()
+       WHERE id = $1`,
+      [
+        id,
+        prepared.description,
+        prepared.amount.toFixed(2),
+        prepared.currency,
+        prepared.splitType,
+        prepared.category,
+        prepared.receiptData ? JSON.stringify(prepared.receiptData) : null,
+      ]
+    );
+    // Replace the payer/split rows with the new ones (children of this expense only)
+    await client.query('DELETE FROM "ExpensePayer" WHERE expense_id = $1', [id]);
+    await client.query('DELETE FROM "ExpenseSplit" WHERE expense_id = $1', [id]);
+    for (const payer of prepared.payers) {
+      await client.query(
+        `INSERT INTO "ExpensePayer" (expense_id, user_id, amount_paid) VALUES ($1, $2, $3)`,
+        [id, payer.userId, toDecimal(payer.amountPaid).toFixed(2)]
+      );
+    }
+    for (const split of prepared.splitShares) {
+      await client.query(
+        `INSERT INTO "ExpenseSplit" (expense_id, user_id, share_amount) VALUES ($1, $2, $3)`,
+        [id, split.userId, split.shareAmount.toFixed(2)]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PUT /expenses/:id error:", err);
+    res.status(500).json({ error: "Failed to update expense" });
+    return;
+  } finally {
+    client.release();
   }
 
-  res.json(
-    expenses.rows.map((e) => ({
-      id: e.id,
-      description: e.description,
-      amount: e.amount,
-      currency: e.currency,
-      splitType: e.split_type,
-      category: e.category,
-      receiptData: e.receipt_data,
-      createdBy: { id: e.created_by, name: e.created_by_name, username: e.created_by_username },
-      createdAt: e.created_at,
-      payers: (payersByExpense[e.id] || []).map((p) => ({
-        userId: p.user_id,
-        name: p.name,
-        username: p.username,
-        amountPaid: p.amount_paid,
-      })),
-      splits: (splitsByExpense[e.id] || []).map((s) => ({
-        userId: s.user_id,
-        name: s.name,
-        username: s.username,
-        shareAmount: s.share_amount,
-      })),
-    }))
+  invalidateGroupBalanceCache(e.group_id).catch((err) =>
+    console.error("Balance cache invalidation failed:", err)
   );
+
+  res.json({ id, groupId: e.group_id, message: "Expense updated" });
+
+  // Tell the others it changed (fire-and-forget; never affects the response).
+  ;(async () => {
+    try {
+      const [membersRes, editorRes] = await Promise.all([
+        pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [e.group_id]),
+        pool.query(
+          `SELECT COALESCE(gm.nickname, u.name) AS name
+           FROM "User" u LEFT JOIN "GroupMember" gm ON gm.group_id = $2 AND gm.user_id = u.id
+           WHERE u.id = $1`,
+          [userId, e.group_id]
+        ),
+      ]);
+      await sendToUsers(
+        membersRes.rows.map((r: { user_id: string }) => r.user_id),
+        {
+          title: "✏️ Expense updated",
+          body: `${editorRes.rows[0]?.name || "Someone"} changed "${prepared.description}" to ₹${prepared.amount.toFixed(2)}`,
+          url: `/groups/${e.group_id}`,
+          tag: `expense-edit-${id}`,
+        },
+        userId
+      );
+    } catch (err) {
+      console.error("[push] expense edit notification failed:", err);
+    }
+  })();
 });
 
 // ─── DELETE /expenses/:id (soft-delete) ───────────────────────────────────────
@@ -434,10 +631,17 @@ router.delete("/:id", requireAuth, async (req: Request, res: Response): Promise<
 
   const e = expense.rows[0];
 
-  // Only the creator can soft-delete (group admins will be able to in a future tier)
+  // The creator or the group admin can soft-delete. The admin needs this to fix
+  // expenses recorded on behalf of people who haven't joined.
   if (e.created_by !== userId) {
-    res.status(403).json({ error: "Only the expense creator can delete this expense" });
-    return;
+    const roleRes = await pool.query(
+      'SELECT role FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
+      [e.group_id, userId]
+    );
+    if (roleRes.rows[0]?.role !== "admin") {
+      res.status(403).json({ error: "Only the expense creator or the group admin can delete this expense" });
+      return;
+    }
   }
 
   await pool.query(

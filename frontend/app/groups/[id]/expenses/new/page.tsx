@@ -1,28 +1,25 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { API_URL } from "@/lib/api";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
+import { useOutbox } from "@/context/OutboxContext";
+import { useGroupOverview, groupKey } from "@/lib/queries";
+import { planRepeat, SpecificItem } from "@/lib/repeat";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Plus, X, Receipt } from "lucide-react";
+import { Plus, X, Receipt, Search, Repeat } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface Member {
   id: string;
   name: string;
-  username: string;
+  username: string | null;
   avatarUrl: string | null;
-}
-
-interface SpecificItem {
-  id: string;
-  label: string;
-  amount: string;
-  sharedBy: string[]; // array of userIds who share this item
 }
 
 function fmt(n: number) {
@@ -32,14 +29,23 @@ function fmt(n: number) {
 export default function UniversalExpensePage() {
   const { id: groupId } = useParams<{ id: string }>();
   const authed = useRequireAuth();
-  const { accessToken, user } = useAuth();
+  const { user, authFetch } = useAuth();
+  const { enqueue } = useOutbox();
+  const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [members, setMembers] = useState<Member[]>([]);
-  const [membersLoading, setMembersLoading] = useState(true);
+  // Members come from the cached group overview: the form opens instantly, even offline.
+  const { data: overview, isPending: overviewPending } = useGroupOverview(groupId);
+  const members: Member[] = useMemo(() => overview?.group.members ?? [], [overview]);
+  const membersLoading = overviewPending && !overview;
+  const initialised = useRef(false);
 
-  const [description, setDescription] = useState("");
+  // ?edit=<expenseId> changes an existing expense in place; ?repeat=<id> copies one into a new expense.
+  const editId = searchParams?.get("edit") || null;
+  const isEdit = !!editId;
+
+  const [description, setDescription] = useState(searchParams?.get("description") || "");
   const [totalAmount, setTotalAmount] = useState(searchParams?.get("amount") || "");
   
   // Payers
@@ -56,30 +62,53 @@ export default function UniversalExpensePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Filter for the "Split among" list (shown for bigger groups)
+  const [splitSearch, setSplitSearch] = useState("");
+  // Set when the form was pre-filled from an earlier expense ("Repeat")
+  const [repeatedFrom, setRepeatedFrom] = useState<string | null>(null);
+
+  // Set the form defaults once, when the members first become available.
+  // With ?repeat=<expenseId> the form is pre-filled as an exact copy of that expense:
+  // same payers and amounts, same people involved, same shares.
   useEffect(() => {
-    if (!accessToken || !groupId) return;
-    fetch(`${API_URL}/groups/${groupId}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const mems: Member[] = data.members || [];
-        setMembers(mems);
-        if (user) {
-          setPayerId(user.id);
-          const initialMulti: Record<string, string> = {};
-          mems.forEach(m => initialMulti[m.id] = "");
-          initialMulti[user.id] = searchParams?.get("amount") || "";
-          setMultiPayers(initialMulti);
-        }
-        
-        // By default, everyone is in the shared pool
-        const all = new Set(mems.map((m) => m.id));
-        setSharedPoolParticipants(all);
-      })
-      .catch(console.error)
-      .finally(() => setMembersLoading(false));
-  }, [accessToken, groupId, user]);
+    if (!overview || !user || initialised.current) return;
+    initialised.current = true;
+    const mems = overview.group.members;
+    const memberIds = new Set(mems.map((m) => m.id));
+
+    const sourceId = searchParams?.get("edit") || searchParams?.get("repeat");
+    const source = sourceId ? overview.expenses.find((e) => e.id === sourceId) : undefined;
+
+    const emptyMulti: Record<string, string> = {};
+    mems.forEach((m) => (emptyMulti[m.id] = ""));
+
+    if (source) {
+      const plan = planRepeat(source, mems);
+      setRepeatedFrom(source.description);
+      setDescription(source.description);
+      setTotalAmount(String(parseFloat(source.amount)));
+
+      const stillHere = source.payers.filter((p) => memberIds.has(p.userId));
+      if (stillHere.length > 1) {
+        setIsMultiPayer(true);
+        const multi = { ...emptyMulti };
+        stillHere.forEach((p) => (multi[p.userId] = String(parseFloat(p.amountPaid))));
+        setMultiPayers(multi);
+        setPayerId(stillHere[0].userId);
+      } else {
+        setPayerId(stillHere[0]?.userId ?? user.id);
+        setMultiPayers({ ...emptyMulti, [stillHere[0]?.userId ?? user.id]: String(parseFloat(source.amount)) });
+      }
+      setItems(plan.items);
+      setSharedPoolParticipants(new Set(plan.pool));
+      return;
+    }
+
+    setPayerId(user.id);
+    setMultiPayers({ ...emptyMulti, [user.id]: searchParams?.get("amount") || "" });
+    // By default, everyone is in the shared pool
+    setSharedPoolParticipants(new Set(mems.map((m) => m.id)));
+  }, [overview, user, searchParams]);
 
   const amountNum = parseFloat(totalAmount) || 0;
 
@@ -133,6 +162,38 @@ export default function UniversalExpensePage() {
       else next.add(uid);
       return next;
     });
+  };
+
+  // Members shown in the "Split among" list (search only matters for bigger groups)
+  const visibleMembers = useMemo(() => {
+    const q = splitSearch.trim().toLowerCase();
+    return q ? members.filter((m) => m.name.toLowerCase().includes(q)) : members;
+  }, [members, splitSearch]);
+  const allVisibleSelected =
+    visibleMembers.length > 0 && visibleMembers.every((m) => sharedPoolParticipants.has(m.id));
+
+  /** Select (or clear) everyone currently shown in the list. */
+  const toggleAllVisible = () => {
+    setSharedPoolParticipants((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleMembers.forEach((m) => next.delete(m.id));
+      else visibleMembers.forEach((m) => next.add(m.id));
+      return next;
+    });
+  };
+
+  const selectOnlyMe = () => {
+    if (user) setSharedPoolParticipants(new Set([user.id]));
+  };
+
+  const toggleAllForItem = (itemId: string) => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id !== itemId
+          ? it
+          : { ...it, sharedBy: it.sharedBy.length === members.length ? [] : members.map((m) => m.id) }
+      )
+    );
   };
 
   const addItem = () => {
@@ -202,36 +263,55 @@ export default function UniversalExpensePage() {
       finalPayers = [{ userId: payerId, amountPaid: amountNum }];
     }
 
+    // Editing: update the existing expense (needs a connection, since it changes shared balances).
+    if (isEdit && editId) {
+      setLoading(true);
+      try {
+        const res = await authFetch(`/expenses/${editId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            groupId,
+            description: description.trim(),
+            amount: amountNum,
+            currency: "INR",
+            splitType: "exact",
+            payers: finalPayers,
+            participants: participantsPayload,
+            receiptData: items.length > 0 ? items : null,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(data.error || "Couldn't save your changes");
+          setLoading(false);
+          return;
+        }
+        await queryClient.refetchQueries({ queryKey: groupKey(groupId) }).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ["balance"] });
+        router.push(`/groups/${groupId}`);
+      } catch {
+        setError("You're offline. Connect to the internet to save changes to an existing expense.");
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Save on this device first and sync in the background: instant on any network.
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/expenses`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          groupId,
-          description: description.trim(),
-          amount: amountNum,
-          currency: "INR",
-          splitType: "exact",
-          payers: finalPayers,
-          participants: participantsPayload,
-          receiptData: items.length > 0 ? items : null 
-        }),
+      await enqueue({
+        groupId,
+        description: description.trim(),
+        amount: amountNum,
+        currency: "INR",
+        splitType: "exact",
+        payers: finalPayers,
+        participants: participantsPayload,
+        receiptData: items.length > 0 ? items : null,
       });
-
-      if (!res.ok) {
-        const err = await res.json();
-        setError(err.error || "Failed to add expense");
-        return;
-      }
       router.push(`/groups/${groupId}`);
     } catch {
-      setError("Network error.");
-    } finally {
+      setError("Couldn't save the expense on this device. Please try again.");
       setLoading(false);
     }
   }
@@ -240,8 +320,8 @@ export default function UniversalExpensePage() {
 
   return (
     <>
-      <main className="min-h-screen bg-[#F9FAFB] pb-24 font-[var(--font-inter)]">
-        <PageHeader title="Add Expense" onBack={() => router.back()} />
+      <main className="min-h-screen bg-[var(--ink)] pb-24 font-[var(--font-inter)]">
+        <PageHeader title={isEdit ? "Edit Expense" : "Add Expense"} onBack={() => router.back()} />
 
         {membersLoading ? (
           <div className="flex justify-center py-20">
@@ -249,6 +329,15 @@ export default function UniversalExpensePage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="px-4 space-y-6 mt-4 max-w-md mx-auto">
+            {repeatedFrom && (
+              <div className="flex items-center gap-2 bg-[var(--accent-subtle)] text-[var(--accent)] p-3 rounded-xl text-sm font-semibold">
+                <Repeat size={16} />
+                {isEdit
+                  ? <>Editing &quot;{repeatedFrom}&quot;. Changes apply to everyone&apos;s balance once saved.</>
+                  : <>Repeating &quot;{repeatedFrom}&quot;. Same people and shares. Change anything you like.</>}
+              </div>
+            )}
+
             {error && (
               <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm font-medium border border-red-100">
                 {error}
@@ -280,6 +369,7 @@ export default function UniversalExpensePage() {
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-400">₹</span>
                     <input
                       type="number"
+                      inputMode="decimal"
                       value={totalAmount}
                       onChange={(e) => setTotalAmount(e.target.value)}
                       placeholder="0.00"
@@ -359,24 +449,76 @@ export default function UniversalExpensePage() {
 
             {/* Middle Card: Group (Equal Split Foundation) */}
             <Card padding="lg" className="shadow-sm border-gray-100">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3 gap-2">
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
                   Split Among
                 </label>
-                {sharedPool > 0 && (
-                  <span className="text-xs font-bold text-[var(--accent)] bg-orange-50 px-2 py-1 rounded-md">
-                    {fmt(sharedPool)} remaining
+                <span className="text-xs font-bold text-[var(--text-secondary)]">
+                  {sharedPoolParticipants.size} of {members.length} selected
+                </span>
+              </div>
+
+              {/* Quick controls: handy when a group is big */}
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={toggleAllVisible}
+                  className="px-3 py-1.5 rounded-full text-xs font-bold bg-[var(--accent-subtle)] text-[var(--accent)] active:scale-95 transition-transform"
+                >
+                  {allVisibleSelected ? "Clear all" : "Select all"}
+                  {splitSearch.trim() ? " shown" : ""}
+                </button>
+                {user && (
+                  <button
+                    type="button"
+                    onClick={selectOnlyMe}
+                    className="px-3 py-1.5 rounded-full text-xs font-bold bg-gray-100 text-gray-500 active:scale-95 transition-transform"
+                  >
+                    Only me
+                  </button>
+                )}
+                {sharedPool > 0 && sharedPoolParticipants.size > 0 && (
+                  <span className="ml-auto text-xs font-bold text-[var(--accent)] bg-orange-50 px-2 py-1 rounded-md">
+                    {fmt(sharedPool)} to split
                   </span>
                 )}
               </div>
-              <div className="space-y-1">
-                {members.map((m) => {
+
+              {members.length > 6 && (
+                <div className="relative mb-3">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="search"
+                    value={splitSearch}
+                    onChange={(e) => setSplitSearch(e.target.value)}
+                    placeholder="Find a person"
+                    aria-label="Find a person to include in the split"
+                    className="w-full bg-gray-50 border-none rounded-xl pl-9 pr-3 py-2.5 text-sm font-medium text-gray-900 focus:ring-2 focus:ring-[var(--accent)] outline-none"
+                  />
+                </div>
+              )}
+
+              {sharedPool > 0 && sharedPoolParticipants.size === 0 && (
+                <p role="alert" className="text-xs font-semibold text-[var(--negative)] mb-2">
+                  Pick at least one person to split the remaining {fmt(sharedPool)}.
+                </p>
+              )}
+
+              <div className="space-y-1 max-h-[26rem] overflow-y-auto">
+                {visibleMembers.length === 0 && (
+                  <p className="text-sm text-gray-400 py-3 text-center">No one matches &quot;{splitSearch}&quot;</p>
+                )}
+                {visibleMembers.map((m) => {
                   const isChecked = sharedPoolParticipants.has(m.id);
                   const finalShare = exactShares[m.id] || 0;
                   return (
-                    <div 
+                    <div
                       key={`split-${m.id}`}
-                      className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors"
+                      role="checkbox"
+                      aria-checked={isChecked}
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleSharedPool(m.id); } }}
+                      className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                       onClick={() => toggleSharedPool(m.id)}
                     >
                       <div className="flex items-center gap-3">
@@ -385,9 +527,11 @@ export default function UniversalExpensePage() {
                         }`}>
                           {isChecked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                         </div>
-                        <span className="font-semibold text-gray-900">{m.id === user?.id ? "You" : m.name}</span>
+                        <span className={`font-semibold ${finalShare > 0 || isChecked ? "text-gray-900" : "text-gray-400"}`}>
+                          {m.id === user?.id ? "You" : m.name}
+                        </span>
                       </div>
-                      <span className="font-mono font-medium text-gray-500">{fmt(finalShare)}</span>
+                      <span className="font-mono font-medium text-gray-500">{finalShare > 0 ? fmt(finalShare) : "—"}</span>
                     </div>
                   );
                 })}
@@ -437,6 +581,13 @@ export default function UniversalExpensePage() {
                     </div>
                     
                     <div className="flex flex-wrap gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleAllForItem(item.id)}
+                        className="h-8 px-3 rounded-full text-xs font-bold bg-[var(--accent-subtle)] text-[var(--accent)]"
+                      >
+                        {item.sharedBy.length === members.length ? "None" : "All"}
+                      </button>
                       {members.map(m => {
                         const sharesThis = item.sharedBy.includes(m.id);
                         return (
@@ -476,7 +627,7 @@ export default function UniversalExpensePage() {
                 disabled={loading}
                 className="w-full btn-primary py-4 rounded-2xl text-lg font-bold shadow-lg shadow-orange-500/25 flex items-center justify-center gap-2"
               >
-                {loading ? <div className="spinner border-white" style={{ width: 24, height: 24 }} /> : `Save ${fmt(amountNum)}`}
+                {loading ? <div className="spinner border-white" style={{ width: 24, height: 24 }} /> : (isEdit ? `Save changes · ${fmt(amountNum)}` : `Save ${fmt(amountNum)}`)}
               </button>
             </div>
           </form>

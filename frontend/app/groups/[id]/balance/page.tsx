@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { API_URL } from "@/lib/api";
+import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
+import { useGroupOverview } from "@/lib/queries";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
@@ -13,39 +15,22 @@ import { SectionLabel } from "@/components/ui/SectionLabel";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ArrowRight } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-
-interface MemberBalance {
-  userId: string; name: string; username: string; avatarUrl: string | null;
-  netAmount: string; direction: "owed" | "owes" | "settled"; signedAmount: string;
-}
-interface Transfer {
-  from: string; to: string; amount: string; fromName: string; toName: string;
-}
-interface GroupBalance {
-  groupId: string; groupName: string;
-  myBalance: { netAmount: string; direction: "owed" | "owes" | "settled"; signedAmount: string };
-  memberBalances: MemberBalance[];
-  simplifiedTransfers: Transfer[];
-  fromCache: boolean;
-}
 
 export default function GroupBalancePage() {
   const { id: groupId } = useParams<{ id: string }>();
   const authed = useRequireAuth();
-  const { accessToken, user } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
-  const [balance, setBalance] = useState<GroupBalance | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  // Same cached request as the group page, so this screen opens instantly.
+  const { data, isPending, isError, error } = useGroupOverview(groupId);
+  const balance = data?.balance ?? null;
+  const loading = isPending && !data;
 
   useEffect(() => {
-    if (!accessToken || !groupId) return;
-    fetch(`${API_URL}/balance/groups/${groupId}`, { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((r) => { if (!r.ok) throw new Error("Not found"); return r.json(); })
-      .then(setBalance)
-      .catch(() => router.replace("/groups"))
-      .finally(() => setLoading(false));
-  }, [accessToken, groupId, router]);
+    const status = (error as { status?: number } | null)?.status;
+    if (isError && (status === 403 || status === 404)) router.replace("/groups");
+  }, [isError, error, router]);
 
   if (!authed) return null;
 
@@ -97,7 +82,7 @@ export default function GroupBalancePage() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{m.name}</p>
-                        <p className="text-xs" style={{ color: "var(--text-secondary)" }}>@{m.username}</p>
+                        <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{m.isPlaceholder ? "Not joined yet" : `@${m.username}`}</p>
                       </div>
                       <div className="text-right">
                         <BalanceAmount amount={m.netAmount} direction={m.direction} variant="compact" />

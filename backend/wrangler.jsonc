@@ -1,0 +1,33 @@
+{
+  // Spenit API as a Cloudflare Worker. Deploy: `npm run cf:deploy`. Guide: ../DEPLOYMENT.md
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "spenit-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+
+  // Packages that don't apply on Workers are swapped for tiny stubs at bundle time.
+  "alias": {
+    "compression": "./src/worker-stubs/compression.ts",
+    "dotenv": "./src/worker-stubs/dotenv.ts",
+    "ioredis": "./src/worker-stubs/ioredis.ts",
+    "iconv-lite": "./src/worker-stubs/iconv-lite.ts"
+  },
+
+  // Non-secret settings. Secrets (JWT, VAPID private key, ...) are set with `wrangler secret put`.
+  "vars": {
+    "NODE_ENV": "production",
+    "FRONTEND_URL": "https://spenit.vercel.app",
+    "GOOGLE_CLIENT_ID": "762976241231-a2ohr923e9nmhrbuks7no7avhuufr25p.apps.googleusercontent.com",
+    "GROQ_MODEL": "llama-3.3-70b-versatile"
+  },
+
+  // Every 4 hours: a real database query (keeps a free Supabase project from being paused for
+  // inactivity) plus tidying old idempotency keys. Check it with `npm run cf:tail`.
+  "triggers": { "crons": ["17 */4 * * *"] },
+
+  // Filled in by `npm run cf:connect-db` once your Postgres exists.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "5677d5163b894bc597b9404eb4bc62d7" }]
+}

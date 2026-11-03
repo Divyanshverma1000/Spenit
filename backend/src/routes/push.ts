@@ -21,11 +21,11 @@ const router = Router();
  * Not authenticated — the browser needs this before the user has a token.
  */
 router.get("/vapid-key", (_req: Request, res: Response): void => {
-  if (!vapidPublicKey) {
+  if (!vapidPublicKey()) {
     res.status(503).json({ error: "Push notifications are not configured on this server" });
     return;
   }
-  res.json({ publicKey: vapidPublicKey });
+  res.json({ publicKey: vapidPublicKey() });
 });
 
 // ─── POST /push/subscribe ─────────────────────────────────────────────────────

@@ -21,7 +21,7 @@
 import { Router, Request, Response } from "express";
 import { Decimal } from "decimal.js";
 import pool from "../db/pool";
-import redis from "../db/redis";
+import { cacheGet, cacheSet, cacheDel } from "../lib/cache";
 import { requireAuth } from "../middleware/auth";
 import {
   computeNetBalance,
@@ -63,7 +63,7 @@ export async function invalidateGroupBalanceCache(groupId: string): Promise<void
       ...memberRows.rows.map((r: { user_id: string }) => userCrossGroupCacheKey(r.user_id)),
     ];
     if (keys.length > 0) {
-      await redis.del(...keys);
+      await cacheDel(...keys);
     }
   } catch (err) {
     // Don't crash the write if cache invalidation fails
@@ -91,11 +91,127 @@ export async function invalidateGroupBalanceCache(groupId: string): Promise<void
  *
  * Auth: required — user must be a member of the group.
  */
+/**
+ * Group-level balance data shared by GET /balance/groups/:id and GET /groups/:id/overview.
+ * The cached part is identical for every member; `myBalance` is derived per
+ * viewer AFTER the cache read (it used to be cached, which could show one
+ * member another member's balance).
+ * Returns null if the group doesn't exist.
+ */
+export async function getGroupBalance(groupId: string, viewerId: string) {
+  const cacheKey = groupBalanceCacheKey(groupId);
+  let base: {
+    groupId: string;
+    groupName: string;
+    memberBalances: Array<{
+      userId: string; name: string; username: string; avatarUrl: string | null;
+      isPlaceholder: boolean; netAmount: string; direction: string; signedAmount: string;
+    }>;
+    simplifiedTransfers: Array<{ from: string; to: string; amount: string; fromName: string; toName: string }>;
+    cachedAt: string | null;
+  } | null = null;
+  let fromCache = false;
+
+  try {
+    const cached = await cacheGet(cacheKey);
+    if (cached) { base = JSON.parse(cached); fromCache = true; }
+  } catch {
+    // Cache miss or error — fall through to DB
+  }
+
+  if (!base) {
+    const [groupResult, membersResult, expensesResult, payersResult, splitsResult, settlementsResult] =
+      await Promise.all([
+        pool.query('SELECT id, name FROM "Group" WHERE id = $1 AND deleted_at IS NULL', [groupId]),
+        pool.query(
+          `SELECT gm.user_id, COALESCE(gm.nickname, u.name) AS name, u.username, u.avatar_url, u.is_placeholder
+           FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
+           WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`,
+          [groupId]
+        ),
+        pool.query('SELECT id, group_id, deleted_at FROM "Expense" WHERE group_id = $1', [groupId]),
+        pool.query(
+          `SELECT ep.expense_id, ep.user_id, ep.amount_paid
+           FROM "ExpensePayer" ep JOIN "Expense" e ON e.id = ep.expense_id
+           WHERE e.group_id = $1`,
+          [groupId]
+        ),
+        pool.query(
+          `SELECT es.expense_id, es.user_id, es.share_amount
+           FROM "ExpenseSplit" es JOIN "Expense" e ON e.id = es.expense_id
+           WHERE e.group_id = $1`,
+          [groupId]
+        ),
+        pool.query(
+          `SELECT id, group_id, from_user, to_user, amount, status
+           FROM "Settlement" WHERE group_id = $1 AND deleted_at IS NULL`,
+          [groupId]
+        ),
+      ]);
+
+    if (groupResult.rows.length === 0) return null;
+
+    const group = groupResult.rows[0];
+    const members = membersResult.rows;
+    const memberIds = members.map((m: { user_id: string }) => m.user_id);
+
+    const expenses: ExpenseRow[] = expensesResult.rows.map((r) => ({
+      id: r.id, groupId: r.group_id, deletedAt: r.deleted_at,
+    }));
+    const payers: ExpensePayerRow[] = payersResult.rows.map((r) => ({
+      expenseId: r.expense_id, userId: r.user_id, amountPaid: r.amount_paid,
+    }));
+    const splits: ExpenseSplitRow[] = splitsResult.rows.map((r) => ({
+      expenseId: r.expense_id, userId: r.user_id, shareAmount: r.share_amount,
+    }));
+    const settlements: SettlementRow[] = settlementsResult.rows.map((r) => ({
+      id: r.id, groupId: r.group_id, fromUser: r.from_user, toUser: r.to_user, amount: r.amount, status: r.status,
+    }));
+
+    // Pure functions, no DB calls inside
+    const allNetBalances = computeAllNetBalances(memberIds, expenses, payers, splits, settlements);
+    const simplifiedTransfers = simplifyDebts(allNetBalances);
+
+    const nameOf = (uid: string) =>
+      members.find((m: { user_id: string }) => m.user_id === uid)?.name || uid;
+
+    base = {
+      groupId: group.id,
+      groupName: group.name,
+      memberBalances: members.map((m: { user_id: string; name: string; username: string; avatar_url: string | null; is_placeholder: boolean }) => {
+        const netDecimal = allNetBalances.get(m.user_id) || new Decimal(0);
+        const netNum = netDecimal.toNumber();
+        return {
+          userId: m.user_id,
+          name: m.name,
+          username: m.username,
+          avatarUrl: m.avatar_url,
+          isPlaceholder: m.is_placeholder,
+          netAmount: netDecimal.abs().toFixed(2),
+          direction: netNum > 0 ? "owed" : netNum < 0 ? "owes" : "settled",
+          signedAmount: netDecimal.toFixed(2),
+        };
+      }),
+      simplifiedTransfers: simplifiedTransfers.map((t) => ({
+        from: t.from, to: t.to, amount: t.amount, fromName: nameOf(t.from), toName: nameOf(t.to),
+      })),
+      cachedAt: new Date().toISOString(),
+    };
+
+    cacheSet(cacheKey, JSON.stringify(base), BALANCE_CACHE_TTL)
+      .catch((err) => console.error("Balance cache write error:", err));
+  }
+
+  const myBalance = base.memberBalances.find((mb) => mb.userId === viewerId) || {
+    netAmount: "0.00", direction: "settled", signedAmount: "0.00",
+  };
+  return { ...base, myBalance, fromCache };
+}
+
 router.get("/groups/:groupId", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { groupId } = req.params;
   const userId = req.user!.userId;
 
-  // Check membership
   const memberCheck = await pool.query(
     'SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
     [groupId, userId]
@@ -105,136 +221,11 @@ router.get("/groups/:groupId", requireAuth, async (req: Request, res: Response):
     return;
   }
 
-  // ── Try cache first ─────────────────────────────────────────────────────
-  const cacheKey = groupBalanceCacheKey(groupId);
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      res.json({ ...JSON.parse(cached), fromCache: true });
-      return;
-    }
-  } catch {
-    // Cache miss or error — fall through to DB
-  }
-
-  // ── Fetch all data needed for balance computation ────────────────────────
-  const [groupResult, membersResult, expensesResult, payersResult, splitsResult, settlementsResult] =
-    await Promise.all([
-      pool.query(
-        'SELECT id, name FROM "Group" WHERE id = $1 AND deleted_at IS NULL',
-        [groupId]
-      ),
-      pool.query(
-        `SELECT gm.user_id, u.name, u.username, u.avatar_url
-         FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
-         WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`,
-        [groupId]
-      ),
-      pool.query(
-        'SELECT id, group_id, deleted_at FROM "Expense" WHERE group_id = $1',
-        [groupId]
-      ),
-      pool.query(
-        `SELECT ep.expense_id, ep.user_id, ep.amount_paid
-         FROM "ExpensePayer" ep
-         JOIN "Expense" e ON e.id = ep.expense_id
-         WHERE e.group_id = $1`,
-        [groupId]
-      ),
-      pool.query(
-        `SELECT es.expense_id, es.user_id, es.share_amount
-         FROM "ExpenseSplit" es
-         JOIN "Expense" e ON e.id = es.expense_id
-         WHERE e.group_id = $1`,
-        [groupId]
-      ),
-      pool.query(
-        `SELECT id, group_id, from_user, to_user, amount, status
-         FROM "Settlement"
-         WHERE group_id = $1 AND deleted_at IS NULL`,
-        [groupId]
-      ),
-    ]);
-
-  if (groupResult.rows.length === 0) {
+  const payload = await getGroupBalance(groupId, userId);
+  if (!payload) {
     res.status(404).json({ error: "Group not found" });
     return;
   }
-
-  const group = groupResult.rows[0];
-  const members = membersResult.rows;
-  const memberIds = members.map((m: { user_id: string }) => m.user_id);
-
-  // Map DB rows to pure function inputs
-  const expenses: ExpenseRow[] = expensesResult.rows.map((r) => ({
-    id: r.id,
-    groupId: r.group_id,
-    deletedAt: r.deleted_at,
-  }));
-  const payers: ExpensePayerRow[] = payersResult.rows.map((r) => ({
-    expenseId: r.expense_id,
-    userId: r.user_id,
-    amountPaid: r.amount_paid,
-  }));
-  const splits: ExpenseSplitRow[] = splitsResult.rows.map((r) => ({
-    expenseId: r.expense_id,
-    userId: r.user_id,
-    shareAmount: r.share_amount,
-  }));
-  const settlements: SettlementRow[] = settlementsResult.rows.map((r) => ({
-    id: r.id,
-    groupId: r.group_id,
-    fromUser: r.from_user,
-    toUser: r.to_user,
-    amount: r.amount,
-    status: r.status,
-  }));
-
-  // ── Compute balances (pure functions, no DB calls inside) ─────────────────
-  const allNetBalances = computeAllNetBalances(memberIds, expenses, payers, splits, settlements);
-  const simplifiedTransfers = simplifyDebts(allNetBalances);
-
-  // ── Build member balance list ─────────────────────────────────────────────
-  const memberBalances = members.map((m: { user_id: string; name: string; username: string; avatar_url: string | null }) => {
-    const netDecimal = allNetBalances.get(m.user_id) || new Decimal(0);
-    const netNum = netDecimal.toNumber();
-    return {
-      userId: m.user_id,
-      name: m.name,
-      username: m.username,
-      avatarUrl: m.avatar_url,
-      netAmount: netDecimal.abs().toFixed(2),
-      direction: netNum > 0 ? "owed" : netNum < 0 ? "owes" : "settled",
-      // Raw signed value for frontend display logic
-      signedAmount: netDecimal.toFixed(2),
-    };
-  });
-
-  const myBalance = memberBalances.find((mb: { userId: string }) => mb.userId === userId);
-
-  const payload = {
-    groupId: group.id,
-    groupName: group.name,
-    myBalance: myBalance || { netAmount: "0.00", direction: "settled", signedAmount: "0.00" },
-    memberBalances,
-    simplifiedTransfers: simplifiedTransfers.map((t) => ({
-      from: t.from,
-      to: t.to,
-      amount: t.amount,
-      // Enrich with names for frontend display
-      fromName: members.find((m: { user_id: string }) => m.user_id === t.from)?.name || t.from,
-      toName: members.find((m: { user_id: string }) => m.user_id === t.to)?.name || t.to,
-    })),
-    cachedAt: null,
-    fromCache: false,
-  };
-
-  // ── Cache the result ──────────────────────────────────────────────────────
-  const cachedPayload = { ...payload, cachedAt: new Date().toISOString() };
-  redis
-    .set(cacheKey, JSON.stringify(cachedPayload), "EX", BALANCE_CACHE_TTL)
-    .catch((err) => console.error("Balance cache write error:", err));
-
   res.json(payload);
 });
 
@@ -260,7 +251,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
   // ── Try cache first ─────────────────────────────────────────────────────
   const cacheKey = userCrossGroupCacheKey(userId);
   try {
-    const cached = await redis.get(cacheKey);
+    const cached = await cacheGet(cacheKey);
     if (cached) {
       res.json({ ...JSON.parse(cached), fromCache: true });
       return;
@@ -393,8 +384,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
   };
 
   // Cache it
-  redis
-    .set(cacheKey, JSON.stringify({ ...payload, cachedAt: new Date().toISOString() }), "EX", BALANCE_CACHE_TTL)
+  cacheSet(cacheKey, JSON.stringify({ ...payload, cachedAt: new Date().toISOString() }), BALANCE_CACHE_TTL)
     .catch((err) => console.error("Cross-group balance cache write error:", err));
 
   res.json(payload);
