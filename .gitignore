@@ -1,0 +1,2 @@
+# Cloudflare Wrangler cache (holds your account id / name). Never commit.
+.wrangler/
