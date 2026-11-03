@@ -288,7 +288,7 @@ router.post(
     const result = await new GroqProvider(apiKey).extractOrder({ ocrText, imageBase64 });
     if (!result.ok) {
       console.warn(`[ai] extract-order failed reason=${result.reason} ${result.message ?? ""}`);
-      res.json({ fallback: true, reason: result.reason, rawText: "" });
+      res.json({ fallback: true, reason: result.reason, message: result.message, rawText: "" });
       return;
     }
 

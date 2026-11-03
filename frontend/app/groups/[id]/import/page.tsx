@@ -44,6 +44,16 @@ interface PieceState {
 }
 
 const MAX_IMAGES = 30;
+
+/** Server fallback reason → what the user sees on that screenshot. */
+const AI_FAILURE: Record<string, string> = {
+  config_error: "AI key needed",
+  blocked: "Groq blocked this network (403) — try a VPN or mobile data",
+  rate_limit: "AI is busy (rate limit) — wait a minute, then retry",
+  timeout: "AI took too long — tap retry",
+  network: "Couldn't reach the AI — tap retry",
+  parse_error: "AI gave an unreadable answer — tap retry",
+};
 const AI_CONCURRENCY = 3;
 
 async function hashFile(f: File): Promise<string> {
@@ -72,6 +82,7 @@ export default function ImportOrdersPage() {
   const [pieces, setPieces] = useState<PieceState[]>([]);
   const [drafts, setDrafts] = useState<DraftOrder[]>([]);
   const [noKey, setNoKey] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [undone, setUndone] = useState(false);
@@ -104,11 +115,12 @@ export default function ImportOrdersPage() {
     }
   }, []);
 
+  /** The AI's answer, or why there is none (so the screen never blames the screenshot for an AI outage). */
   const extract = useCallback(
-    async (body: object): Promise<ExtractResponse | "no_key" | null> => {
+    async (body: object): Promise<ExtractResponse | { failed: string }> => {
       const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify(body) });
-      const data = await readJson<ExtractResponse | { fallback: true; reason: string }>(res);
-      if ("fallback" in data) return data.reason === "config_error" ? "no_key" : null;
+      const data = await readJson<ExtractResponse | { fallback: true; reason: string; message?: string }>(res);
+      if ("fallback" in data) return { failed: data.reason };
       return data;
     },
     [authFetch]
@@ -121,17 +133,30 @@ export default function ImportOrdersPage() {
         const ocr = await ocrImage(p.file);
         patchPiece(p.index, { status: "ai", ocr });
 
-        let resp = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence }));
-        if (resp === "no_key") { setNoKey(true); patchPiece(p.index, { status: "failed", error: "AI key needed" }); return; }
+        const first = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence }));
+        // Account / network problems: retrying with the image would fail the same way.
+        if ("failed" in first && (first.failed === "config_error" || first.failed === "blocked")) {
+          if (first.failed === "config_error") setNoKey(true);
+          else setBlocked(true);
+          patchPiece(p.index, { status: "failed", error: AI_FAILURE[first.failed] });
+          return;
+        }
 
+        let resp: ExtractResponse | null = "failed" in first ? null : first;
+        let lastFailure = "failed" in first ? first.failed : null;
         if (!resp || resp.needsVision) {
-          patchPiece(p.index, { status: "vision" });
+          patchPiece(p.index, { status: "vision", resp: resp ?? undefined });
           const imageBase64 = await fileToCompressedDataUrl(p.file, 2000, 0.85);
           const vision = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence, imageBase64 }));
-          if (vision && vision !== "no_key" && (vision.order.items.length > 0 || !resp)) resp = vision;
+          if ("failed" in vision) lastFailure = vision.failed;
+          else if (vision.order.items.length > 0 || !resp) resp = vision;
         }
-        if (!resp || resp.order.items.length === 0) {
-          patchPiece(p.index, { status: "failed", error: "Couldn't find an order in this image", resp: resp ?? undefined });
+        if (!resp) {
+          patchPiece(p.index, { status: "failed", error: AI_FAILURE[lastFailure ?? ""] ?? "AI couldn't read this one — tap retry" });
+          return;
+        }
+        if (resp.order.items.length === 0) {
+          patchPiece(p.index, { status: "failed", error: "No order items found in this screenshot", resp });
           return;
         }
         patchPiece(p.index, { status: "done", resp });
@@ -270,6 +295,13 @@ export default function ImportOrdersPage() {
         </div>
       )}
 
+      {blocked && (
+        <div className="mx-4 mt-4 p-4 rounded-[16px] bg-[var(--negative)]/10 text-[13px]">
+          <b>Groq is blocking this network.</b> The AI service refused the request (403 &ldquo;Access denied&rdquo;).
+          Your screenshots are fine. Switch to mobile data or a VPN, then tap retry on each one.
+        </div>
+      )}
+
       {step === "drop" && <DropStep onPick={() => fileRef.current?.click()} />}
 
       {step === "reading" && (
@@ -277,7 +309,7 @@ export default function ImportOrdersPage() {
           pieces={pieces}
           liveOrders={liveOrders}
           debug={debug}
-          onRetry={(p) => void processPiece(p)}
+          onRetry={(p) => { setBlocked(false); void processPiece(p); }}
           onRemove={(index) => setPieces((ps) => ps.filter((p) => p.index !== index))}
           onAddMore={() => fileRef.current?.click()}
         />
@@ -443,6 +475,15 @@ function ReadingStep({
           <Plus size={20} />
         </button>
       </div>
+
+      {pieces.filter((p) => p.status === "failed").length > 1 && (
+        <button
+          onClick={() => pieces.filter((p) => p.status === "failed").forEach(onRetry)}
+          className="w-full py-2.5 rounded-[12px] bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-bold flex items-center justify-center gap-2 text-[var(--accent)]"
+        >
+          <RotateCcw size={15} /> Retry all {pieces.filter((p) => p.status === "failed").length} failed
+        </button>
+      )}
 
       {pieces.filter((p) => p.status === "failed").map((p) => (
         <div key={p.index} className="flex items-center gap-3 p-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)]">

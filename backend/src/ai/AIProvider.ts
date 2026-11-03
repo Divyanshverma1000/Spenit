@@ -84,7 +84,7 @@ export interface ParsedExpenseDraft {
  */
 export interface AIFallback {
   fallback: true;
-  reason: "timeout" | "parse_error" | "network" | "config_error" | "rate_limit";
+  reason: "timeout" | "parse_error" | "network" | "config_error" | "rate_limit" | "blocked";
   /** Any trivially extractable data (e.g. a number from the text) for pre-filling */
   partialAmount?: number;
   rawText: string;

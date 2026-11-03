@@ -436,6 +436,7 @@ If there are items, you MUST include them in the "items" array.`;
         if (response.status === 429) return { ok: false, reason: "rate_limit" };
         // 401 = bad key. 403 is Groq blocking the caller's network/region — not the user's key.
         if (response.status === 401) return { ok: false, reason: "config_error" };
+        if (response.status === 403) return { ok: false, reason: "blocked", message: "Groq 403: access denied from this network" };
         return { ok: false, reason: "network", message: `Groq ${response.status}` };
       }
 
