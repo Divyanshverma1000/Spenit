@@ -20,6 +20,15 @@ import { requireAuth } from "../middleware/auth";
 import { GroqProvider } from "../ai/GroqProvider";
 import type { GroupMember, ParsedExpenseDraft } from "../ai/AIProvider";
 import { normalizeOrder, checkTotals } from "../lib/orderExtract";
+import { MAX_IMAGE_CHARS, MAX_RECEIPT_IMAGES, IMAGE_DATA_URL } from "../lib/limits";
+import { open as openSecret } from "../lib/secretBox";
+import { strictLimit } from "../lib/strictLimit";
+
+/** AI calls cost money and share the Groq quota: an exact limit per account, across every server. */
+const aiLimit = strictLimit("ai", [
+  { limit: 20, seconds: 60, message: "That's a lot of AI requests at once. Wait a minute and try again." },
+  { limit: 400, seconds: 86_400, message: "You've reached today's AI limit. It resets tomorrow." },
+]);
 import { buildGroupContext } from "../lib/groupAiContext";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
@@ -41,6 +50,7 @@ const router = Router();
 router.post(
   "/parse-expense",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const { text, groupId } = req.body as { text?: string; groupId?: string };
@@ -81,8 +91,7 @@ router.post(
 
     const groupContext: GroupMember[] = membersRes.rows;
 
-    const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-    const apiKey = userRes.rows[0]?.groq_api_key;
+    const apiKey = (await groqKeyFor(userId)).key ?? "";
     
     // ── 3. Call AI provider ────────────────────────────────────────────────────
     const startMs = Date.now();
@@ -153,7 +162,8 @@ router.post(
 /** The user's own key wins; otherwise the server's GROQ_API_KEY secret, if one is set. */
 async function groqKeyFor(userId: string): Promise<{ key: string | null; source: "user" | "server" | null }> {
   const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-  const own = userRes.rows[0]?.groq_api_key as string | null | undefined;
+  // Stored encrypted (lib/secretBox); decrypted only here, for the request at hand.
+  const own = await openSecret(userRes.rows[0]?.groq_api_key as string | null | undefined);
   if (own) return { key: own, source: "user" };
   if (process.env.GROQ_API_KEY) return { key: process.env.GROQ_API_KEY, source: "server" };
   return { key: null, source: null };
@@ -169,6 +179,7 @@ async function groqKeyFor(userId: string): Promise<{ key: string | null; source:
 router.get(
   "/test-key",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const { key, source } = await groqKeyFor(req.user!.userId);
     if (!key) {
@@ -192,6 +203,7 @@ router.get(
 router.post(
   "/parse-receipt",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const { imagesBase64, imageBase64, groupId } = req.body as {
@@ -202,6 +214,10 @@ router.post(
 
     const finalImages = imagesBase64 || (imageBase64 ? [imageBase64] : []);
 
+    if (finalImages.length > MAX_RECEIPT_IMAGES || finalImages.some((im) => typeof im !== "string" || !IMAGE_DATA_URL.test(im) || im.length > MAX_IMAGE_CHARS)) {
+      res.status(400).json({ error: `Send up to ${MAX_RECEIPT_IMAGES} JPEG, PNG or WebP images, each under 4 MB` });
+      return;
+    }
     if (finalImages.length === 0) {
       res.status(400).json({ error: "imagesBase64 is required" });
       return;
@@ -243,8 +259,7 @@ router.post(
       membersList = userRes.rows;
     }
 
-    const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-    const apiKey = userRes.rows[0]?.groq_api_key;
+    const apiKey = (await groqKeyFor(userId)).key ?? "";
     const ai = new GroqProvider(apiKey);
     
     let result;
@@ -269,11 +284,11 @@ router.post(
  * Returns: { order, totals, model, latencyMs, attempts, usage }
  *        | { fallback: true, reason, stage, status?, message, model }
  */
-const MAX_IMAGE_CHARS = 4 * 1024 * 1024;
 
 router.post(
   "/extract-order",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const { imageBase64 } = req.body as { imageBase64?: string };
@@ -371,6 +386,7 @@ function jaccardSimilarity(a: string, b: string): number {
 router.post(
   "/query",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const { groupId, question, history } = req.body ?? {};
@@ -446,6 +462,7 @@ router.post(
 router.post(
   "/ask-personal",
   requireAuth,
+  aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
     const { question } = req.body;
@@ -455,8 +472,8 @@ router.post(
       return;
     }
 
-    const userRes = await pool.query('SELECT name, groq_api_key FROM "User" WHERE id = $1', [userId]);
-    const apiKey = userRes.rows[0]?.groq_api_key;
+    const userRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
+    const apiKey = (await groqKeyFor(userId)).key;
     const userName = userRes.rows[0]?.name;
     
     if (!apiKey) {

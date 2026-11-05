@@ -20,6 +20,7 @@ import { sendToUsers } from "../push";
 import { computeItemizedShares, FeePolicy } from "../lib/itemizedSplit";
 import { maskReceipt, restoreMasked, setItemVisibility, repairSharedBy } from "../lib/receiptPrivacy";
 import { logActivity, logActivitySafe, expenseSnapshot } from "../lib/groupSafety";
+import { MAX_AMOUNT, MAX_DESCRIPTION, MAX_RECEIPT_JSON, amountError } from "../lib/limits";
 import type { PoolClient } from "pg";
 
 const router = Router();
@@ -157,7 +158,9 @@ async function prepareExpense(
 
   if (!groupId) { res.status(400).json({ error: "groupId is required" }); return null; }
   if (!description || description.trim().length === 0) { res.status(400).json({ error: "description is required" }); return null; }
-  if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0) { res.status(400).json({ error: "amount must be a positive number" }); return null; }
+  if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0 || Number(rawAmount) > MAX_AMOUNT) { res.status(400).json({ error: amountError() }); return null; }
+  if (description.trim().length > MAX_DESCRIPTION) { res.status(400).json({ error: `Keep the name under ${MAX_DESCRIPTION} characters` }); return null; }
+  if (body.receiptData != null && JSON.stringify(body.receiptData).length > MAX_RECEIPT_JSON) { res.status(413).json({ error: "This bill has too much item data to save" }); return null; }
   if (!SPLIT_TYPES.includes(splitType)) { res.status(400).json({ error: "splitType must be 'equal', 'exact', 'fairshare' or 'itemized'" }); return null; }
   if (payers.length === 0) { res.status(400).json({ error: "At least one payer is required" }); return null; }
   if (participants.length === 0) { res.status(400).json({ error: "At least one participant is required" }); return null; }

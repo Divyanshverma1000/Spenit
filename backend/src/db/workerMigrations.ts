@@ -12,11 +12,13 @@ import pool from "./pool";
 import m010 from "../../migrations/010_group_avatars.sql";
 import m011 from "../../migrations/011_group_safety.sql";
 import m012 from "../../migrations/012_consent.sql";
+import m013 from "../../migrations/013_rate_counter.sql";
 
 const BUNDLED: { filename: string; sql: string }[] = [
   { filename: "010_group_avatars.sql", sql: m010 },
   { filename: "011_group_safety.sql", sql: m011 },
   { filename: "012_consent.sql", sql: m012 },
+  { filename: "013_rate_counter.sql", sql: m013 },
 ];
 
 /** Any stable 64-bit number: serialises migration runs across concurrent isolates. */

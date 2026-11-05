@@ -297,7 +297,7 @@ export class GroqProvider implements AIProvider {
         return this.fallback("timeout", input);
       }
       if (rawResponse) {
-        console.error("[ai] JSON parse failed:", rawResponse.slice(0, 200));
+        console.error(`[ai] JSON parse failed (${rawResponse.length} chars)`);
         return this.fallback("parse_error", input);
       }
       console.error("[ai] Network error:", (err as Error).message);

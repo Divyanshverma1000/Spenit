@@ -3,6 +3,7 @@ import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { MAX_PHOTO_BASE64, PHOTO_MIME } from "../lib/avatars";
 import { deleteAccount, exportAccount } from "../lib/account";
+import { open as openSecret, seal } from "../lib/secretBox";
 import { getGroupBalance, invalidateGroupBalanceCache } from "./balance";
 
 const router = Router();
@@ -34,7 +35,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
   const u = rows[0];
   let groqKeyMasked = null;
   if (u.groq_api_key) {
-    const key = u.groq_api_key as string;
+    const key = (await openSecret(u.groq_api_key as string)) ?? "";
     groqKeyMasked = key.startsWith("gsk_") && key.length > 8 
       ? `gsk_***${key.slice(-4)}` 
       : "***";
@@ -70,8 +71,10 @@ router.patch("/me", requireAuth, async (req: Request, res: Response): Promise<vo
     values.push(upiId || null);
   }
   if (groqApiKey !== undefined) {
+    const k = typeof groqApiKey === "string" ? groqApiKey.trim() : "";
+    if (k.length > 200 || /\s/.test(k)) { res.status(400).json({ error: "That doesn't look like an API key" }); return; }
     updates.push(`groq_api_key = $${idx++}`);
-    values.push(groqApiKey.trim() || null);
+    values.push(k ? await seal(k) : null); // encrypted at rest
   }
   if (username !== undefined && username.trim()) {
     // Check uniqueness

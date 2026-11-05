@@ -1,3 +1,4 @@
+import { installSafeConsole } from "./lib/safeLog";
 import "express-async-errors"; // makes errors thrown in async route handlers reach the error middleware instead of crashing the process
 import express, { NextFunction, Request, RequestHandler, Response } from "express";
 import cors from "cors";
@@ -21,7 +22,14 @@ import aiRouter from "./routes/ai";
 import personalExpensesRouter from "./routes/personal_expenses";
 import oweRouter from "./routes/owe";
 
+/** Cloudflare's rate limiting binding: counts are shared by every Worker instance. */
+export interface EdgeRateLimiter {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface AppOptions {
+  /** Shared rate limiters by name (Workers); without them each instance counts on its own. */
+  rateLimiters?: Partial<Record<"global" | "auth" | "ai" | "write" | "public", EdgeRateLimiter>>;
   /** gzip responses. Node does it here; Cloudflare compresses at the edge, so it turns this off. */
   compress?: boolean;
   /** Runs first on every request (the Workers entry uses it to open a per-request DB scope). */
@@ -43,7 +51,7 @@ const clientKey = (req: Request): string => {
  * Rate limiters are created on the FIRST REQUEST, not at start-up: express-rate-limit starts a timer
  * when it is constructed, and Cloudflare Workers forbid timers in the global scope.
  */
-const limiter = (windowMs: number, limit: number, message: string): RequestHandler => {
+const limiter = (windowMs: number, limit: number, message: string, key: (req: Request) => string = clientKey): RequestHandler => {
   let instance: RequestHandler | undefined;
   return (req, res, next) => {
     instance ??= rateLimit({
@@ -51,7 +59,7 @@ const limiter = (windowMs: number, limit: number, message: string): RequestHandl
       limit,
       standardHeaders: "draft-7",
       legacyHeaders: false,
-      keyGenerator: clientKey,
+      keyGenerator: key,
       // We deliberately key on the forwarded address, which these checks don't understand.
       validate: { keyGeneratorIpFallback: false, xForwardedForHeader: false, trustProxy: false, creationStack: false },
       message: { error: message },
@@ -60,9 +68,54 @@ const limiter = (windowMs: number, limit: number, message: string): RequestHandl
   };
 };
 
+/**
+ * Two layers, per minute: an exact in-memory count in each server instance (stops a fast
+ * client at once), and, on Workers, Cloudflare's shared limiter (approximate and eventually
+ * consistent per location, so it catches clients spread over many instances).
+ */
+let limiterWarned = false;
+const shared = (
+  edge: EdgeRateLimiter | undefined,
+  perMinute: number,
+  message: string,
+  key: (req: Request) => string = clientKey
+): RequestHandler => {
+  const local = limiter(60 * 1000, perMinute, message, key);
+  if (!edge) return local;
+  const edgeCheck: RequestHandler = async (req, res, next) => {
+    try {
+      const { success } = await edge.limit({ key: `${perMinute}:${key(req)}` });
+      res.setHeader("X-RateLimit-Policy", `${perMinute};w=60`);
+      if (!success) {
+        res.setHeader("Retry-After", "60");
+        res.status(429).json({ error: message });
+        return;
+      }
+    } catch (err) {
+      // the limiter being down never blocks people
+      if (!limiterWarned) { limiterWarned = true; console.warn("[ratelimit] edge limiter failed:", (err as Error).message); }
+    }
+    next();
+  };
+  return (req, res, next) => local(req, res, (err?: unknown) => (err ? next(err) : res.headersSent ? undefined : edgeCheck(req, res, next)));
+};
+
+/** Signed-in requests are counted per account (many people can share one Wi-Fi). */
+const accountKey = (req: Request): string => {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) {
+    try {
+      const payload = JSON.parse(Buffer.from(auth.split(".")[1] ?? "", "base64url").toString("utf8"));
+      if (typeof payload?.userId === "string") return `u:${payload.userId}`;
+    } catch { /* not a JWT: fall back to the address */ }
+  }
+  return `ip:${clientKey(req)}`;
+};
+
 /** Builds the Express application. No server is started here: see index.ts (Node) / worker.ts (Cloudflare). */
 export function buildApp(options: AppOptions = {}) {
-  const { compress = true, beforeAll = [] } = options;
+  installSafeConsole(); // no emails, keys or DB values in logs
+  const { compress = true, beforeAll = [], rateLimiters = {} } = options;
   const app = express();
 
   // Behind Render / Cloudflare / the Vercel proxy.
@@ -89,7 +142,11 @@ export function buildApp(options: AppOptions = {}) {
   );
 
   // Light global guard against runaway clients; generous enough for many people on one shared Wi-Fi.
-  app.use(limiter(5 * 60 * 1000, 3000, "Too many requests. Please slow down and try again shortly."));
+  app.use(shared(rateLimiters.global, 600, "Too many requests. Please slow down and try again shortly."));
+  // Writes and AI are counted per account. (Keys come from the token without trusting it:
+  // a forged token only changes which bucket you are counted in; requireAuth still checks it.)
+  const writeLimiter = shared(rateLimiters.write, 120, "You're making changes too fast. Wait a minute and try again.", accountKey);
+  app.use((req, res, next) => (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS" ? next() : writeLimiter(req, res, next)));
 
   // Slow / failing request log: enough to debug on free log retention without noise.
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -140,8 +197,9 @@ export function buildApp(options: AppOptions = {}) {
   });
 
   // ── Routes ──────────────────────────────────────────────────────────────────
-  const authLimiter = limiter(15 * 60 * 1000, 200, "Too many sign-in attempts. Please wait a few minutes.");
-  const publicTokenLimiter = limiter(5 * 60 * 1000, 120, "Too many requests. Please wait a few minutes.");
+  const authLimiter = shared(rateLimiters.auth, 60, "Too many sign-in attempts. Please wait a few minutes.");
+  const publicTokenLimiter = shared(rateLimiters.public, 60, "Too many requests. Please wait a few minutes.");
+  const aiLimiter = shared(rateLimiters.ai, 30, "Too many AI requests. Wait a minute and try again.", accountKey);
 
   app.use("/auth", authLimiter, authRouter);
   app.use("/users", usersRouter);
@@ -151,7 +209,7 @@ export function buildApp(options: AppOptions = {}) {
   app.use("/balance", balanceRouter);
   app.use("/settlements", settlementsRouter);
   app.use("/push", pushRouter);
-  app.use("/ai", aiRouter);
+  app.use("/ai", aiLimiter, aiRouter);
   app.use("/personal_expenses", personalExpensesRouter);
   app.use("/owe", publicTokenLimiter, oweRouter);
 

@@ -16,6 +16,7 @@
  *   GET    /settlements?groupId=      — list for a group (with from/to names)
  */
 
+import { parseAmount, amountError } from "../lib/limits";
 import { logActivitySafe, displayName } from "../lib/groupSafety";
 import { Router, Request, Response } from "express";
 import pool from "../db/pool";
@@ -59,6 +60,11 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
 
   if (!groupId || !toUserId || !amount) {
     res.status(400).json({ error: "groupId, toUserId, and amount are required" });
+    return;
+  }
+
+  if (parseAmount(amount) === null) {
+    res.status(400).json({ error: amountError("The payment") });
     return;
   }
 

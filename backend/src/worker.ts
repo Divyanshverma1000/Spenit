@@ -16,6 +16,8 @@ import { buildApp } from "./app";
 import { checkEnv, isProd } from "./config";
 import { runHousekeeping } from "./housekeeping";
 import { ensureMigrations } from "./db/workerMigrations";
+import { env } from "cloudflare:workers";
+import type { EdgeRateLimiter } from "./app";
 
 installPool(createWorkerPool());
 
@@ -37,7 +39,11 @@ function configGuard(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-const app = buildApp({ compress: false, beforeAll: [configGuard, requestDbScope, (req, res, next) => (req.path === "/ping" ? next() : ensureMigrations(req, res, next))] });
+// Rate limiting bindings from wrangler.jsonc ("ratelimits"): shared by every instance.
+const rl = (name: string) => (env[name] as EdgeRateLimiter | undefined) ?? undefined;
+const rateLimiters = { global: rl("RL_GLOBAL"), auth: rl("RL_AUTH"), ai: rl("RL_AI"), write: rl("RL_WRITE"), public: rl("RL_PUBLIC") };
+
+const app = buildApp({ compress: false, rateLimiters, beforeAll: [configGuard, requestDbScope, (req, res, next) => (req.path === "/ping" ? next() : ensureMigrations(req, res, next))] });
 app.listen(8080); // the port is only a routing key for httpServerHandler
 
 const handler = httpServerHandler({ port: 8080 });

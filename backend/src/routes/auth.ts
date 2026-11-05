@@ -123,7 +123,7 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
       [username, name || username, email || null, googleId, avatarUrl || null]
     );
     user = inserted.rows[0];
-    console.log(`New user created: ${user.username} (${user.id})`);
+    console.log(`[auth] new user ${user.id}`);
   }
 
   // Signing in means agreeing to the current Terms and Privacy Policy: record which version.

@@ -112,7 +112,7 @@ Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), an
 - [ ] **Import screen debug panel** (tokens, model, raw failure) → admins only or removed.
 - [ ] **19 `console.log` lines in the backend** → a structured logger (`info`/`warn`/`error`) with no personal data, item names or keys in logs.
 - [ ] `/ai/test-key` and `/ping`: keep, but rate-limit them.
-- [ ] **Groq API keys are stored in plain text** (`User.groq_api_key`). Encrypt them at rest (AES-GCM with a Worker secret), and never send them back to the client.
+- [x] **Groq API keys are stored in plain text** (`User.groq_api_key`). Encrypt them at rest (AES-GCM with a Worker secret), and never send them back to the client.
 - [ ] **Leaked Groq key:** revoke the one pasted into ChatGPT earlier, and rotate `GROQ_API_KEY` on the Worker.
 - [ ] Remove the unused files: `images/shiba.*`, `Travel_Buddies.png`, `sharing_expense_at_cafe.png` and the large PNGs in `public/` if nothing uses them.
 - [ ] CORS allow-list contains only production domains; cookies are `Secure` + `SameSite`.
@@ -121,15 +121,15 @@ Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), an
 
 ## 6. Security (P0 → P1)
 
-- [ ] **Run Claude Code's built-in security review**, `/security-review`. It's already in this setup, no install needed. Run it on the whole backend first, then on every change before deploy.
+- [x] **Run Claude Code's built-in security review**, `/security-review`. It's already in this setup, no install needed. Run it on the whole backend first, then on every change before deploy.
 - [ ] Also `/code-review high` on risky changes (auth, money, claims).
 - [ ] **Authorization tests for every route:** a non-member gets 403 on everything for a group; members can't edit others' expenses; private items never leave the server; the photo route leaks nothing else.
-- [ ] Input limits on every body: string lengths, item counts, amounts, image size (partly done).
+- [x] Input limits on every body: string lengths, item counts, amounts, image size (partly done).
 - [ ] **Rate limits that survive scale.** Today they're in memory per Worker instance, so each copy counts separately. Move them to Cloudflare Rate Limiting rules or a Durable Object / KV counter for auth, AI and writes.
-- [ ] Dependency audit (`npm audit`) in CI; Dependabot on GitHub.
+- [x] Dependency audit (`npm audit`) in CI; Dependabot on GitHub.
 - [ ] Secrets only in Worker / Vercel secrets; scan git history for leaks (`gitleaks`).
 - [ ] Supabase: row-level security on, or the DB reachable only through Hyperdrive; automated backups on, and a restore tested once.
-- [ ] Security headers on the frontend (CSP, HSTS, frame-ancestors) via `next.config` headers.
+- [x] Security headers on the frontend (CSP, HSTS, frame-ancestors) via `next.config` headers.
 
 ## 7. Monitoring (P1)
 

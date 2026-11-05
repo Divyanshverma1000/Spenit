@@ -66,6 +66,9 @@ export function checkEnv(opts: { runtime: "node" | "worker"; hasDatabase?: boole
   if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
     warnings.push("VAPID keys are not set: push notifications are disabled");
   }
+  if (!env.AI_KEY_SECRET) {
+    warnings.push("AI_KEY_SECRET is not set: AI keys people save are stored unencrypted");
+  }
   if (!worker && !env.REDIS_URL) {
     warnings.push("REDIS_URL is not set: using the in-memory cache (fine for a single instance)");
   }
