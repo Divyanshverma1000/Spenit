@@ -25,12 +25,14 @@ export interface CrossGroupBalance {
 const inr = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 })}`;
 
-function greeting(d: Date) {
+/** Greeting and its art for the time of day. */
+function greeting(d: Date): { text: string; art: string } {
   const h = d.getHours();
-  if (h < 5) return "Up late";
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
+  if (h < 5) return { text: "Up late", art: "night" };
+  if (h < 12) return { text: "Good morning", art: "morning" };
+  if (h < 17) return { text: "Good afternoon", art: "afternoon" };
+  if (h < 22) return { text: "Good evening", art: "evening" };
+  return { text: "Good night", art: "night" };
 }
 
 const ACTIONS = [
@@ -49,6 +51,7 @@ export function DashboardView({
   loading: boolean;
 }) {
   const now = new Date();
+  const hello = greeting(now);
   const direction = balance?.direction ?? "settled";
   const breakdown = balance?.breakdown ?? [];
   const owedToMe = breakdown.filter((g) => g.direction === "owed").reduce((a, g) => a + (parseFloat(g.netAmount) || 0), 0);
@@ -68,17 +71,39 @@ export function DashboardView({
           animate={{ opacity: 1, y: 0 }}
           className="px-5 pt-14 pb-5 flex items-center gap-3"
         >
+          {/* time-of-day art in a soft glowing tile */}
+          <span className="relative flex-shrink-0 w-[52px] h-[52px] rounded-[18px] flex items-center justify-center bg-[var(--paper)] border border-[var(--hairline)] overflow-hidden">
+            <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(245,158,11,0.28),transparent_70%)]" />
+            <motion.img
+              src={`/illustrations/greet-${hello.art}.webp`}
+              alt=""
+              aria-hidden
+              className="relative w-[40px] h-[40px] object-contain"
+              animate={{ y: [0, -2.5, 0], rotate: [0, 3, 0] }}
+              transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </span>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-semibold text-[var(--text-secondary)]">
-              {greeting(now)} · {now.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+              {hello.text} · {now.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
             </p>
-            <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight leading-tight truncate">
-              Hi, {user?.name?.split(" ")[0] || "there"} <span aria-hidden>👋</span>
+            <h1 className="text-[26px] font-bold text-[var(--text-primary)] tracking-tight leading-tight truncate">
+              Hi,{" "}
+              <span className="bg-gradient-to-r from-[#F59E0B] via-[#FB923C] to-[#F43F5E] bg-clip-text text-transparent">
+                {user?.name?.split(" ")[0] || "there"}
+              </span>
             </h1>
           </div>
           {user && (
-            <Link href="/profile" aria-label="Your profile" className="rounded-full ring-2 ring-[var(--accent)]/40 ring-offset-2 ring-offset-[var(--ink)]">
-              <MemberAvatar person={{ id: user.id, name: user.name, avatarUrl: user.avatarUrl }} size={44} />
+            <Link
+              href="/profile"
+              aria-label="Your profile"
+              className="flex-shrink-0 flex rounded-full p-[2px] active:scale-95 transition-transform"
+              style={{ background: "conic-gradient(from 200deg, #F59E0B, #FB7185, #F59E0B 60%, #FCD34D, #F59E0B)" }}
+            >
+              <span className="flex rounded-full p-[2px] bg-[var(--ink)]">
+                <MemberAvatar person={{ id: user.id, name: user.name, avatarUrl: user.avatarUrl }} size={42} />
+              </span>
             </Link>
           )}
         </motion.header>
