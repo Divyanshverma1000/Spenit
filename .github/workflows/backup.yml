@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check secrets
@@ -28,12 +28,6 @@ jobs:
           if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
             echo "::error::Set DATABASE_URL and BACKUP_PASSPHRASE in the repository secrets"; exit 1
           fi
-      - name: Install pg_dump 17
-        run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
       - name: Dump, compress, encrypt
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -41,7 +35,9 @@ jobs:
         run: |
           set -o pipefail
           f="spenit-$(date -u +%Y-%m-%d).sql.gz.gpg"
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --no-owner --no-privileges --schema=public \
+          # pg_dump from the official Postgres image: nothing to install, and v17 can dump older servers.
+          docker run --rm -e DATABASE_URL postgres:17-alpine \
+            sh -c 'pg_dump "$DATABASE_URL" --no-owner --no-privileges --schema=public' \
             | gzip -9 \
             | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase "$BACKUP_PASSPHRASE" -o "$f"
           ls -lh "$f"
