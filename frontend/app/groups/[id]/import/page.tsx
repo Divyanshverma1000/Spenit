@@ -12,7 +12,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Check, AlertTriangle, ChevronDown, ImagePlus, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug,
 } from "lucide-react";
@@ -646,24 +646,25 @@ function SortStep({
 
   return (
     <main className="max-w-md mx-auto">
-      {/* Person brush */}
+      {/* Quick assign: pick one person, then tap whole item rows to add/remove them */}
       <div className="sticky top-[88px] z-10 bg-[var(--ink)]/95 backdrop-blur-md px-4 py-3 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
-          {members.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setBrush((b) => (b === m.id ? null : m.id))}
-              className={`flex flex-col items-center gap-1 px-1 flex-shrink-0 ${brush && brush !== m.id ? "opacity-50" : ""}`}
-            >
-              <span className={`rounded-full p-0.5 ${brush === m.id ? "ring-2 ring-[var(--accent)]" : ""}`}><Avatar m={m} size={36} /></span>
-              <span className="text-[11px] font-semibold">{firstName(m, me)}</span>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Quick assign</span>
+          {brushMember && (
+            <button onClick={() => setBrush(null)} className="text-[12px] font-bold text-[var(--accent)] flex items-center gap-1">
+              <X size={13} /> Done
             </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
+          {members.map((m) => (
+            <PersonPill key={m.id} m={m} me={me} on={brush === m.id} onClick={() => setBrush((b) => (b === m.id ? null : m.id))} />
           ))}
         </div>
-        <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+        <p className={`text-[11px] mt-2 ${brushMember ? "text-[var(--accent)] font-bold" : "text-[var(--text-secondary)]"}`}>
           {brushMember
-            ? `Tap items to add or remove ${firstName(brushMember, me) === "You" ? "yourself" : firstName(brushMember, me)}. Tap the avatar again to stop.`
-            : "Tap a person, then tap their items. Swipe an item → just mine, ← everyone."}
+            ? `Now tap any item to add or remove ${firstName(brushMember, me) === "You" ? "yourself" : firstName(brushMember, me)}.`
+            : "Pick a name, then tap items to add that person. Or use the names under each item."}
         </p>
       </div>
 
@@ -766,17 +767,25 @@ function OrderCard({
                   />
                 ))}
               </div>
-              <button
-                onClick={() =>
-                  update((d) => ({
-                    ...d,
-                    items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], doubtful: false }],
-                  }))
-                }
-                className="w-full py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1 border-t border-[var(--hairline)]"
-              >
-                <Plus size={14} /> Add item
-              </button>
+              <div className="flex border-t border-[var(--hairline)] divide-x divide-[var(--hairline)]">
+                <button
+                  onClick={() =>
+                    update((d) => ({
+                      ...d,
+                      items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], doubtful: false }],
+                    }))
+                  }
+                  className="flex-1 py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1"
+                >
+                  <Plus size={14} /> Add item
+                </button>
+                <button
+                  onClick={() => update((d) => ({ ...d, fees: [...d.fees, { id: Math.random().toString(36).slice(2), label: "", amount: 0 }] }))}
+                  className="flex-1 py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1"
+                >
+                  <Plus size={14} /> Add fee
+                </button>
+              </div>
 
               <BillLines o={o} update={update} />
 
@@ -836,6 +845,41 @@ function OrderCard({
   );
 }
 
+/** A person as a tappable pill: avatar + first name, clearly on or off. */
+function PersonPill({ m, me, on, onClick, label }: { m: GroupMember; me: string; on: boolean; onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      aria-pressed={on}
+      className={`h-8 pl-1 pr-3 rounded-full flex items-center gap-1.5 text-[12px] font-bold border transition-colors flex-shrink-0 ${
+        on
+          ? "bg-[var(--accent-subtle)] border-[var(--accent)] text-[var(--text-primary)]"
+          : "bg-[var(--paper)] border-[var(--hairline)] text-[var(--text-muted)]"
+      }`}
+    >
+      <Avatar m={m} size={24} dim={!on} />
+      {label ?? firstName(m, me)}
+      {on && <Check size={12} strokeWidth={3} className="text-[var(--accent)] -mr-1" />}
+    </button>
+  );
+}
+
+function QuickPill({ on, onClick, icon, children }: { on: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      aria-pressed={on}
+      className={`h-8 px-2.5 rounded-full flex items-center gap-1 text-[12px] font-bold border border-dashed flex-shrink-0 ${
+        on ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-subtle)]" : "border-[var(--border-dark)] text-[var(--text-secondary)]"
+      }`}
+    >
+      {icon} {children}
+    </button>
+  );
+}
+
 function ItemRow({
   it, members, me, onTap, onToggle, onJustMe, onEveryone, onEdit, onDelete,
 }: {
@@ -850,26 +894,25 @@ function ItemRow({
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(it.name === "");
-  const onDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x > 80) onJustMe();
-    else if (info.offset.x < -80) onEveryone();
-  };
   const nobody = it.sharedBy.length === 0;
+  const all = members.length > 1 && it.sharedBy.length === members.length;
+  const onlyMe = it.sharedBy.length === 1 && it.sharedBy[0] === me;
+  const share =
+    nobody ? null
+    : onlyMe ? "Only you"
+    : it.sharedBy.length === 1 ? `Only ${firstName(members.find((m) => m.id === it.sharedBy[0]), me)}`
+    : `${formatINR(Math.round((it.lineTotal / it.sharedBy.length) * 100) / 100)} each · ${it.sharedBy.length} people`;
 
   return (
-    <motion.div
-      drag={editing ? false : "x"}
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.35}
-      onDragEnd={onDragEnd}
+    <div
       onClick={onTap}
-      className={`px-4 py-3 bg-[var(--paper)] ${onTap ? "cursor-pointer active:bg-[var(--paper-dim)]" : ""} ${nobody ? "bg-[var(--accent-subtle)]" : ""}`}
+      className={`px-4 py-3 ${onTap ? "cursor-pointer active:bg-[var(--paper-dim)]" : ""} ${nobody ? "bg-[var(--accent-subtle)]" : "bg-[var(--paper)]"}`}
     >
       <div className="flex items-start gap-2">
         {editing ? (
           <div className="flex-1 flex gap-2" onClick={(e) => e.stopPropagation()}>
             <input
-              autoFocus
+              autoFocus={it.name === ""}
               value={it.name}
               onChange={(e) => onEdit({ name: e.target.value })}
               placeholder="Item name"
@@ -880,10 +923,10 @@ function ItemRow({
               inputMode="decimal"
               value={it.lineTotal || ""}
               onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), doubtful: false })}
-              placeholder="0"
+              placeholder="₹"
               className="w-20 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-bold text-right tabular-nums outline-none"
             />
-            <button onClick={() => setEditing(false)} className="p-1 text-[var(--positive)]" aria-label="Done"><Check size={18} /></button>
+            <button onClick={() => setEditing(false)} disabled={!it.name.trim()} className="p-1 text-[var(--positive)] disabled:opacity-30" aria-label="Done"><Check size={18} /></button>
             <button onClick={onDelete} className="p-1 text-[var(--text-muted)]" aria-label="Delete item"><Trash2 size={16} /></button>
           </div>
         ) : (
@@ -891,7 +934,7 @@ function ItemRow({
             <div className="flex-1 min-w-0">
               <div className="text-[14px] font-semibold leading-snug">{it.name}</div>
               <div className="text-[11px] text-[var(--text-secondary)]">
-                {[it.variant, it.qty > 1 ? `× ${it.qty}` : null].filter(Boolean).join(" · ")}
+                {[it.variant, it.qty > 1 ? `× ${it.qty}` : null, share].filter(Boolean).join(" · ")}
               </div>
             </div>
             <button
@@ -904,26 +947,20 @@ function ItemRow({
           </>
         )}
       </div>
-      {!editing && (
-        <div className="flex gap-1.5 mt-2 overflow-x-auto hide-scrollbar">
-          {members.map((m) => {
-            const on = it.sharedBy.includes(m.id);
-            return (
-              <button
-                key={m.id}
-                onClick={(e) => { e.stopPropagation(); onToggle(m.id); }}
-                className={`rounded-full p-0.5 flex-shrink-0 ${on ? "ring-2 ring-[var(--accent)]" : ""}`}
-                aria-label={`${on ? "Remove" : "Add"} ${firstName(m, me)}`}
-                aria-pressed={on}
-              >
-                <Avatar m={m} size={24} dim={!on} />
-              </button>
-            );
-          })}
-          {nobody && <span className="text-[11px] text-[var(--accent)] font-bold self-center ml-1">Who shares this?</span>}
-        </div>
-      )}
-    </motion.div>
+      {/* Who shares it — shown while editing too, so a newly added item gets people right away. */}
+      <div className="flex flex-wrap gap-1.5 mt-2">
+        {members.length > 1 && (
+          <>
+            <QuickPill on={all} onClick={onEveryone} icon={<Users size={13} />}>All</QuickPill>
+            <QuickPill on={onlyMe} onClick={onJustMe} icon={<UserIcon size={13} />}>Only me</QuickPill>
+          </>
+        )}
+        {members.map((m) => (
+          <PersonPill key={m.id} m={m} me={me} on={it.sharedBy.includes(m.id)} onClick={() => onToggle(m.id)} />
+        ))}
+      </div>
+      {nobody && <div className="text-[11px] text-[var(--accent)] font-bold mt-1.5">Who shares this? Pick at least one person.</div>}
+    </div>
   );
 }
 
@@ -931,7 +968,12 @@ function BillLines({ o, update }: { o: DraftOrder; update: (fn: (o: DraftOrder) 
   if (o.fees.length === 0 && o.discounts.length === 0) return null;
   const row = (kind: "fees" | "discounts", l: { id: string; label: string; amount: number }) => (
     <div key={l.id} className="flex items-center gap-2 text-[12px]">
-      <span className="flex-1 text-[var(--text-secondary)] truncate">{l.label}</span>
+      <input
+        value={l.label}
+        onChange={(e) => update((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === l.id ? { ...x, label: e.target.value } : x)) }))}
+        placeholder={kind === "fees" ? "Fee name (e.g. Handling charge)" : "Discount name"}
+        className="flex-1 min-w-0 bg-transparent text-[var(--text-secondary)] outline-none"
+      />
       <span className="text-[var(--text-muted)]">{kind === "discounts" ? "−₹" : "₹"}</span>
       <input
         type="number"

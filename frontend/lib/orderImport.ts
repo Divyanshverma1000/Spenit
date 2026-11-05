@@ -272,7 +272,7 @@ export function isReady(o: DraftOrder): boolean {
   const t = draftTotals(o);
   if (t.status === "no_items") return false;
   if (t.computed <= 0) return false;
-  if (o.items.some((i) => i.sharedBy.length === 0)) return false;
+  if (o.items.some((i) => i.sharedBy.length === 0 || !i.name.trim())) return false;
   return t.status === "ok" || t.status === "no_total" || o.acceptItemsTotal;
 }
 
@@ -384,7 +384,7 @@ export function toExpenseBody(o: DraftOrder) {
       orderDate: o.orderDate,
       billTotal: o.grandTotal,
       items: o.items.map((i) => ({ name: i.name, variant: i.variant, qty: i.qty, lineTotal: i.lineTotal, sharedBy: i.sharedBy })),
-      fees: o.fees.map((f) => ({ label: f.label, amount: f.amount })),
+      fees: o.fees.filter((f) => f.amount > 0).map((f) => ({ label: f.label.trim() || "Fee", amount: f.amount })),
       discounts: o.discounts.map((d) => ({ label: d.label, amount: d.amount })),
       feePolicy: o.feePolicy,
     },
