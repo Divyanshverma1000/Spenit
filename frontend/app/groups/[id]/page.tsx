@@ -4,7 +4,6 @@ import { API_URL } from "@/lib/api";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import dynamic from "next/dynamic";
 
 // Loaded only when the invite panel is opened (keeps the group screen light).
@@ -43,6 +42,9 @@ import { BalanceAmount } from "@/components/ui/BalanceAmount";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
+import AvatarPicker from "@/components/AvatarPicker";
+import MemberAvatar, { AvatarPeople } from "@/components/ui/MemberAvatar";
+import { lookAlikes, initials } from "@/lib/avatar";
 import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
 import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
@@ -151,6 +153,8 @@ export default function GroupDetailPage() {
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  /** whose group avatar is being picked */
+  const [avatarFor, setAvatarFor] = useState<GroupMember | null>(null);
   const [editName, setEditName] = useState("");
 
   const loadData = useCallback(() => refetch(), [refetch]);
@@ -581,19 +585,50 @@ export default function GroupDetailPage() {
             <p role="alert" className="text-[13px] font-medium text-[var(--negative)] mb-3">{memberError}</p>
           )}
 
+          {(() => {
+            // Two people with no picture and the same initials can't be told apart at a glance.
+            const sets = lookAlikes(group.members);
+            if (sets.length === 0) return null;
+            const meInIt = sets.some((s) => s.some((p) => p.id === user?.id));
+            const meMember = group.members.find((x) => x.id === user?.id);
+            return (
+              <div className="mb-3 p-3.5 rounded-[16px] bg-[var(--accent-subtle)] text-[13px] flex items-start gap-3">
+                <div className="flex -space-x-2 flex-shrink-0 pt-0.5">
+                  {sets[0].slice(0, 3).map((p) => <MemberAvatar key={p.id} person={p} size={26} className="ring-2 ring-[var(--paper)]" />)}
+                </div>
+                <div className="flex-1">
+                  <b>{sets.map((s) => s.map((p) => p.name).join(" & ")).join(", ")}</b> look alike ({sets.map((s) => initials(s[0].name)).join(", ")}).
+                  {" "}Give each a picture so everyone knows who is who.
+                  {meInIt && meMember && (
+                    <button onClick={() => setAvatarFor(meMember)} className="block mt-1.5 font-bold text-[var(--accent)]">Pick my avatar</button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="bg-white rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[var(--hairline)] overflow-hidden divide-y divide-[var(--hairline)]">
             {group.members.map((m) => {
               const canRename = m.id === user?.id || (isAdmin && m.isPlaceholder);
+              // You pick your own avatar; anyone may pick one for someone who hasn't joined.
+              const canPickAvatar = m.id === user?.id || m.isPlaceholder;
               const bal = memberBalances[m.id];
               const hasBalance = !!bal && parseFloat(bal.netAmount) > 0;
               return (
               <div key={m.id} className="p-4 flex items-center gap-3">
-                {m.avatarUrl ? (
-                  <Image src={m.avatarUrl} alt={m.name} width={40} height={40} className="rounded-full flex-shrink-0 border border-[var(--hairline)]" />
+                {canPickAvatar ? (
+                  <button
+                    onClick={() => setAvatarFor(m)}
+                    aria-label={m.id === user?.id ? "Change your avatar in this group" : `Pick an avatar for ${m.name}`}
+                    className="relative flex-shrink-0 active:scale-95 transition-transform"
+                  >
+                    <MemberAvatar person={m} size={40} />
+                    <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[var(--paper)] border border-[var(--hairline)] flex items-center justify-center text-[var(--text-secondary)] shadow-sm">
+                      <Pencil size={9} strokeWidth={2.5} />
+                    </span>
+                  </button>
                 ) : (
-                  <div className="h-10 w-10 rounded-full flex items-center justify-center text-[16px] font-bold flex-shrink-0 bg-[var(--paper-dim)] text-[var(--accent)] border border-[var(--hairline)]">
-                    {m.name.charAt(0).toUpperCase()}
-                  </div>
+                  <MemberAvatar person={m} size={40} />
                 )}
                 <div className="flex-1 min-w-0">
                   {editingMemberId === m.id ? (
@@ -681,7 +716,18 @@ export default function GroupDetailPage() {
         </div>
       </main>
 
+      {avatarFor && user && (
+        <AvatarPicker
+          groupId={id}
+          target={group.members.find((x) => x.id === avatarFor.id) ?? avatarFor}
+          members={group.members}
+          me={user.id}
+          onClose={() => setAvatarFor(null)}
+        />
+      )}
+
       {selectedExpense && (
+        <AvatarPeople people={group.members}>
         <ExpenseDetailModal
           expense={selectedExpense}
           currentUserId={user?.id}
@@ -697,6 +743,7 @@ export default function GroupDetailPage() {
           }}
           isDeleting={deletingId === selectedExpense.id}
         />
+        </AvatarPeople>
       )}
 
       <BottomNav />

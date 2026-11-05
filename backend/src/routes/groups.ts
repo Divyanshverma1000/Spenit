@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
+import { isAvatarKey } from "../lib/avatars";
 import { invalidateGroupBalanceCache, getGroupBalance } from "./balance";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
@@ -353,7 +354,7 @@ export async function getGroupDetail(id: string, myRole: string) {
 
   // Fetch members
   const membersResult = await pool.query(
-    `select u.id, u.name, u.username, u.avatar_url, u.is_placeholder, gm.nickname, gm.role, gm.joined_at
+    `select u.id, u.name, u.username, u.avatar_url, u.is_placeholder, gm.nickname, gm.role, gm.joined_at, gm.avatar_key
      from "GroupMember" gm
      join "User" u on u.id = gm.user_id
      where gm.group_id = $1
@@ -376,6 +377,7 @@ export async function getGroupDetail(id: string, myRole: string) {
       nickname: m.nickname,
       username: m.is_placeholder ? null : m.username,
       avatarUrl: m.avatar_url,
+      avatarKey: m.avatar_key,
       role: m.role,
       isPlaceholder: m.is_placeholder,
       joinedAt: m.joined_at,
@@ -553,6 +555,68 @@ router.patch("/:id/members/:userId", requireAuth, async (req: Request, res: Resp
   invalidateGroupBalanceCache(id).catch(() => {});
 
   res.json({ id: targetId, nickname, name: finalName });
+});
+
+// ─── PUT /groups/:id/members/:userId/avatar ──────────────────────────────────
+/**
+ * Pick an illustrated avatar for this group. One avatar per person per group, so nobody
+ * looks like anyone else. You pick your own; anyone in the group may pick one for a
+ * person who hasn't joined yet (they can change it after joining).
+ * Body: { avatarKey: string | null }   (null → profile photo, or coloured initials)
+ * 409 { code: "AVATAR_TAKEN", takenBy } when someone else in the group has it.
+ */
+router.put("/:id/members/:userId/avatar", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id, userId: targetId } = req.params;
+  const userId = req.user!.userId;
+  const raw = (req.body || {}).avatarKey;
+  const avatarKey = raw === null || raw === "" ? null : raw;
+  if (avatarKey !== null && !isAvatarKey(avatarKey)) {
+    res.status(400).json({ error: "Unknown avatar" });
+    return;
+  }
+
+  if (!(await getMemberRole(id, userId))) {
+    res.status(403).json({ error: "You are not a member of this group" });
+    return;
+  }
+  const target = await pool.query(
+    `select u.is_placeholder from "GroupMember" gm join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and gm.user_id = $2`,
+    [id, targetId]
+  );
+  if (target.rows.length === 0) {
+    res.status(404).json({ error: "Member not found" });
+    return;
+  }
+  if (targetId !== userId && !target.rows[0].is_placeholder) {
+    res.status(403).json({ error: "People who have joined pick their own avatar" });
+    return;
+  }
+
+  if (avatarKey) {
+    const taken = await pool.query(
+      `select coalesce(gm.nickname, u.name) as name from "GroupMember" gm join "User" u on u.id = gm.user_id
+       where gm.group_id = $1 and gm.avatar_key = $2 and gm.user_id <> $3`,
+      [id, avatarKey, targetId]
+    );
+    if (taken.rows.length > 0) {
+      res.status(409).json({ error: `${taken.rows[0].name} already has this avatar`, code: "AVATAR_TAKEN", takenBy: taken.rows[0].name });
+      return;
+    }
+  }
+
+  try {
+    await pool.query('update "GroupMember" set avatar_key = $3 where group_id = $1 and user_id = $2', [id, targetId, avatarKey]);
+  } catch (err) {
+    // Two people picked the same avatar at the same moment: the unique index decides.
+    if ((err as { code?: string }).code === "23505") {
+      res.status(409).json({ error: "Someone just picked this avatar", code: "AVATAR_TAKEN" });
+      return;
+    }
+    throw err;
+  }
+  invalidateGroupBalanceCache(id).catch(() => {});
+  res.json({ id: targetId, avatarKey });
 });
 
 // ─── DELETE /groups/:id/members/:userId ──────────────────────────────────────

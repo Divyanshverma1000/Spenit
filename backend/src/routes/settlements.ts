@@ -280,8 +280,8 @@ export async function listGroupSettlements(groupId: string, userId: string) {
        s.id, s.group_id, s.amount, s.method, s.status,
        s.created_at, s.confirmed_at,
        fu.is_placeholder as from_is_placeholder, tu.is_placeholder as to_is_placeholder,
-       fu.id as from_user_id, COALESCE(fgm.nickname, fu.name) as from_user_name, fu.username as from_user_username, fu.avatar_url as from_user_avatar,
-       tu.id as to_user_id, COALESCE(tgm.nickname, tu.name) as to_user_name, tu.username as to_user_username, tu.avatar_url as to_user_avatar,
+       fu.id as from_user_id, COALESCE(fgm.nickname, fu.name) as from_user_name, fu.username as from_user_username, fu.avatar_url as from_user_avatar, fgm.avatar_key as from_user_avatar_key,
+       tu.id as to_user_id, COALESCE(tgm.nickname, tu.name) as to_user_name, tu.username as to_user_username, tu.avatar_url as to_user_avatar, tgm.avatar_key as to_user_avatar_key,
        COALESCE(igm.nickname, ib.name) as initiated_by_name
      FROM "Settlement" s
      JOIN "User" fu ON fu.id = s.from_user
@@ -313,12 +313,14 @@ export async function listGroupSettlements(groupId: string, userId: string) {
       name: r.from_user_name,
       username: r.from_user_username,
       avatarUrl: r.from_user_avatar,
+      avatarKey: r.from_user_avatar_key,
     },
     toUser: {
       id: r.to_user_id,
       name: r.to_user_name,
       username: r.to_user_username,
       avatarUrl: r.to_user_avatar,
+      avatarKey: r.to_user_avatar_key,
     },
     initiatedByName: r.initiated_by_name,
     isIncoming: r.to_user_id === userId, // true = someone is paying me

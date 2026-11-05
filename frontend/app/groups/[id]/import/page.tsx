@@ -21,6 +21,8 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { readJson } from "@/lib/api";
 import { fileToCompressedDataUrl } from "@/lib/image";
 import { groupKey, useGroupOverview, type GroupMember } from "@/lib/queries";
+import { shortNames } from "@/lib/avatar";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 import {
   adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody,
@@ -83,8 +85,12 @@ export default function ImportOrdersPage() {
   const { data: overview } = useGroupOverview(groupId);
   const members: GroupMember[] = useMemo(() => {
     const ms = overview?.group.members ?? [];
+    // Short names that never clash ("Suryansh K." / "Suryansh M."), carried on each member.
+    const names = shortNames(ms, user?.id);
     // me first
-    return [...ms].sort((a, b) => (a.id === user?.id ? -1 : b.id === user?.id ? 1 : 0));
+    return [...ms]
+      .map((m) => ({ ...m, shortName: names[m.id] }))
+      .sort((a, b) => (a.id === user?.id ? -1 : b.id === user?.id ? 1 : 0));
   }, [overview, user?.id]);
   const me = user?.id ?? "";
 
@@ -413,22 +419,12 @@ function BottomBar({ children }: { children: React.ReactNode }) {
 }
 
 function Avatar({ m, size = 28, dim = false }: { m: GroupMember; size?: number; dim?: boolean }) {
-  return (
-    <span
-      className={`rounded-full flex items-center justify-center font-bold overflow-hidden bg-[var(--paper-dim)] text-[var(--text-secondary)] flex-shrink-0 ${dim ? "opacity-40 grayscale" : ""}`}
-      style={{ width: size, height: size, fontSize: size * 0.42 }}
-    >
-      {m.avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={m.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-      ) : (
-        m.name.charAt(0).toUpperCase()
-      )}
-    </span>
-  );
+  return <MemberAvatar person={m} size={size} dim={dim} />;
 }
 
-const firstName = (m: GroupMember | undefined, me: string) => (!m ? "?" : m.id === me ? "You" : m.name.split(" ")[0]);
+/** "You", else the group's non-clashing short name (set on members by the page). */
+const firstName = (m: (GroupMember & { shortName?: string }) | undefined, me: string) =>
+  !m ? "?" : m.id === me ? "You" : m.shortName ?? m.name.split(" ")[0];
 
 function TotalsBadge({ o }: { o: DraftOrder }) {
   const t = draftTotals(o);

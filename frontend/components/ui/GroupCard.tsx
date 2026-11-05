@@ -1,14 +1,15 @@
 import React from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { motion } from "framer-motion";
 import { ChevronRight, Calendar } from "lucide-react";
 import { BalanceAmount } from "@/components/ui/BalanceAmount";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 
 interface Member {
   id: string;
   name: string;
   avatarUrl?: string | null;
+  avatarKey?: string | null;
 }
 
 interface GroupCardProps {
@@ -55,13 +56,9 @@ export function GroupCard({ id, name, members, netAmount, direction, lastActivit
             ) : null}
             <div className="flex -space-x-1.5 mt-1">
               {displayMembers.map((m, i) => (
-                <div key={m.id} className="relative z-[1] flex items-center justify-center w-6 h-6 rounded-full border-2 border-white bg-gray-100 text-[10px] font-bold text-gray-500 shadow-sm" style={{ zIndex: 10 - i }}>
-                  {m.avatarUrl ? (
-                    <Image src={m.avatarUrl} alt={m.name} fill className="rounded-full object-cover" />
-                  ) : (
-                    m.name.charAt(0).toUpperCase()
-                  )}
-                </div>
+                <span key={m.id} className="relative rounded-full ring-2 ring-[var(--paper)] shadow-sm" style={{ zIndex: 10 - i }}>
+                  <MemberAvatar person={m} size={24} />
+                </span>
               ))}
               {overflowCount > 0 && (
                 <div className="relative z-[0] flex items-center justify-center w-6 h-6 rounded-full border-2 border-white bg-[var(--paper-dim)] text-[var(--text-secondary)] font-bold text-[9px] shadow-sm">

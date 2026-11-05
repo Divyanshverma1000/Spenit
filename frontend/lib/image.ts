@@ -44,3 +44,22 @@ export async function fileToCompressedDataUrl(
     return original();
   }
 }
+
+/**
+ * A profile photo: centre-cropped to a square and resized to `size` px as a JPEG
+ * (~15–30 KB), so it loads instantly in every member list.
+ */
+export async function fileToSquareAvatar(file: File, size = 256, quality = 0.85): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("This browser can't resize images");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
+  bitmap.close?.();
+  return canvas.toDataURL("image/jpeg", quality);
+}

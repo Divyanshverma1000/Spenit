@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Image from "next/image";
 import { Plus, Trash2, Users } from "lucide-react";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 
 interface ReceiptItem {
   name: string;
@@ -13,6 +13,7 @@ interface Member {
   id: string;
   name: string;
   avatarUrl: string | null;
+  avatarKey?: string | null;
 }
 
 interface ReceiptItemAssignerProps {
@@ -181,15 +182,11 @@ export default function ReceiptItemAssigner({ items: initialItems, members, onCh
                       key={m.id}
                       type="button"
                       onClick={() => toggleAssignment(idx, m.id)}
-                      className={`h-8 w-8 flex-shrink-0 rounded-full flex items-center justify-center font-bold text-[12px] border-2 transition-colors ${
-                        isSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)]" : "border-transparent bg-[var(--paper-dim)] text-[var(--text-secondary)] opacity-50 grayscale"
-                      }`}
+                      aria-pressed={isSelected}
+                      aria-label={`${isSelected ? "Remove" : "Add"} ${m.name}`}
+                      className={`flex-shrink-0 rounded-full transition-shadow ${isSelected ? "ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--paper)]" : ""}`}
                     >
-                      {m.avatarUrl ? (
-                        <Image src={m.avatarUrl} alt={m.name} width={28} height={28} className="rounded-full object-cover" />
-                      ) : (
-                        m.name.charAt(0).toUpperCase()
-                      )}
+                      <MemberAvatar person={m} size={30} dim={!isSelected} />
                     </button>
                   );
                 })}

@@ -11,6 +11,8 @@ export interface GroupMember {
   name: string;
   username: string | null;
   avatarUrl: string | null;
+  /** illustrated avatar picked in this group (lib/avatar.ts), unique within the group */
+  avatarKey?: string | null;
   role: string;
   nickname: string | null;
   realName: string | null;
@@ -32,6 +34,7 @@ export interface MemberBalance {
   name: string;
   username: string | null;
   avatarUrl: string | null;
+  avatarKey?: string | null;
   isPlaceholder?: boolean;
   netAmount: string;
   signedAmount: string;

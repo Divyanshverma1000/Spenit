@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { X, Trash2, Repeat, Pencil } from "lucide-react";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
+import { AvatarById } from "@/components/ui/MemberAvatar";
 
 interface ExpenseDetailModalProps {
   expense: any;
@@ -102,9 +103,7 @@ export function ExpenseDetailModal({
               {expense.payers?.map((p: any) => (
                 <div key={p.userId} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-xs font-bold">
-                      {p.name.charAt(0).toUpperCase()}
-                    </div>
+                    <AvatarById id={p.userId} name={p.name} size={32} />
                     <span className="font-semibold text-gray-900">{p.name} {p.userId === currentUserId && "(You)"}</span>
                   </div>
                   <span className="font-bold text-gray-900 tabular-nums">₹{parseFloat(p.amountPaid).toFixed(2)}</span>
@@ -129,12 +128,7 @@ export function ExpenseDetailModal({
                       <div className="flex gap-1">
                         {item.sharedBy?.map((uid: string) => {
                           const person = expense.splits?.find((s: any) => s.userId === uid) || expense.payers?.find((p: any) => p.userId === uid);
-                          const initial = person ? person.name.charAt(0).toUpperCase() : "?";
-                          return (
-                            <div key={uid} className="h-5 w-5 rounded-full bg-orange-100 text-[var(--accent)] flex items-center justify-center text-[9px] font-bold ring-1 ring-orange-200" title={person?.name}>
-                              {initial}
-                            </div>
-                          );
+                          return <AvatarById key={uid} id={uid} name={person?.name ?? "?"} size={20} />;
                         })}
                       </div>
                     </div>
@@ -151,9 +145,7 @@ export function ExpenseDetailModal({
               {expense.splits?.map((s: any) => (
                 <div key={s.userId} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-xs font-bold">
-                      {s.name.charAt(0).toUpperCase()}
-                    </div>
+                    <AvatarById id={s.userId} name={s.name} size={32} />
                     <span className="font-semibold text-gray-900">{s.name} {s.userId === currentUserId && "(You)"}</span>
                   </div>
                   <span className="font-bold text-gray-900 tabular-nums">₹{parseFloat(s.shareAmount).toFixed(2)}</span>

@@ -124,7 +124,7 @@ export async function getGroupBalance(groupId: string, viewerId: string) {
       await Promise.all([
         pool.query('SELECT id, name FROM "Group" WHERE id = $1 AND deleted_at IS NULL', [groupId]),
         pool.query(
-          `SELECT gm.user_id, COALESCE(gm.nickname, u.name) AS name, u.username, u.avatar_url, u.is_placeholder
+          `SELECT gm.user_id, COALESCE(gm.nickname, u.name) AS name, u.username, u.avatar_url, u.is_placeholder, gm.avatar_key
            FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
            WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`,
           [groupId]
@@ -178,7 +178,7 @@ export async function getGroupBalance(groupId: string, viewerId: string) {
     base = {
       groupId: group.id,
       groupName: group.name,
-      memberBalances: members.map((m: { user_id: string; name: string; username: string; avatar_url: string | null; is_placeholder: boolean }) => {
+      memberBalances: members.map((m: { user_id: string; name: string; username: string; avatar_url: string | null; avatar_key: string | null; is_placeholder: boolean }) => {
         const netDecimal = allNetBalances.get(m.user_id) || new Decimal(0);
         const netNum = netDecimal.toNumber();
         return {
@@ -186,6 +186,7 @@ export async function getGroupBalance(groupId: string, viewerId: string) {
           name: m.name,
           username: m.username,
           avatarUrl: m.avatar_url,
+          avatarKey: m.avatar_key,
           isPlaceholder: m.is_placeholder,
           netAmount: netDecimal.abs().toFixed(2),
           direction: netNum > 0 ? "owed" : netNum < 0 ? "owes" : "settled",

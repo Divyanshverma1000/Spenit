@@ -107,7 +107,7 @@ function FlowCanvas({ layout, selection, onSelect, meId, placeholderIds, big }: 
           animationDelay: `${Math.min(n.index, 8) * 35}ms`,
         }}
       >
-        <PersonAvatar name={n.name} isMe={isMe} size={big ? 30 : 24} dashed={placeholderIds.has(n.userId)} />
+        <PersonAvatar name={n.name} id={n.userId} isMe={isMe} size={big ? 30 : 24} dashed={placeholderIds.has(n.userId)} />
         <span className="min-w-0 flex-1">
           <span
             className="block truncate font-semibold text-[var(--text-primary)] leading-tight"

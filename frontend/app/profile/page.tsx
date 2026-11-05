@@ -3,7 +3,6 @@
 import { API_URL } from "@/lib/api";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -13,7 +12,9 @@ import { SettingsRow } from "@/components/ui/SettingsRow";
 import { LogOut, User, Bell, Cpu, Key, CheckCircle, AlertCircle, Wallet, Edit2, Copy, Check, Lock, HelpCircle, FileText, Info, Trash2, RefreshCw, ShieldCheck } from "lucide-react";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Palette } from "lucide-react";
+import { Palette, Camera, Loader2 } from "lucide-react";
+import MemberAvatar from "@/components/ui/MemberAvatar";
+import { fileToSquareAvatar } from "@/lib/image";
 
 
 interface UserProfile {
@@ -54,6 +55,46 @@ export default function ProfilePage() {
   const isSubscribed = pushState === "granted";
 
   const upiInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  async function uploadPhoto(file: File | undefined) {
+    if (!file || !accessToken) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      const imageBase64 = await fileToSquareAvatar(file);
+      const res = await fetch(`${API_URL}/users/me/photo`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Couldn't upload the photo");
+      setProfile((p) => (p ? { ...p, avatarUrl: data.avatarUrl } : p));
+    } catch (err) {
+      setPhotoError((err as Error).message);
+    } finally {
+      setPhotoBusy(false);
+      if (photoInputRef.current) photoInputRef.current.value = "";
+    }
+  }
+
+  async function removePhoto() {
+    if (!accessToken) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      const res = await fetch(`${API_URL}/users/me/photo`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) throw new Error("Couldn't remove the photo");
+      setProfile((p) => (p ? { ...p, avatarUrl: null } : p));
+    } catch (err) {
+      setPhotoError((err as Error).message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!accessToken) return;
@@ -177,21 +218,40 @@ export default function ProfilePage() {
             <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-6">
               <SettingsList title="Account">
                 <div className="px-5 py-4 bg-white flex items-center gap-4 border-b border-[var(--paper-dim)]">
-                  <div className="relative flex-shrink-0">
-                    {profile.avatarUrl ? (
-                      <Image src={profile.avatarUrl} alt={profile.name} width={56} height={56}
-                        className="rounded-full border border-[var(--hairline)]" />
-                    ) : (
-                      <div className="h-14 w-14 rounded-full bg-[var(--paper-dim)] flex items-center justify-center text-[18px] font-bold text-[var(--accent)]">
-                        {profile.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => photoInputRef.current?.click()}
+                    disabled={photoBusy}
+                    aria-label="Change profile photo"
+                    className="relative flex-shrink-0 active:scale-95 transition-transform"
+                  >
+                    <MemberAvatar person={{ id: profile.id, name: profile.name, avatarUrl: profile.avatarUrl }} size={56} />
+                    <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[var(--accent)] text-white flex items-center justify-center border-2 border-[var(--paper)]">
+                      {photoBusy ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} strokeWidth={2.5} />}
+                    </span>
+                  </button>
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => uploadPhoto(e.target.files?.[0])}
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="font-bold text-[var(--text-primary)] text-[18px] tracking-tight truncate">{profile.name}</p>
                     <p className="text-[var(--text-secondary)] text-[14px]">@{profile.username}</p>
+                    <div className="flex gap-3 mt-1 text-[12px] font-bold">
+                      <button onClick={() => photoInputRef.current?.click()} disabled={photoBusy} className="text-[var(--accent)]">
+                        {profile.avatarUrl ? "Change photo" : "Add a photo"}
+                      </button>
+                      {profile.avatarUrl && (
+                        <button onClick={removePhoto} disabled={photoBusy} className="text-[var(--text-muted)]">Remove</button>
+                      )}
+                    </div>
                   </div>
                 </div>
+                <p className="px-5 py-2.5 text-[12px] text-[var(--text-secondary)] bg-[var(--paper-dim)]">
+                  {photoError ? <span className="text-[var(--negative)] font-medium">{photoError}</span> : "Your photo shows in groups. In each group you can also pick a fun avatar — tap your picture in the group's member list."}
+                </p>
                 <SettingsRow icon={<User size={18} />} label="Email" value={profile.email} />
                 <SettingsRow icon={<CheckCircle size={18} className="text-[var(--text-muted)]" />} label="Member since" value={new Date(profile.createdAt).toLocaleDateString("en-IN", { year: "numeric", month: "short" })} />
               </SettingsList>

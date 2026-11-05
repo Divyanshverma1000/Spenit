@@ -1,0 +1,63 @@
+/**
+ * Migrations the Worker applies by itself, once per isolate, before serving requests.
+ *
+ * The production database is only reachable through Hyperdrive, so a deploy can't run
+ * `npm run migrate` without the database password. Instead, each migration added after the
+ * Cloudflare move is bundled here (wrangler imports .sql files as text, see wrangler.jsonc)
+ * and applied through the same `_migrations` table the Node runner uses, so running either
+ * one is safe. Only additive, idempotent SQL belongs here.
+ */
+import type { NextFunction, Request, Response } from "express";
+import pool from "./pool";
+import m010 from "../../migrations/010_group_avatars.sql";
+
+const BUNDLED: { filename: string; sql: string }[] = [{ filename: "010_group_avatars.sql", sql: m010 }];
+
+/** Any stable 64-bit number: serialises migration runs across concurrent isolates. */
+const LOCK_ID = 4_210_017;
+
+async function applyPending(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      "create table if not exists _migrations (id serial primary key, filename text unique not null, applied_at timestamptz not null default now())"
+    );
+    for (const m of BUNDLED) {
+      await client.query("begin");
+      try {
+        await client.query("select pg_advisory_xact_lock($1)", [LOCK_ID]);
+        const done = await client.query("select 1 from _migrations where filename = $1", [m.filename]);
+        if (done.rows.length === 0) {
+          await client.query(m.sql);
+          await client.query("insert into _migrations (filename) values ($1)", [m.filename]);
+          console.log(`[migrate] applied ${m.filename}`);
+        }
+        await client.query("commit");
+      } catch (err) {
+        await client.query("rollback").catch(() => {});
+        throw err;
+      }
+    }
+  } finally {
+    client.release();
+  }
+}
+
+let ready: Promise<void> | null = null;
+
+/** Express middleware (after requestDbScope): waits for pending migrations on the first request. */
+export function ensureMigrations(_req: Request, res: Response, next: NextFunction) {
+  if (!ready) {
+    ready = applyPending().catch((err) => {
+      ready = null; // try again on the next request
+      throw err;
+    });
+  }
+  ready.then(
+    () => next(),
+    (err) => {
+      console.error("[migrate] FAILED:", (err as Error).message);
+      res.status(503).json({ error: "The server is updating its database. Try again in a moment." });
+    }
+  );
+}

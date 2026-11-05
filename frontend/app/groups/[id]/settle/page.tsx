@@ -23,6 +23,7 @@ import PushPromptBanner from "@/components/PushPromptBanner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { BalanceAmount } from "@/components/ui/BalanceAmount";
 import { AnimatedAmount, PersonAvatar, SettleProgress } from "@/components/settle/parts";
+import { AvatarPeople } from "@/components/ui/MemberAvatar";
 import { SettleFlow, PaymentLike } from "@/components/settle/FlowGraph";
 import { openWhatsApp, remindMessage, rupees } from "@/lib/share";
 
@@ -184,6 +185,7 @@ export default function SettleUpPage() {
 
   return (
     <>
+      <AvatarPeople people={overview?.group.members ?? []}>
       <main className="min-h-screen page-content safe-area-pb">
         {typeof window !== "undefined" &&
           !localStorage.getItem("push-prompt-dismissed") &&
@@ -329,7 +331,7 @@ export default function SettleUpPage() {
                       {myOutgoing.map((t) => (
                         <div key={keyOf(t)} className="card p-4">
                           <div className="flex items-center gap-3 mb-4">
-                            <PersonAvatar name={t.toName} />
+                            <PersonAvatar name={t.toName} id={t.to} />
                             <div className="flex-1 min-w-0">
                               <p className="font-semibold text-[var(--text-primary)] truncate">{t.toName}</p>
                               <p className="text-xs text-[var(--text-secondary)] font-medium">Your share to settle</p>
@@ -368,7 +370,7 @@ export default function SettleUpPage() {
                       {myIncoming.map((t) => (
                         <div key={keyOf(t)} className="card p-4">
                           <div className="flex items-center gap-3">
-                            <PersonAvatar name={t.fromName} />
+                            <PersonAvatar name={t.fromName} id={t.from} />
                             <div className="flex-1 min-w-0">
                               <p className="font-semibold text-[var(--text-primary)] truncate">{t.fromName}</p>
                               <p className="text-xs text-[var(--text-secondary)] font-medium">
@@ -485,6 +487,7 @@ export default function SettleUpPage() {
           </div>
         )}
       </main>
+      </AvatarPeople>
       <BottomNav />
     </>
   );

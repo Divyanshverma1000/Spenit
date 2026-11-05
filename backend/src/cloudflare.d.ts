@@ -9,3 +9,8 @@ declare module "cloudflare:node" {
     fetch(request: Request, env?: unknown, ctx?: unknown): Promise<Response> | Response;
   };
 }
+// wrangler bundles .sql files as text (rules in wrangler.jsonc)
+declare module "*.sql" {
+  const sql: string;
+  export default sql;
+}

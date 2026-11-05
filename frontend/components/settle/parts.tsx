@@ -2,20 +2,28 @@
 
 import { useEffect, useRef, useState } from "react";
 import { rupees } from "@/lib/share";
+import MemberAvatar, { usePerson } from "@/components/ui/MemberAvatar";
 
-/** Small round initial. The current user gets the accent colour. */
+/**
+ * A person in the settle views. With an `id` inside <AvatarPeople>, it is the shared
+ * MemberAvatar (group avatar / photo / coloured initials); otherwise a plain initial.
+ */
 export function PersonAvatar({
   name,
+  id,
   isMe = false,
   size = 36,
   dashed = false,
 }: {
   name: string;
+  id?: string;
   isMe?: boolean;
   size?: number;
   /** dashed ring = hasn't joined Spenit yet */
   dashed?: boolean;
 }) {
+  const person = usePerson(id);
+  if (person) return <MemberAvatar person={{ ...person, isPlaceholder: dashed || person.isPlaceholder }} size={size} />;
   return (
     <span
       aria-hidden

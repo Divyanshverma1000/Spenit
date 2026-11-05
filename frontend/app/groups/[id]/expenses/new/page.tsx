@@ -13,6 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Plus, X, Receipt, Search, Repeat } from "lucide-react";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 
 
 interface Member {
@@ -409,11 +410,7 @@ export default function UniversalExpensePage() {
                                 : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
                             }`}
                           >
-                            <span className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                              isSelected ? "bg-white text-[var(--accent)]" : "bg-gray-100 text-gray-500"
-                            }`}>
-                              {m.name.charAt(0).toUpperCase()}
-                            </span>
+                            <MemberAvatar person={m} size={24} className={isSelected ? "ring-2 ring-white" : ""} />
                             {m.id === user?.id ? "You" : m.name}
                           </button>
                         );
@@ -424,9 +421,7 @@ export default function UniversalExpensePage() {
                       {members.map((m) => (
                         <div key={`mpayer-${m.id}`} className="flex items-center gap-3">
                           <div className="flex items-center gap-2 flex-1">
-                            <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold bg-gray-100 text-gray-500">
-                              {m.name.charAt(0).toUpperCase()}
-                            </span>
+                            <MemberAvatar person={m} size={24} />
                             <span className="text-sm font-semibold text-gray-900">{m.id === user?.id ? "You" : m.name}</span>
                           </div>
                           <div className="w-28 relative">

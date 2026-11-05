@@ -6,6 +6,7 @@
  *  - the database is reached through Hyperdrive, one connection per request (db/workerPool.ts)
  *  - responses are compressed by Cloudflare, so the gzip middleware is off
  *  - periodic housekeeping runs from a Cron Trigger instead of setInterval
+ *  - new SQL migrations are applied by the Worker itself on its first request (db/workerMigrations.ts)
  */
 import type { NextFunction, Request, Response } from "express";
 import { httpServerHandler } from "cloudflare:node";
@@ -14,6 +15,7 @@ import { createWorkerPool, hasDatabaseConfig, requestDbScope } from "./db/worker
 import { buildApp } from "./app";
 import { checkEnv, isProd } from "./config";
 import { runHousekeeping } from "./housekeeping";
+import { ensureMigrations } from "./db/workerMigrations";
 
 installPool(createWorkerPool());
 
@@ -35,7 +37,7 @@ function configGuard(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-const app = buildApp({ compress: false, beforeAll: [configGuard, requestDbScope] });
+const app = buildApp({ compress: false, beforeAll: [configGuard, requestDbScope, (req, res, next) => (req.path === "/ping" ? next() : ensureMigrations(req, res, next))] });
 app.listen(8080); // the port is only a routing key for httpServerHandler
 
 const handler = httpServerHandler({ port: 8080 });

@@ -9,6 +9,9 @@
   "observability": { "enabled": true },
 
   // Packages that don't apply on Workers are swapped for tiny stubs at bundle time.
+  // Migrations are bundled as text and applied by the Worker (src/db/workerMigrations.ts).
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+
   "alias": {
     "compression": "./src/worker-stubs/compression.ts",
     "dotenv": "./src/worker-stubs/dotenv.ts",

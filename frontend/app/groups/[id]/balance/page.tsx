@@ -4,7 +4,6 @@ import { API_URL } from "@/lib/api";
 import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 import { useGroupOverview } from "@/lib/queries";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -14,6 +13,7 @@ import { BalanceAmount } from "@/components/ui/BalanceAmount";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ArrowRight } from "lucide-react";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 
 
 export default function GroupBalancePage() {
@@ -73,13 +73,7 @@ export default function GroupBalancePage() {
                 <div className="flex flex-col">
                   {memberBalances.filter(m => m.userId !== user?.id).map((m, i, arr) => (
                     <div key={m.userId} className="p-3 flex items-center gap-3" style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none" }}>
-                      {m.avatarUrl ? (
-                        <Image src={m.avatarUrl} alt={m.name} width={36} height={36} className="rounded-full flex-shrink-0" />
-                      ) : (
-                        <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0" style={{ backgroundColor: "var(--accent)", color: "var(--paper)" }}>
-                          {m.name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
+                      <MemberAvatar person={{ id: m.userId, name: m.name, avatarUrl: m.avatarUrl, avatarKey: m.avatarKey, isPlaceholder: m.isPlaceholder }} size={36} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{m.name}</p>
                         <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{m.isPlaceholder ? "Not joined yet" : `@${m.username}`}</p>

@@ -5,6 +5,7 @@ import type { ParsedExpenseDraft, ExpenseCategory } from "@/hooks/types/ai";
 import CategoryBadge from "./CategoryBadge";
 import ReceiptItemAssigner from "./ReceiptItemAssigner";
 import { Sparkles, AlertTriangle, Equal, Hash, Target, Check } from "lucide-react";
+import MemberAvatar from "@/components/ui/MemberAvatar";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -13,6 +14,8 @@ interface Member {
   name: string;
   username: string;
   avatarUrl: string | null;
+  avatarKey?: string | null;
+  isPlaceholder?: boolean;
 }
 
 interface ExpenseConfirmCardProps {
@@ -264,9 +267,11 @@ export default function ExpenseConfirmCard({
                 <button
                   type="button"
                   onClick={() => togglePayer(m.id)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors flex-shrink-0 ${payer ? "bg-[var(--accent)] text-[var(--paper)]" : "bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]"}`}
+                  aria-pressed={!!payer}
+                  aria-label={`${payer ? "Remove" : "Add"} ${m.name} as payer`}
+                  className={`rounded-full flex-shrink-0 transition-shadow ${payer ? "ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--paper)]" : ""}`}
                 >
-                  {m.name.charAt(0).toUpperCase()}
+                  <MemberAvatar person={m} size={32} dim={!payer} />
                 </button>
                 <span className="flex-1 text-sm font-medium text-[var(--text-primary)]">{m.name}</span>
                 {payer && payers.length > 1 && (
@@ -305,9 +310,11 @@ export default function ExpenseConfirmCard({
                 <button
                   type="button"
                   onClick={() => toggleParticipant(m.id)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors flex-shrink-0 ${included ? "bg-[var(--positive)] text-[var(--paper)]" : "bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]"}`}
+                  aria-pressed={included}
+                  aria-label={`${included ? "Remove" : "Add"} ${m.name}`}
+                  className={`rounded-full flex-shrink-0 transition-shadow ${included ? "ring-2 ring-[var(--positive)] ring-offset-2 ring-offset-[var(--paper)]" : ""}`}
                 >
-                  {m.name.charAt(0).toUpperCase()}
+                  <MemberAvatar person={m} size={32} dim={!included} />
                 </button>
                 <span className={`flex-1 text-sm font-medium ${included ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"}`}>{m.name}</span>
                 {included && splitType === "exact" && (
