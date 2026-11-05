@@ -24,6 +24,10 @@ import { MAX_IMAGE_CHARS, MAX_RECEIPT_IMAGES, IMAGE_DATA_URL } from "../lib/limi
 import { open as openSecret } from "../lib/secretBox";
 import { strictLimit } from "../lib/strictLimit";
 import { bump } from "../lib/telemetry";
+import { buildPersonalContext } from "../lib/personalAiContext";
+import { maskReceipt, repairSharedBy } from "../lib/receiptPrivacy";
+import { parseAmount } from "../lib/limits";
+import { CATEGORIES as PERSONAL_CATEGORIES } from "./personal_expenses";
 
 /** AI calls cost money and share the Groq quota: an exact limit per account, across every server. */
 const aiLimit = strictLimit("ai", [
@@ -463,77 +467,114 @@ router.post(
 
 // ─── POST /ai/ask-personal ───────────────────────────────────────────────────
 /**
- * Stage 6B: Conversational Ledger Intelligence for Personal Expenses.
- * Fetch user's personal expenses, then ask AI to answer.
+ * The personal spending assistant. Knows what the Spending tab knows: your own entries,
+ * your share of every group bill, and your part of each item inside those bills
+ * (lib/personalAiContext). Can also log an expense you tell it about ("spent 200 on lunch").
  *
- * Body: { question: string }
+ * Body: { question, history?: [{ role, content }] }
+ * 200 → { answer, followUps, logged: { id, description, amount, category } | null }
  */
+const PERSONAL_SYSTEM = `You are Spenit's personal spending assistant. You talk with one person about their own money like a friendly, sharp accountant.
+
+Use ONLY the LEDGER below. It is complete and up to date: their own logged expenses, their share of every group bill they are in, and their part of every item inside those bills. "Spending" always means own entries + group shares. Prefer the pre-computed totals over adding things up yourself. Never invent numbers.
+
+How to answer:
+- Short and direct: the answer first in 1-3 sentences, then a few bullets only if they help. **Bold** key amounts. Rupees like ₹1,141.
+- Items ("how much on milk", "vegetables", "snacks"): use ITEMS YOU PAID FOR, the person's part only. Group kinds sensibly yourself (vegetables = onion, tomato, potato, lady's finger…; dairy = milk, curd, paneer, butter…). Say which bills or groups it came from.
+- Categories: map everyday words using CATEGORIES (fashion → Shopping, utility bills → Utilities, rent → Stay…). Use the category names the app shows.
+- "This month" means the current month in TODAY. If a time range isn't given, answer for this month and mention the all-time figure if it helps.
+- Budget questions: compare this month's spending with MONTHLY BUDGET.
+- Private items have no name on purpose; never guess what they were.
+- If the ledger can't answer, say what's missing.
+- If the person clearly says they spent money just now ("spent 200 on lunch", "add auto 60"), log it: set "log". Otherwise "log" is null. Never log when they only ask a question.
+
+Return JSON only:
+{"answer": string, "log": {"description": string, "amount": number, "category": one of Food|Groceries|Travel|Shopping|Stay|Fuel|Medical|Utilities|Entertainment|Misc} | null, "followUps": [up to 3 short questions they might ask next]}`;
+
 router.post(
   "/ask-personal",
   requireAuth,
   aiLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { question } = req.body;
-
-    if (!question || question.trim().length === 0) {
+    const { question, history } = req.body ?? {};
+    if (typeof question !== "string" || !question.trim()) {
       res.status(400).json({ error: "question is required" });
       return;
     }
-
-    const userRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
-    const apiKey = (await groqKeyFor(userId)).key;
-    const userName = userRes.rows[0]?.name;
-    
-    if (!apiKey) {
+    const { key } = await groqKeyFor(userId);
+    if (!key) {
       res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." });
       return;
     }
 
-    // Fetch personal expenses
-    const expRes = await pool.query(
-      `SELECT id, description, amount, currency, category, created_at
-       FROM "PersonalExpense"
-       WHERE user_id = $1 AND deleted_at IS NULL
-       ORDER BY created_at DESC LIMIT 100`,
-      [userId]
-    );
+    const [me, personal, bills] = await Promise.all([
+      pool.query('SELECT name, monthly_budget::float AS budget FROM "User" WHERE id = $1', [userId]),
+      pool.query(
+        `SELECT description, amount::float AS amount, COALESCE(category, 'Misc') AS category, spent_at AS at
+         FROM "PersonalExpense" WHERE user_id = $1 AND deleted_at IS NULL AND spent_at > now() - interval '13 months'
+         ORDER BY spent_at DESC LIMIT 1500`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT e.description, g.name AS group_name, e.category, e.created_at AS at, e.amount::float AS total,
+                es.share_amount::float AS my_share, e.receipt_data, e.created_by,
+                ARRAY(SELECT x.user_id::text FROM "ExpenseSplit" x WHERE x.expense_id = e.id) AS split_ids
+         FROM "ExpenseSplit" es
+         JOIN "Expense" e ON e.id = es.expense_id AND e.deleted_at IS NULL
+         JOIN "Group" g ON g.id = e.group_id
+         WHERE es.user_id = $1 AND es.share_amount > 0 AND e.created_at > now() - interval '13 months'
+         ORDER BY e.created_at DESC LIMIT 400`,
+        [userId]
+      ),
+    ]);
 
-    // Fetch group expenses the user is involved in
-    const groupExpRes = await pool.query(
-      `SELECT e.id, e.description, e.amount, e.currency, e.category, e.created_at, g.name as group_name
-       FROM "Expense" e
-       JOIN "Group" g ON g.id = e.group_id
-       JOIN "GroupMember" gm ON gm.group_id = e.group_id
-       WHERE gm.user_id = $1 AND e.deleted_at IS NULL
-       ORDER BY e.created_at DESC LIMIT 50`,
-      [userId]
-    );
+    const ledger = buildPersonalContext({
+      me: { id: userId, name: me.rows[0]?.name ?? "you" },
+      budget: me.rows[0]?.budget ?? null,
+      personal: personal.rows,
+      groupBills: bills.rows.map((b: any) => ({
+        description: b.description,
+        groupName: b.group_name,
+        category: b.category,
+        at: b.at,
+        total: b.total,
+        myShare: b.my_share,
+        // the same masking every screen uses: other people's private items stay unnamed
+        receiptData: maskReceipt(repairSharedBy(b.receipt_data, b.split_ids), userId, b.created_by),
+      })),
+    });
 
-    const context = {
-      members: [{ id: userId, name: userName, username: "me" }],
-      personalExpenses: expRes.rows,
-      groupExpenses: groupExpRes.rows,
-    };
+    const turns = (Array.isArray(history) ? history : [])
+      .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+      .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
-    try {
-      const ai = new GroqProvider(apiKey);
-      const result = await ai.answerLedgerQuery(question, context);
-      await bump({ ai_calls: 1, chat_questions: 1 });
-      
-      if (result.action === "log" && result.logDetails) {
-        await pool.query(
-          `INSERT INTO "PersonalExpense" (user_id, description, amount, currency, category)
-           VALUES ($1, $2, $3, 'INR', $4)`,
-          [userId, result.logDetails.description, result.logDetails.amount, result.logDetails.category || 'Misc']
-        );
-      }
-
-      res.json(result);
-    } catch (err: any) {
-      console.error("[ai] ask-personal failed:", err);
-      res.status(500).json({ error: err.message || "AI request failed" });
+    const result = await new GroqProvider(key).groupChat(ledger, question.trim(), turns, { system: PERSONAL_SYSTEM });
+    await bump(result.ok
+      ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
+      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
+    if (!result.ok) {
+      const status = result.reason === "rate_limit" ? 429 : result.reason === "config_error" ? 502 : 503;
+      res.status(status).json({ error: result.reason, message: result.message, retryAfterMs: result.retryAfterMs });
+      return;
     }
+
+    // "spent 200 on lunch": log it, with the same checks as the Spending tab.
+    let logged: { id: string; description: string; amount: number; category: string } | null = null;
+    const log = result.extra.log as { description?: unknown; amount?: unknown; category?: unknown } | null | undefined;
+    if (log && typeof log === "object") {
+      const amount = parseAmount(log.amount);
+      const description = typeof log.description === "string" ? log.description.trim().slice(0, 80) : "";
+      const category = (PERSONAL_CATEGORIES as readonly string[]).includes(String(log.category)) ? String(log.category) : "Misc";
+      if (amount !== null && description) {
+        const r = await pool.query(
+          `INSERT INTO "PersonalExpense" (user_id, description, amount, category) VALUES ($1, $2, $3, $4) RETURNING id`,
+          [userId, description, amount, category]
+        );
+        logged = { id: r.rows[0].id, description, amount, category };
+      }
+    }
+    res.json({ answer: result.answer, followUps: result.followUps, logged });
   }
 );
 

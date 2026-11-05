@@ -4,12 +4,13 @@ import { Suspense, useCallback, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
-import Link from "next/link";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { SpendingView } from "@/components/spending/SpendingView";
 import EntrySheet, { draftFrom, type EntryDraft } from "@/components/spending/EntrySheet";
 import BudgetSheet from "@/components/spending/BudgetSheet";
+import GroupChat from "@/components/GroupChat";
+import { useQueryClient } from "@tanstack/react-query";
 import { dayStart, type QuickEntry } from "@/lib/quickAdd";
 import { inr, useSpending, useSpendingActions, type SpendEntry } from "@/lib/spending";
 
@@ -42,6 +43,8 @@ function SpendingPage() {
     params?.get("add") ? { mode: "add" } : null
   );
   const [budgetOpen, setBudgetOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  const queryClient = useQueryClient();
   const [quickBusy, setQuickBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,9 +79,9 @@ function SpendingPage() {
             <p className="text-[13px] font-semibold text-[var(--text-secondary)]">Personal</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-tight">Your spending</h1>
           </div>
-          <Link href="/personal/chat" className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-bold">
+          <button onClick={() => setAskOpen(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-bold">
             <Sparkles size={15} className="text-[var(--accent)]" /> Ask
-          </Link>
+          </button>
         </header>
 
         <div className="px-5 pb-10">
@@ -90,6 +93,7 @@ function SpendingPage() {
             onOpenAdd={(prefill) => setSheet({ mode: "add", prefill: prefill as Partial<EntryDraft> })}
             onEdit={(entry) => setSheet({ mode: "edit", entry })}
             onBudget={() => setBudgetOpen(true)}
+            onAsk={() => setAskOpen(true)}
             quickBusy={quickBusy}
           />
         </div>
@@ -119,6 +123,16 @@ function SpendingPage() {
                 }
               : undefined
           }
+        />
+      )}
+
+      {askOpen && (
+        <GroupChat
+          personal
+          groupId="personal"
+          groupName="your spending"
+          onClose={() => setAskOpen(false)}
+          onLogged={() => queryClient.invalidateQueries({ queryKey: ["spending"] })}
         />
       )}
 

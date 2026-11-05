@@ -14,12 +14,20 @@ export interface ChatMessage {
   error?: boolean;
 }
 
-const SUGGESTIONS = [
+const GROUP_SUGGESTIONS = [
   "What's still pending?",
   "Who owes me and how much?",
   "How much did we spend on milk?",
   "What did I spend on vegetables?",
   "Biggest expense this month?",
+];
+
+const PERSONAL_SUGGESTIONS = [
+  "How much did I spend this month?",
+  "How much on milk?",
+  "What did I spend on groceries?",
+  "Am I on track with my budget?",
+  "Biggest expenses this month?",
 ];
 
 const noSubscribe = () => () => {};
@@ -66,13 +74,17 @@ function Rich({ text }: { text: string }) {
  * so follow-ups work. The thread lives in this tab's session.
  */
 export default function GroupChat({
-  groupId, groupName, initialQuestion, onClose, onShowExpenses,
+  groupId, groupName, initialQuestion, onClose, onShowExpenses, personal = false, onLogged,
 }: {
   groupId: string;
   groupName: string;
+  /** the personal spending assistant (/ai/ask-personal) instead of a group's */
+  personal?: boolean;
+  /** the personal assistant logged an expense ("spent 200 on lunch") */
+  onLogged?: () => void;
   initialQuestion?: string;
   onClose: () => void;
-  onShowExpenses: (ids: string[]) => void;
+  onShowExpenses?: (ids: string[]) => void;
 }) {
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
@@ -97,10 +109,16 @@ export default function GroupChat({
     const history = base.filter((m) => !m.error).map((m) => ({ role: m.role, content: m.content }));
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await authFetch("/ai/query", { method: "POST", body: JSON.stringify({ groupId, question: q, history }) });
+        const res = personal
+          ? await authFetch("/ai/ask-personal", { method: "POST", body: JSON.stringify({ question: q, history }) })
+          : await authFetch("/ai/query", { method: "POST", body: JSON.stringify({ groupId, question: q, history }) });
         const data = await res.json().catch(() => ({}));
         if (res.ok) {
-          setMsgs([...thread, { role: "assistant", content: data.answer, expenseIds: data.expenseIds ?? [], followUps: data.followUps ?? [] }]);
+          const note = data.logged ? `
+
+✓ Logged **${data.logged.description}** · ₹${Number(data.logged.amount).toLocaleString("en-IN")}` : "";
+          if (data.logged) onLogged?.();
+          setMsgs([...thread, { role: "assistant", content: data.answer + note, expenseIds: data.expenseIds ?? [], followUps: data.followUps ?? [] }]);
           return;
         }
         if (data.error === "rate_limit" && attempt === 0) {
@@ -161,7 +179,9 @@ export default function GroupChat({
           <span className="w-9 h-9 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center"><Sparkles size={18} /></span>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-[16px] leading-tight">Ask Spenit</p>
-            <p className="text-[12px] text-[var(--text-secondary)] truncate">Knows every bill, item and payment in {groupName}</p>
+            <p className="text-[12px] text-[var(--text-secondary)] truncate">
+              {personal ? "Knows your spending, your group shares and every item" : <>Knows every bill, item and payment in {groupName}</>}
+            </p>
           </div>
           {msgs.length > 0 && (
             <button onClick={() => setMsgs([])} className="p-2 text-[var(--text-muted)]" aria-label="Clear chat"><Trash2 size={18} /></button>
@@ -175,9 +195,13 @@ export default function GroupChat({
             <div className="pt-6 text-center">
               <span className="mx-auto w-14 h-14 rounded-[18px] bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center"><Sparkles size={26} /></span>
               <p className="mt-3 font-bold text-[17px]">What do you want to know?</p>
-              <p className="mt-1 text-[13px] text-[var(--text-secondary)] px-6">Who owes what, what&apos;s pending, or how much went on milk, snacks or veggies.</p>
+              <p className="mt-1 text-[13px] text-[var(--text-secondary)] px-6">
+                {personal
+                  ? <>Where your money went, how much on milk or snacks, or how you&apos;re doing on your budget. You can also say &quot;spent 200 on lunch&quot;.</>
+                  : <>Who owes what, what&apos;s pending, or how much went on milk, snacks or veggies.</>}
+              </p>
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((s) => (
+                {(personal ? PERSONAL_SUGGESTIONS : GROUP_SUGGESTIONS).map((s) => (
                   <button key={s} onClick={() => ask(s)} className="px-3 py-2 rounded-full bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-semibold text-[var(--text-primary)] active:scale-95 transition-transform">
                     {s}
                   </button>
@@ -204,8 +228,8 @@ export default function GroupChat({
                         <RotateCcw size={12} /> Try again
                       </button>
                     )}
-                    {!!m.expenseIds?.length && (
-                      <button onClick={() => onShowExpenses(m.expenseIds!)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[12px] font-bold text-[var(--accent)] bg-[var(--accent-subtle)]">
+                    {!!m.expenseIds?.length && onShowExpenses && (
+                      <button onClick={() => onShowExpenses?.(m.expenseIds!)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[12px] font-bold text-[var(--accent)] bg-[var(--accent-subtle)]">
                         <ListFilter size={12} /> Show {m.expenseIds.length} {m.expenseIds.length === 1 ? "bill" : "bills"}
                       </button>
                     )}

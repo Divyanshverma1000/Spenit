@@ -28,8 +28,9 @@ const whenLabel = (daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 
  * of group bills appears next to what you logged yourself.
  */
 export function SpendingView({
-  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, quickBusy,
+  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, onAsk, quickBusy,
 }: {
+  onAsk: () => void;
   o: SpendingOverview | undefined;
   month: string;
   onMonth: (m: string) => void;
@@ -323,14 +324,14 @@ export function SpendingView({
             </div>
           </section>
 
-          <Link href="/personal/chat" className="flex items-center gap-3 rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] p-4">
+          <button onClick={onAsk} className="w-full text-left flex items-center gap-3 rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] p-4">
             <span className="w-10 h-10 rounded-[13px] bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center"><Sparkles size={18} /></span>
             <span className="flex-1">
               <span className="block text-[14px] font-bold">Ask about your spending</span>
-              <span className="block text-[12px] text-[var(--text-secondary)]">&quot;How much went on food this month?&quot;</span>
+              <span className="block text-[12px] text-[var(--text-secondary)]">&quot;How much on milk this month?&quot;</span>
             </span>
             <ChevronRight size={18} className="text-[var(--text-muted)]" />
-          </Link>
+          </button>
         </>
       ) : (
         <div className="flex justify-center py-12"><Loader2 className="animate-spin text-[var(--text-muted)]" /></div>

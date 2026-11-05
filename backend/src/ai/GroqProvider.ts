@@ -610,12 +610,17 @@ No markdown fences, just the raw JSON.`;
   async groupChat(
     ledger: string,
     question: string,
-    history: { role: "user" | "assistant"; content: string }[]
+    history: { role: "user" | "assistant"; content: string }[],
+    /** another assistant (e.g. personal spending) with its own instructions; the ledger is appended */
+    opts: { system?: string } = {}
   ): Promise<
-    | { ok: true; answer: string; refs: string[]; followUps: string[]; usage: { in: number; out: number } }
+    | { ok: true; answer: string; refs: string[]; followUps: string[]; usage: { in: number; out: number }; extra: Record<string, unknown> }
     | { ok: false; reason: "rate_limit" | "timeout" | "config_error" | "unavailable"; message: string; retryAfterMs: number }
   > {
-    const system = `You are Spenit's assistant inside one expense-sharing group. You talk with a member of the group like a friendly, sharp accountant who knows every bill.
+    const system = opts.system ? `${opts.system}
+
+LEDGER
+${ledger}` : `You are Spenit's assistant inside one expense-sharing group. You talk with a member of the group like a friendly, sharp accountant who knows every bill.
 
 Use ONLY the LEDGER below. It is complete and up to date: balances, payments still due, payments waiting for confirmation, every expense with who paid and each person's share, item lists of imported orders, and pre-computed totals. Never invent numbers. Prefer the pre-computed totals over adding things up yourself.
 
@@ -673,6 +678,7 @@ ${ledger}`;
       refs: strs(parsed?.refs, 20),
       followUps: strs(parsed?.followUps, 3),
       usage: { in: Number(usage.prompt_tokens) || 0, out: Number(usage.completion_tokens) || 0 },
+      extra: (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>,
     };
   }
 
