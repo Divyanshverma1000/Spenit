@@ -48,6 +48,7 @@ import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
 import AvatarPicker from "@/components/AvatarPicker";
 import GroupChat from "@/components/GroupChat";
 import ClaimFixSheet from "@/components/ClaimFixSheet";
+import LeaveGroupSheet from "@/components/LeaveGroupSheet";
 import MemberAvatar, { AvatarPeople } from "@/components/ui/MemberAvatar";
 import { lookAlikes, initials } from "@/lib/avatar";
 import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
@@ -260,18 +261,20 @@ export default function GroupDetailPage() {
     finally { setMemberBusy(false); }
   }
 
-  async function leaveGroup() {
-    if (!confirm("Leave this group? Your past expenses stay in the group's history.")) return;
-    setMemberBusy(true); setMemberError(null);
+  const [showLeave, setShowLeave] = useState(false);
+  /** Leave the group; returns an error to show in the sheet, or null once left. */
+  async function leaveGroup(): Promise<string | null> {
     try {
       const res = await authFetch(`/groups/${id}/leave`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setMemberError(data.error || "Couldn't leave the group"); return; }
+      if (!res.ok) { await loadData(); return data.error || "Couldn't leave the group"; }
       queryClient.invalidateQueries({ queryKey: ["groups"] });
       queryClient.invalidateQueries({ queryKey: ["balance"] });
       router.replace("/groups");
-    } catch { setMemberError("Network error. Please try again."); }
-    finally { setMemberBusy(false); }
+      return null;
+    } catch {
+      return "You're offline. Connect to the internet and try again.";
+    }
   }
 
   async function removePerson(memberId: string, name: string) {
@@ -694,8 +697,7 @@ export default function GroupDetailPage() {
 
           {user && (
             <button
-              onClick={leaveGroup}
-              disabled={memberBusy}
+              onClick={() => setShowLeave(true)}
               className="mt-4 mx-auto flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-muted)] hover:text-[var(--negative)] px-3 py-2"
             >
               <LogOut size={14} /> Leave group
@@ -703,6 +705,17 @@ export default function GroupDetailPage() {
           )}
         </div>
       </main>
+
+      {showLeave && user && (
+        <LeaveGroupSheet
+          groupId={id}
+          groupName={group.name}
+          signedBalance={parseFloat(myBalance?.signedAmount ?? "0") || 0}
+          isOnlyAdmin={isAdmin && group.members.filter((x) => x.role === "admin").length === 1}
+          onClose={() => setShowLeave(false)}
+          onLeave={leaveGroup}
+        />
+      )}
 
       {claimFix && (
         <ClaimFixSheet
