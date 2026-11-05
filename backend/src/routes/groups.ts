@@ -115,7 +115,15 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
        g.created_at,
        gm.role,
        gm.joined_at,
-       (select count(*) from "GroupMember" gm2 where gm2.group_id = g.id)::int as member_count
+       (select count(*) from "GroupMember" gm2 where gm2.group_id = g.id)::int as member_count,
+       (select coalesce(json_agg(p), '[]'::json) from (
+          select u.id, coalesce(gm3.nickname, u.name) as name, u.avatar_url as "avatarUrl",
+                 gm3.avatar_key as "avatarKey", u.is_placeholder as "isPlaceholder"
+          from "GroupMember" gm3 join "User" u on u.id = gm3.user_id
+          where gm3.group_id = g.id
+          order by gm3.joined_at asc
+          limit 4
+        ) p) as members_preview
      from "Group" g
      join "GroupMember" gm on gm.group_id = g.id
      where gm.user_id = $1
@@ -135,6 +143,8 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
       role: r.role,
       joinedAt: r.joined_at,
       memberCount: r.member_count,
+      /** first four members, for the avatar stack on group cards */
+      members: r.members_preview,
     }))
   );
 });

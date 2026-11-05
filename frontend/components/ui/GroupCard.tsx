@@ -10,6 +10,7 @@ interface Member {
   name: string;
   avatarUrl?: string | null;
   avatarKey?: string | null;
+  isPlaceholder?: boolean;
 }
 
 interface GroupCardProps {
@@ -23,10 +24,9 @@ interface GroupCardProps {
 }
 
 export function GroupCard({ id, name, members, netAmount, direction, lastActivity, memberCount }: GroupCardProps) {
-  // Use actual members if provided, else mock an array based on memberCount
-  const mockMembers: Member[] = Array(Math.min(memberCount || 0, 3)).fill(null).map((_, i) => ({ id: `mock-${i}`, name: name.charAt(0) }));
-  const displayMembers = members?.length ? members.slice(0, 3) : mockMembers;
-  const overflowCount = members?.length ? Math.max(0, members.length - 3) : Math.max(0, (memberCount || 0) - 3);
+  // Real members only (the list sends the first few); the rest are a "+N".
+  const displayMembers = (members ?? []).slice(0, 3);
+  const overflowCount = Math.max(0, (memberCount || members?.length || 0) - displayMembers.length);
 
   return (
     <Link href={`/groups/${id}`} className="block outline-none">

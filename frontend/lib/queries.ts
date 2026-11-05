@@ -99,6 +99,8 @@ export interface GroupListItem {
   role: string;
   memberCount: number;
   createdAt: string;
+  /** first few members (avatar stack on group cards) */
+  members?: { id: string; name: string; avatarUrl: string | null; avatarKey: string | null; isPlaceholder: boolean }[];
 }
 
 export function useGroups() {

@@ -9,92 +9,35 @@ interface EmptyStateProps {
 
 import { motion } from 'framer-motion';
 
-function Illustration({ type }: { type: EmptyStateProps['type'] }) {
-  if (type === 'no-groups') {
-    return (
-      <motion.svg width="100" height="100" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent)] mx-auto mb-6">
-        <motion.rect 
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 1.5, ease: "easeInOut" }}
-          x="20" y="25" width="60" height="50" rx="8" 
-        />
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 1, delay: 0.8, ease: "easeInOut" }}
-          d="M50 40v20" 
-        />
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 1, delay: 1, ease: "easeInOut" }}
-          d="M40 50h20" 
-        />
-        <motion.circle 
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 0.15 }}
-          transition={{ duration: 1.2, delay: 0.2 }}
-          cx="50" cy="50" r="35" fill="currentColor" stroke="none" 
-        />
-      </motion.svg>
-    );
-  }
-  if (type === 'no-expenses') {
-    return (
-      <motion.svg width="100" height="100" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent)] mx-auto mb-6">
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 1.5, ease: "easeInOut" }}
-          d="M30 15h40v70l-10-6.5-10 6.5-10-6.5-10 6.5V15z" 
-        />
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0, x: -10 }}
-          animate={{ pathLength: 1, opacity: 1, x: 0 }}
-          transition={{ duration: 0.8, delay: 0.8 }}
-          d="M45 40h15" 
-        />
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0, x: -10 }}
-          animate={{ pathLength: 1, opacity: 1, x: 0 }}
-          transition={{ duration: 0.8, delay: 1 }}
-          d="M45 55h15" 
-        />
-        <motion.circle 
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 0.15 }}
-          transition={{ duration: 1.2, delay: 0.2 }}
-          cx="50" cy="50" r="40" fill="currentColor" stroke="none" 
-        />
-      </motion.svg>
-    );
-  }
-  if (type === 'all-settled') {
-    return (
-      <motion.svg width="100" height="100" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--positive)] mx-auto mb-6">
-        <motion.circle 
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 200, damping: 20 }}
-          cx="50" cy="50" r="35" 
-        />
-        <motion.path 
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.4, ease: "easeOut" }}
-          d="M35 50l10 10 20-20" 
-        />
-        <motion.circle 
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 0.15 }}
-          transition={{ duration: 1.2, delay: 0.2 }}
-          cx="50" cy="50" r="45" fill="currentColor" stroke="none" 
-        />
-      </motion.svg>
-    );
-  }
-  return null;
+/** Premium 3D illustrations (public/illustrations, generated from one sheet in images/empty-states-sheet.png). */
+const ART: Record<EmptyStateProps["type"], string> = {
+  "no-groups": "/illustrations/no-groups.webp",
+  "no-expenses": "/illustrations/no-expenses.webp",
+  "all-settled": "/illustrations/all-settled.webp",
+};
+
+function Illustration({ type }: { type: EmptyStateProps["type"] }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12, scale: 0.94 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 220, damping: 20 }}
+      className="relative mx-auto mb-6 w-40 h-40"
+    >
+      {/* soft amber glow behind the tile */}
+      <div aria-hidden className="absolute inset-4 rounded-full bg-[var(--accent)] opacity-20 blur-2xl" />
+      <motion.img
+        src={ART[type]}
+        alt=""
+        width={160}
+        height={160}
+        draggable={false}
+        animate={{ y: [0, -5, 0] }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+        className="relative w-40 h-40 rounded-[28px] shadow-[0_18px_40px_-12px_rgba(180,110,20,0.35)] select-none"
+      />
+    </motion.div>
+  );
 }
 
 export function EmptyState({ type, title, description, action }: EmptyStateProps) {

@@ -62,15 +62,16 @@ export default function AvatarPicker({
   const preview = { ...target, avatarKey: choice };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40" onClick={onClose}>
       <motion.div
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={`Avatar for ${target.name}`}
-        className="w-full max-w-md bg-[var(--paper)] rounded-t-[28px] p-5 pb-[max(20px,env(safe-area-inset-bottom))] max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-md bg-[var(--paper)] rounded-t-[28px] max-h-[88vh] flex flex-col"
       >
+        <div className="p-5 pb-3 overflow-y-auto flex-1">
         <div className="flex items-center gap-3 mb-4">
           <MemberAvatar person={preview} size={52} />
           <div className="flex-1 min-w-0">
@@ -148,14 +149,21 @@ export default function AvatarPicker({
         </div>
 
         {error && <p role="alert" className="mt-3 text-[13px] font-medium text-[var(--negative)]">{error}</p>}
+        </div>
 
-        <button
-          onClick={save}
-          disabled={busy || choice === (target.avatarKey ?? null)}
-          className="mt-5 w-full py-3.5 rounded-[16px] bg-[var(--accent)] text-white font-bold text-[15px] disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {busy && <Loader2 size={16} className="animate-spin" />} Save
-        </button>
+        {/* Pinned footer: Save is always on screen, above the phone's gesture bar. */}
+        <div className="px-5 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] border-t border-[var(--hairline)] flex gap-3">
+          <button onClick={onClose} className="px-5 py-3.5 rounded-[16px] bg-[var(--paper-dim)] font-bold text-[15px] text-[var(--text-secondary)]">
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={busy || choice === (target.avatarKey ?? null)}
+            className="flex-1 py-3.5 rounded-[16px] bg-[var(--accent)] text-white font-bold text-[15px] disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {busy && <Loader2 size={16} className="animate-spin" />} Save
+          </button>
+        </div>
       </motion.div>
     </div>
   );

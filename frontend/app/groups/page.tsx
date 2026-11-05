@@ -19,6 +19,7 @@ interface Group {
   memberCount: number;
   myRole: string;
   createdAt: string;
+  members?: { id: string; name: string; avatarUrl: string | null; avatarKey: string | null; isPlaceholder: boolean }[];
 }
 
 export default function GroupsPage() {
@@ -106,7 +107,7 @@ export default function GroupsPage() {
                       id={group.id}
                       name={group.name}
                       memberCount={group.memberCount}
-                      members={[]} // Handled by fallback inside GroupCard
+                      members={group.members ?? []}
                       lastActivity={new Date(group.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                     />
                   </motion.div>
