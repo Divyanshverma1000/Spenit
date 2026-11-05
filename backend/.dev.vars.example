@@ -7,3 +7,5 @@ JWT_REFRESH_SECRET=a_different_long_random_string_at_least_32
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_MAILTO=mailto:you@example.com
+# Optional: server-wide Groq key (users can add their own in Profile)
+# GROQ_API_KEY=

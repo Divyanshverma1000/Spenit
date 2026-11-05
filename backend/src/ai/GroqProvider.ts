@@ -25,11 +25,69 @@ import type {
   OrderExtractResult,
 } from "./AIProvider";
 import { EXPENSE_CATEGORIES } from "./AIProvider";
+import { ORDER_EXTRACT_PROMPT, ORDER_JSON_SCHEMA } from "./orderPrompt";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 10_000;
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "qwen/qwen3.6-27b";
+/** Groq retired qwen/qwen3.6-27b on 2026-09-14; qwen3.8-27b is its successor. Read per call so a Worker var applies. */
+const visionModel = () => process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b";
+
+/** 64×64 red PNG — the vision ping in GET /ai/test-key. */
+const PING_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeUlEQVR4nO3PQQkAMAzAwCqpf1ETMxF7HINABFzm7H7dcEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFj13PLIEAOXyUUwAAAABJRU5ErkJggg==";
+
+export interface PingResult {
+  ok: boolean;
+  model: string;
+  status?: number;
+  message?: string;
+  ms?: number;
+}
+
+type GroqCall =
+  | { kind: "ok"; status: number; ms: number; json: any }
+  | { kind: "http"; status: number; ms: number; message: string; retryAfterMs: number }
+  | { kind: "timeout"; status: 0; ms: number }
+  | { kind: "network"; status: 0; ms: number; message: string };
+
+/** One chat-completions request. Never throws; never logs the key or the image. */
+async function groqChat(apiKey: string, body: object, timeoutMs: number): Promise<GroqCall> {
+  const start = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(GROQ_API_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const ms = Date.now() - start;
+    if (response.ok) return { kind: "ok", status: response.status, ms, json: await response.json() };
+    const errText = await response.text().catch(() => "");
+    let message = errText.slice(0, 300);
+    try { message = JSON.parse(errText)?.error?.message || message; } catch { /* plain text */ }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    return { kind: "http", status: response.status, ms, message, retryAfterMs: Number.isFinite(retryAfter) ? retryAfter * 1000 : 0 };
+  } catch (err) {
+    const ms = Date.now() - start;
+    if ((err as Error).name === "AbortError") return { kind: "timeout", status: 0, ms };
+    return { kind: "network", status: 0, ms, message: (err as Error).message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Model text → JSON. Tolerates code fences and a leading <think> block. undefined = not JSON. */
+export function parseModelJson(content: string): unknown {
+  const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(?:json)?/g, "").trim();
+  try { return JSON.parse(cleaned); } catch { /* try the outermost object */ }
+  const a = cleaned.indexOf("{"), b = cleaned.lastIndexOf("}");
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(cleaned.slice(a, b + 1)); } catch { /* give up */ }
+  }
+  return undefined;
+}
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -96,45 +154,6 @@ EXAMPLES:
 - "I paid 1000, 400 was for wine that Rahul and I drank" → payers:[{me,1000}], participants:[{userId: me, personalAmount: 200}, {userId: Rahul, personalAmount: 200}], splitType:fairshare (Backend handles the remaining 600)
 - "paid by me 500" → payers:[{me,500}], participants:all, splitType:equal`;
 }
-
-// ── Order extraction prompt (BulkOrderSplit_Plan.md §3.1) ───────────────────────
-
-/** OCR text of one tall screenshot is ~2–4k chars; cap it so a junk image can't blow the budget. */
-const ORDER_OCR_MAX_CHARS = 12_000;
-
-const ORDER_EXTRACT_PROMPT = `You read ONE screenshot of an Indian quick-commerce / food / shopping order (Blinkit, Zepto, Swiggy Instamart, BigBasket, Swiggy, Zomato, Amazon, Flipkart, JioMart, DMart) and return its contents as strict JSON.
-
-RULES
-1. Copy numbers EXACTLY as printed. Never calculate, round or guess a price. If a value is not printed, use null.
-2. An item row may show two prices: the higher one is the crossed-out MRP, the lower one is what was paid. lineTotal = the price actually paid for that row.
-3. The rupee sign ₹ is often misread by OCR as "2", "3", "7", "%", "R", "X" or "?" glued to the front of a price. "%54", "R54" or "₹54" all mean 54. A row like "Milk 1 L 254" usually means ₹54 — use the item total / grand total printed on the bill to decide.
-4. qty: the count shown ("2 x", "Qty 2", "x2"). Default 1. Pack sizes like "500 g", "1 L", "Pack of 6" are the variant, NOT qty.
-5. Items are only products. Charges go in fees; savings go in discounts (as positive numbers).
-   fee kinds: delivery | handling | platform | small_cart | packaging | tip | late_night | surge | tax | other
-   "FREE" / "₹0" / struck-through fees are not charged — leave them out.
-6. Do NOT list summary rows (Item total, Sub total, MRP total, You saved, Bill total, Grand total, To pay, Paid via UPI) as items. "You saved ₹X" is NOT a discount — only discounts actually subtracted on the bill (coupon, promo, offer discount).
-7. grandTotal = the final amount paid (Grand total / Bill total / To pay / Order total / Total paid). null if this screenshot does not show it.
-8. orderDate in YYYY-MM-DD (current year if the year is missing). orderId exactly as printed, without the "Order ID" label.
-9. page.hasHeader = the screenshot shows the order's top (order id, date or store name). page.hasTotal = it shows the grand total. A screenshot may show only the middle of a long order — then return just the items you see.
-10. Ignore app chrome: status bar, "Rate your order", "Reorder", "Need help?", ads, recommendations, delivery address, payment method.
-
-PLATFORM HINTS
-- Blinkit: "Order summary", "Bill details", "Handling charge", "Small cart charge", "Delivery charge", "Grand total". Order id starts with "ORD".
-- Zepto: "Item Total", "Handling Fee", "Small Cart Fee", "Delivery Fee", "Late Night Fee", "To Pay" / "Total Bill".
-- Swiggy Instamart: "Item Total", "Delivery Partner Fee", "Handling Fee", "Platform Fee", "Grand Total" / "Bill Total".
-- BigBasket: "Basket Value", "Delivery Charges", "Total Savings", "Final Total".
-
-OUTPUT (JSON only, no prose):
-{
-  "platform": "blinkit|zepto|instamart|bigbasket|swiggy|zomato|amazon|flipkart|jiomart|dmart|other",
-  "orderId": string|null,
-  "orderDate": "YYYY-MM-DD"|null,
-  "items": [{ "name": string, "variant": string|null, "qty": number, "unitPrice": number|null, "lineTotal": number }],
-  "fees": [{ "kind": string, "label": string, "amount": number }],
-  "discounts": [{ "label": string, "amount": number }],
-  "grandTotal": number|null,
-  "page": { "hasHeader": boolean, "hasTotal": boolean }
-}`;
 
 // ── Name resolution helpers ────────────────────────────────────────────────────
 
@@ -328,7 +347,7 @@ If there are items, you MUST include them in the "items" array.`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: GROQ_VISION_MODEL,
+          model: visionModel(),
           messages: [
             {
               role: "user",
@@ -382,79 +401,113 @@ If there are items, you MUST include them in the "items" array.`;
     }
   }
 
-  // ── extractOrder — OCR text first, vision only as backup ─────────────────────
+  // ── extractOrder — one screenshot → vision model → order JSON ───────────────
 
-  async extractOrder(input: { ocrText: string; imageBase64?: string }): Promise<OrderExtractResult> {
-    if (!this.apiKey) return { ok: false, reason: "config_error" };
+  /**
+   * Strict JSON Schema first; if Groq rejects that request shape (400), retry once in JSON
+   * mode. 429 / 5xx / timeouts are retried once, honouring retry-after. 401 / 404 / 413 never.
+   */
+  async extractOrder(input: { imageBase64: string }): Promise<OrderExtractResult> {
+    const model = visionModel();
+    if (!this.apiKey) return { ok: false, reason: "config_error", stage: "config", message: "No Groq API key", model };
 
-    const ocrText = input.ocrText.slice(0, ORDER_OCR_MAX_CHARS);
-    const useVision = Boolean(input.imageBase64);
-    const model = useVision ? GROQ_VISION_MODEL : GROQ_MODEL;
-
-    const userContent: any = useVision
-      ? [
-          {
-            type: "text",
-            text: `${ORDER_EXTRACT_PROMPT}\n\nOCR text of this same image (may contain mistakes; trust the image for digits):\n"""\n${ocrText}\n"""`,
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: input.imageBase64!.startsWith("data:image") ? input.imageBase64 : `data:image/jpeg;base64,${input.imageBase64}`,
-            },
-          },
-        ]
-      : `OCR text of one order screenshot. Each line is one visual row; " | " separates columns on that row.\n"""\n${ocrText}\n"""`;
-
-    const messages = useVision
-      ? [{ role: "user", content: userContent }]
-      : [
-          { role: "system", content: ORDER_EXTRACT_PROMPT },
-          { role: "user", content: userContent },
-        ];
+    const url = input.imageBase64.startsWith("data:image") ? input.imageBase64 : `data:image/jpeg;base64,${input.imageBase64}`;
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: ORDER_EXTRACT_PROMPT },
+          { type: "image_url", image_url: { url } },
+        ],
+      },
+    ];
+    const formats = [
+      { type: "json_schema", json_schema: { name: "order_screenshot", strict: true, schema: ORDER_JSON_SCHEMA } },
+      { type: "json_object" },
+    ];
 
     const startMs = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), useVision ? 45_000 : 25_000);
-    try {
-      const response = await fetch(GROQ_API_URL, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0,
-          max_completion_tokens: 4096,
-          response_format: { type: "json_object" },
-        }),
-        signal: controller.signal,
-      });
+    let attempts = 0;
+    let formatIdx = 0;
+    let transientRetries = 0;
+    for (;;) {
+      attempts++;
+      const call = await groqChat(this.apiKey, {
+        model,
+        messages,
+        temperature: 0,
+        max_completion_tokens: 4096,
+        response_format: formats[formatIdx],
+      }, 45_000);
+      console.log(
+        `[ai] stage=GROQ_RESPONSE_RECEIVED model=${model} attempt=${attempts} format=${formats[formatIdx].type} status=${call.status} ms=${call.ms}`
+      );
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        console.error(`[ai] extractOrder ${model} error ${response.status}:`, errText.slice(0, 300));
-        if (response.status === 429) return { ok: false, reason: "rate_limit" };
-        // 401 = bad key. 403 is Groq blocking the caller's network/region — not the user's key.
-        if (response.status === 401) return { ok: false, reason: "config_error" };
-        if (response.status === 403) return { ok: false, reason: "blocked", message: "Groq 403: access denied from this network" };
-        return { ok: false, reason: "network", message: `Groq ${response.status}` };
+      if (call.kind === "ok") {
+        const content: string = call.json.choices?.[0]?.message?.content || "";
+        const usage = {
+          promptTokens: call.json.usage?.prompt_tokens ?? null,
+          completionTokens: call.json.usage?.completion_tokens ?? null,
+        };
+        const parsed = parseModelJson(content);
+        if (parsed !== undefined) {
+          return { ok: true, raw: parsed, model, latencyMs: Date.now() - startMs, attempts, usage };
+        }
+        console.error(`[ai] stage=JSON_PARSE_FAILED model=${model} chars=${content.length}`);
+        return {
+          ok: false, reason: "parse_error", stage: "json_parse", model,
+          message: content ? "The AI answer was not valid JSON" : "The AI returned an empty answer",
+          rawText: content.slice(0, 500),
+        };
       }
 
-      const json = (await response.json()) as any;
-      const content: string = json.choices?.[0]?.message?.content || "";
-      const cleaned = content.replace(/```(?:json)?/g, "").trim();
-      try {
-        return { ok: true, raw: JSON.parse(cleaned), source: useVision ? "vision" : "text", model, latencyMs: Date.now() - startMs };
-      } catch {
-        console.error("[ai] extractOrder JSON parse failed:", cleaned.slice(0, 200));
-        return { ok: false, reason: "parse_error" };
+      if (call.kind === "http") {
+        const { status, message } = call;
+        if (status === 400 && formatIdx === 0) { formatIdx = 1; continue; } // structured outputs not accepted → JSON mode
+        if ((status === 429 || status >= 500) && transientRetries === 0 && call.retryAfterMs <= 10_000) {
+          transientRetries++;
+          await new Promise((r) => setTimeout(r, Math.max(call.retryAfterMs, 1_000)));
+          continue;
+        }
+        const reason =
+          status === 401 ? "config_error"
+          : status === 403 ? "blocked"
+          : status === 404 ? "model_unavailable"
+          : status === 413 ? "too_large"
+          : status === 429 ? "rate_limit"
+          : status === 400 || status === 422 ? "invalid_request"
+          : "network";
+        return { ok: false, reason, stage: "groq_request", status, message, model };
       }
-    } catch (err) {
-      if ((err as Error).name === "AbortError") return { ok: false, reason: "timeout" };
-      return { ok: false, reason: "network", message: (err as Error).message };
-    } finally {
-      clearTimeout(timer);
+
+      // timeout / network error
+      if (transientRetries === 0) { transientRetries++; continue; }
+      return {
+        ok: false, reason: call.kind === "timeout" ? "timeout" : "network", stage: "groq_request",
+        message: call.kind === "timeout" ? "Groq did not answer within 45 s" : call.message, model,
+      };
     }
+  }
+
+  /** Tiny real requests to both models — proves the key, the network and the model names. */
+  async ping(): Promise<{ text: PingResult; vision: PingResult }> {
+    const one = async (model: string, content: unknown): Promise<PingResult> => {
+      if (!this.apiKey) return { ok: false, model, message: "No Groq API key" };
+      const call = await groqChat(this.apiKey, {
+        model, messages: [{ role: "user", content }], temperature: 0, max_completion_tokens: 20,
+      }, 20_000);
+      if (call.kind === "ok") return { ok: true, model, ms: call.ms };
+      if (call.kind === "http") return { ok: false, model, status: call.status, message: call.message, ms: call.ms };
+      return { ok: false, model, message: call.kind === "timeout" ? "timed out" : call.message };
+    };
+    const [text, vision] = await Promise.all([
+      one(GROQ_MODEL, "Reply with the word OK."),
+      one(visionModel(), [
+        { type: "text", text: "What colour is this image? One word." },
+        { type: "image_url", image_url: { url: PING_IMAGE } },
+      ]),
+    ]);
+    return { text, vision };
   }
 
   // ── Stubs for future capabilities ─────────────────────────────────────────────

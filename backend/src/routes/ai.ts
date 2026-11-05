@@ -10,7 +10,8 @@
  * Endpoints:
  *   POST /ai/parse-expense   — parse NL text → ParsedExpenseDraft | AIFallback
  *   POST /ai/parse-receipt   — upload receipt image → stub (Phase 6B)
- *   POST /ai/extract-order   — OCR text of one order screenshot → checked order JSON
+ *   POST /ai/extract-order   — one order screenshot → vision model → checked order JSON
+ *   GET  /ai/test-key        — real text + vision ping to Groq
  */
 
 import { Router, Request, Response } from "express";
@@ -18,7 +19,7 @@ import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { GroqProvider } from "../ai/GroqProvider";
 import type { GroupMember, ParsedExpenseDraft } from "../ai/AIProvider";
-import { normalizeOrder, groundOrder, checkTotals, needsVisionBackup } from "../lib/orderExtract";
+import { normalizeOrder, checkTotals } from "../lib/orderExtract";
 
 const router = Router();
 
@@ -143,35 +144,38 @@ router.post(
   }
 );
 
-// ─── GET /ai/test-key ─────────────────────────────────────────────────────────
+// ─── Groq key ──────────────────────────────────────────────────────────────────
 
+/** The user's own key wins; otherwise the server's GROQ_API_KEY secret, if one is set. */
+async function groqKeyFor(userId: string): Promise<{ key: string | null; source: "user" | "server" | null }> {
+  const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
+  const own = userRes.rows[0]?.groq_api_key as string | null | undefined;
+  if (own) return { key: own, source: "user" };
+  if (process.env.GROQ_API_KEY) return { key: process.env.GROQ_API_KEY, source: "server" };
+  return { key: null, source: null };
+}
+
+// ─── GET /ai/test-key ─────────────────────────────────────────────────────────
+/**
+ * Real connectivity check: one tiny text request and one tiny image request to Groq,
+ * from the server (that is where every AI call runs — not the phone).
+ * Returns each result with Groq's own status and message, so a wrong model name,
+ * a revoked key or a blocked network are told apart.
+ */
 router.get(
   "/test-key",
   requireAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user!.userId;
-    try {
-      const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-      const apiKey = userRes.rows[0]?.groq_api_key;
-      
-      if (!apiKey) {
-        res.status(400).json({ error: "No API key configured" });
-        return;
-      }
-
-      // Simple test using GroqProvider
-      const ai = new GroqProvider(apiKey);
-      const test = await ai.parseReceiptImage(["data:image/jpeg;base64,test"], []); // It will fallback due to bad image, but if API key is invalid it will throw auth error
-      
-      res.json({ success: true });
-    } catch (err: any) {
-      if (err.message?.includes("Bring your own AI")) {
-        res.status(403).json({ error: "Invalid API key" });
-      } else {
-        // If it throws auth error from Groq API
-        res.status(403).json({ error: "API connection failed" });
-      }
+    const { key, source } = await groqKeyFor(req.user!.userId);
+    if (!key) {
+      res.status(400).json({ ok: false, error: "No Groq API key configured" });
+      return;
     }
+    const { text, vision } = await new GroqProvider(key).ping();
+    console.log(
+      `[ai] test-key keySource=${source} text=${text.ok ? "ok" : text.status ?? "err"} vision=${vision.ok ? "ok" : vision.status ?? "err"}`
+    );
+    res.status(text.ok && vision.ok ? 200 : 502).json({ ok: text.ok && vision.ok, keySource: source, text, vision });
   }
 );
 
@@ -254,65 +258,65 @@ router.post(
 /**
  * Bulk order import (BulkOrderSplit_Plan.md §3): ONE order screenshot per call.
  *
- * The phone runs OCR and sends the text. The text model only structures it; the checks
- * (every price must appear in the OCR text, totals must add up) are plain code.
- * If the text route clearly failed, the response says `needsVision: true` and the phone
- * retries this one image with `imageBase64` — so images only leave the phone when needed.
+ * The vision model reads the image; lib/orderExtract normalizes and checks it.
+ * Joining screenshots of the same order happens on the phone.
  *
- * Body: { ocrText: string, ocrConfidence?: number (0–100), imageBase64?: string }
- * Returns: { order, totals, groundedShare, needsVision, source, model, latencyMs } | AIFallback
+ * Body: { imageBase64: string }  (data URL, jpeg/png/webp, ≤ 4 MB — Groq's base64 limit)
+ * Returns: { order, totals, model, latencyMs, attempts, usage }
+ *        | { fallback: true, reason, stage, status?, message, model }
  */
+const MAX_IMAGE_CHARS = 4 * 1024 * 1024;
+
 router.post(
   "/extract-order",
   requireAuth,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { ocrText, ocrConfidence, imageBase64 } = req.body as {
-      ocrText?: string;
-      ocrConfidence?: number;
-      imageBase64?: string;
-    };
+    const { imageBase64 } = req.body as { imageBase64?: string };
 
-    if (typeof ocrText !== "string" || (ocrText.trim().length === 0 && !imageBase64)) {
-      res.status(400).json({ error: "ocrText is required" });
+    if (typeof imageBase64 !== "string" || imageBase64.length < 100) {
+      res.status(400).json({ fallback: true, reason: "invalid_request", stage: "upload", message: "imageBase64 is required" });
+      return;
+    }
+    if (!/^data:image\/(jpeg|png|webp);base64,/.test(imageBase64)) {
+      res.status(400).json({ fallback: true, reason: "invalid_request", stage: "upload", message: "Image must be a JPEG, PNG or WebP data URL" });
+      return;
+    }
+    if (imageBase64.length > MAX_IMAGE_CHARS) {
+      res.status(413).json({ fallback: true, reason: "too_large", stage: "upload", message: "Image is larger than 4 MB" });
+      return;
+    }
+    console.log(`[ai] stage=UPLOAD_RECEIVED user=${userId.slice(0, 8)} kb=${Math.round(imageBase64.length / 1024)}`);
+
+    const { key, source } = await groqKeyFor(userId);
+    if (!key) {
+      res.json({ fallback: true, reason: "config_error", stage: "config", message: "No Groq API key configured", rawText: "" });
       return;
     }
 
-    const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-    const apiKey = userRes.rows[0]?.groq_api_key;
-    if (!apiKey) {
-      res.json({ fallback: true, reason: "config_error", rawText: "" });
-      return;
-    }
-
-    const result = await new GroqProvider(apiKey).extractOrder({ ocrText, imageBase64 });
+    const result = await new GroqProvider(key).extractOrder({ imageBase64 });
     if (!result.ok) {
-      console.warn(`[ai] extract-order failed reason=${result.reason} ${result.message ?? ""}`);
-      res.json({ fallback: true, reason: result.reason, message: result.message, rawText: "" });
+      console.warn(
+        `[ai] stage=EXTRACT_FAILED at=${result.stage} reason=${result.reason} status=${result.status ?? "-"} model=${result.model} keySource=${source} msg=${(result.message ?? "").slice(0, 160)}`
+      );
+      res.json({
+        fallback: true,
+        reason: result.reason,
+        stage: result.stage,
+        status: result.status,
+        message: result.message,
+        model: result.model,
+        rawText: "",
+      });
       return;
     }
 
     const order = normalizeOrder(result.raw);
-    // Grounding only applies to the text route: the vision model is allowed to read digits
-    // the OCR got wrong, so there the totals check is the guard.
-    const groundedShare = result.source === "text" ? groundOrder(order, ocrText) : 1;
     const totals = checkTotals(order);
-    const needsVision =
-      result.source === "text" && needsVisionBackup(order, groundedShare, Number(ocrConfidence) || 0);
-
     console.log(
-      `[ai] extract-order source=${result.source} items=${order.items.length} totals=${totals.status} grounded=${groundedShare.toFixed(2)} latency=${result.latencyMs}ms`
+      `[ai] stage=EXTRACT_COMPLETED model=${result.model} items=${order.items.length} totals=${totals.status} confidence=${order.confidence} tokens=${result.usage.promptTokens ?? "?"}+${result.usage.completionTokens ?? "?"} ms=${result.latencyMs}`
     );
-
-    res.json({
-      order,
-      totals,
-      groundedShare,
-      needsVision,
-      source: result.source,
-      model: result.model,
-      latencyMs: result.latencyMs,
-    });
+    res.json({ order, totals, model: result.model, latencyMs: result.latencyMs, attempts: result.attempts, usage: result.usage });
   }
 );
 

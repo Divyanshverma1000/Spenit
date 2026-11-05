@@ -79,6 +79,14 @@ A sticky bar shows progress: `6 of 8 orders ready · 3 items need a look`.
 
 ## 3. Extraction pipeline (where reliability comes from)
 
+> **Update 2026-11-05 — decided after testing 12 real screenshots: vision model first, no OCR.**
+> Tesseract read item names well but misread the ₹ sign in most prices (`₹310` → `2310`,
+> `₹135` → `35`, `₹94 ₹77` → `394377`), so OCR text cannot be trusted for money.
+> Built pipeline: each screenshot → `qwen/qwen3.8-27b` (strict JSON Schema) → `lib/orderExtract`
+> (normalize + totals) → phone joins screenshots by order id or shared rows, in any pick order.
+> Stitching screenshots into one image was rejected: Groq gives each image a fixed ~2k-token
+> budget, so a stitched image shrinks the text. §3.0–3.1 below are the earlier OCR design, kept for history.
+
 **OCR first, AI second, vision only as a backup.** The AI only turns text into structure. Joining, checking and all money math are plain code.
 
 ```

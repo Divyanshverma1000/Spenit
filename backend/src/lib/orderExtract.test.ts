@@ -1,35 +1,78 @@
 import { describe, it, expect } from "vitest";
-import { normalizeOrder, groundOrder, checkTotals, numbersInText, needsVisionBackup, toMoney } from "./orderExtract";
+import { normalizeOrder, checkTotals, toMoney } from "./orderExtract";
+import { parseModelJson } from "../ai/GroqProvider";
 
-const OCR = `blinkit
-Order ID: ORD12345678
-Delivered on 2 Nov 2026
-Amul Taaza Toned Milk | 1 L | 2 x | ₹54
-Pintola Peanut Butter Crunchy | 1 kg | %349 ₹399
-Maggi Masala Noodles | 4 x 70 g | 256
-Item total | ₹459
-Handling charge | ₹9
-Delivery charge | FREE ₹0
-Coupon discount | -₹20
-Grand total | ₹448`;
+// Model answers shaped like real screenshots (numbers copied from the bills).
 
-const AI_JSON = {
-  platform: "Blinkit",
-  orderId: "ORD12345678",
-  orderDate: "2026-11-02",
+/** Instamart: has an "Offer Discount" that IS subtracted, and a ₹6.01 handling fee. */
+const INSTAMART = {
+  platform: "instamart",
+  orderId: "ORDER #249970716902473",
+  orderDate: null,
+  itemCount: 8,
   items: [
-    { name: "Amul Taaza Toned Milk", variant: "1 L", qty: 2, unitPrice: 27, lineTotal: 54 },
-    { name: "Pintola Peanut Butter Crunchy", variant: "1 kg", qty: 1, unitPrice: 349, lineTotal: 349 },
-    { name: "Maggi Masala Noodles", variant: "4 x 70 g", qty: 1, unitPrice: null, lineTotal: "₹56" },
-    { name: "", lineTotal: 10 },
+    { name: "Fortune Sugar", variant: null, qty: 1, lineTotal: 77, mrp: null },
+    { name: "Bournvita Chocolate Nutrition Drink Pouch", variant: null, qty: 1, lineTotal: 30, mrp: null },
+    { name: "Amul Taaza Milky Milk", variant: null, qty: 1, lineTotal: 30, mrp: null },
+    { name: "NOICE Fresh Lime Soda (No Preservatives)", variant: null, qty: 1, lineTotal: 1, mrp: null },
+    { name: "MAGGI 2-Minute Instant Noodles", variant: null, qty: 3, lineTotal: 45, mrp: null },
+    { name: "MAGGI Double Masala Noodles", variant: null, qty: 1, lineTotal: 20, mrp: null },
+  ],
+  fees: [
+    { kind: "delivery", label: "Delivery Fee", amount: 16 },
+    { kind: "handling", label: "Handling Fee", amount: 6.01 },
+  ],
+  discounts: [{ label: "Offer Discount", amount: 16 }],
+  itemTotal: 203,
+  grandTotal: 209,
+  page: { hasHeader: true, hasTotal: true },
+  confidence: "high",
+  uncertain: [],
+};
+
+/** Blinkit: "Product discount" is already inside the item prices — must not be subtracted. */
+const BLINKIT = {
+  platform: "blinkit",
+  orderId: null,
+  orderDate: null,
+  itemCount: 4,
+  items: [
+    { name: "Green Chilli", variant: "100 g", qty: 2, lineTotal: 34, mrp: 40 },
+    { name: "Amul Fresh Malai Paneer", variant: "200 g", qty: 1, lineTotal: 95, mrp: null },
+    { name: "Desi Tomato - Pack of 2", variant: "2 x 500 g", qty: 1, lineTotal: 77, mrp: 95 },
+    { name: "Potato Pack of 2", variant: "2 x 1 kg", qty: 1, lineTotal: 43, mrp: 51 },
   ],
   fees: [
     { kind: "handling", label: "Handling charge", amount: 9 },
-    { kind: "delivery", label: "Delivery charge", amount: 0 },
+    { kind: "delivery", label: "Delivery charges", amount: 0 },
   ],
-  discounts: [{ label: "Coupon discount", amount: 20 }],
-  grandTotal: 448,
+  discounts: [{ label: "Product discount", amount: 32 }],
+  itemTotal: 249,
+  grandTotal: 258,
   page: { hasHeader: true, hasTotal: true },
+  confidence: "high",
+  uncertain: [],
+};
+
+/** Zepto shipment-2 tab: 4 of the order's 5 items, but the WHOLE order's bill summary. */
+const ZEPTO_SHIPMENT_TAB = {
+  platform: "zepto",
+  orderId: "#UHISJNSOQ27227",
+  orderDate: null,
+  itemCount: 5,
+  items: [
+    { name: "Status Cotton Feel Double Geometric Bedsheet", variant: "1 set (3 pcs)", qty: 1, lineTotal: 310, mrp: 479 },
+    { name: "Joyo Plastics Pedal Bin 11.2 Ltr Printed Assorted", variant: "1 pc", qty: 1, lineTotal: 245, mrp: 516 },
+    { name: "Happy Mail Matchbox", variant: "1 pack (5 pcs)", qty: 1, lineTotal: 10, mrp: null },
+    { name: "Joyo Use Me Dust Bin 7 Ltr Assorted", variant: "1 pc", qty: 1, lineTotal: 135, mrp: 186 },
+  ],
+  fees: [],
+  discounts: [],
+  itemTotal: 1412,
+  grandTotal: 1412,
+  page: { hasHeader: true, hasTotal: true },
+  confidence: "high",
+  uncertain: [],
 };
 
 describe("toMoney", () => {
@@ -38,101 +81,86 @@ describe("toMoney", () => {
     expect(toMoney("Rs. 54")).toBe(54);
     expect(toMoney(-20)).toBe(20);
     expect(toMoney("FREE")).toBeNull();
-  });
-});
-
-describe("numbersInText", () => {
-  it("accepts a rupee sign misread as a leading digit", () => {
-    const n = numbersInText("Maggi 256");
-    expect(n.has(256)).toBe(true);
-    expect(n.has(56)).toBe(true);
+    expect(toMoney(null)).toBeNull();
   });
 });
 
 describe("normalizeOrder", () => {
-  it("cleans the model output", () => {
-    const o = normalizeOrder(AI_JSON);
-    expect(o.platform).toBe("blinkit");
-    expect(o.items).toHaveLength(3); // nameless row dropped
-    expect(o.items[2].lineTotal).toBe(56);
-    expect(o.fees).toHaveLength(1); // free delivery dropped
-    expect(o.orderDate).toBe("2026-11-02");
+  it("keeps items, fees and the subtracted offer discount (Instamart)", () => {
+    const o = normalizeOrder(INSTAMART);
+    expect(o.orderId).toBe("249970716902473");
+    expect(o.items).toHaveLength(6);
+    expect(o.items[4]).toMatchObject({ qty: 3, lineTotal: 45 });
+    expect(o.fees.map((f) => f.amount)).toEqual([16, 6.01]);
+    expect(o.discounts).toEqual([{ label: "Offer Discount", amount: 16 }]);
+    expect(o.itemCount).toBe(8);
   });
 
-  it("fills lineTotal from qty × unitPrice", () => {
-    const o = normalizeOrder({ items: [{ name: "Eggs", qty: 2, unitPrice: 45 }] });
-    expect(o.items[0].lineTotal).toBe(90);
-  });
-});
-
-describe("groundOrder", () => {
-  it("passes numbers that appear in the OCR text", () => {
-    const o = normalizeOrder(AI_JSON);
-    expect(groundOrder(o, OCR)).toBe(1);
+  it("drops FREE fees and the Blinkit 'Product discount' row", () => {
+    const o = normalizeOrder(BLINKIT);
+    expect(o.fees).toEqual([{ kind: "handling", label: "Handling charge", amount: 9 }]);
+    expect(o.discounts).toEqual([]);
+    expect(o.items[0]).toMatchObject({ qty: 2, lineTotal: 34, mrp: 40 });
   });
 
-  it("flags invented numbers", () => {
-    const o = normalizeOrder({ ...AI_JSON, items: [{ name: "Ghee", qty: 1, lineTotal: 612 }] });
-    groundOrder(o, OCR);
-    expect(o.items[0].grounded).toBe(false);
-  });
-});
-
-describe("grounding against real Tesseract output", () => {
-  // Actual rows produced by lib/ocr.ts on a synthetic Blinkit screenshot: ₹ read as 3 or %.
-  const REAL_OCR = `Order ID: ORD47219834512
-Amul Taaza Toned Fresh Milk | 354
-1L-2x
-Pintola All Natural Peanut Butter | 3349
-Maggi 2-Minute Masala Noodles | 56
-Farm Fresh Eggs (6 pcs) | 48
-Item total | 507
-Handling charge | 39
-Delivery charge | FREE
-Coupon discount | -%20
-Grand total | 496`;
-
-  it("accepts the true prices behind a misread rupee sign", () => {
+  it("keeps usable rows when the model returns junk ones", () => {
     const o = normalizeOrder({
-      items: [
-        { name: "Amul Taaza Toned Fresh Milk", qty: 2, lineTotal: 54 },
-        { name: "Pintola All Natural Peanut Butter", qty: 1, lineTotal: 349 },
-        { name: "Maggi 2-Minute Masala Noodles", qty: 1, lineTotal: 56 },
-        { name: "Farm Fresh Eggs", qty: 1, lineTotal: 48 },
-      ],
-      fees: [{ kind: "handling", label: "Handling charge", amount: 9 }],
-      discounts: [{ label: "Coupon discount", amount: 20 }],
-      grandTotal: 496,
+      platform: "Zepto",
+      items: [{ name: "", lineTotal: 10 }, { name: "Matchbox", lineTotal: "₹10" }, { name: "Mop", lineTotal: null }],
+      grandTotal: "₹10",
+      confidence: "weird",
     });
-    expect(groundOrder(o, REAL_OCR)).toBe(1);
-    expect(checkTotals(o).status).toBe("ok");
+    expect(o.platform).toBe("zepto");
+    expect(o.items).toEqual([{ name: "Matchbox", variant: null, qty: 1, lineTotal: 10, mrp: null }]);
+    expect(o.page.hasTotal).toBe(true);
+    expect(o.confidence).toBe("medium");
+  });
+
+  it("survives a completely empty answer", () => {
+    const o = normalizeOrder(null);
+    expect(o.items).toEqual([]);
+    expect(checkTotals(o).status).toBe("no_items");
   });
 });
 
 describe("checkTotals", () => {
-  it("adds up", () => {
-    const t = checkTotals(normalizeOrder(AI_JSON));
+  it("Instamart adds up within rounding (203 + 16 + 6.01 − 16 = 209.01 vs 209)", () => {
+    const t = checkTotals(normalizeOrder(INSTAMART));
     expect(t.status).toBe("ok");
-    expect(t.computedTotal).toBe(448);
+    expect(t.itemsMatchPrinted).toBe(true);
+    expect(t.difference).toBe(-0.01);
   });
 
-  it("reports the difference", () => {
-    const t = checkTotals(normalizeOrder({ ...AI_JSON, grandTotal: 500 }));
+  it("Blinkit adds up once the product discount is not double-counted", () => {
+    const t = checkTotals(normalizeOrder(BLINKIT));
+    expect(t.status).toBe("ok");
+    expect(t.computedTotal).toBe(258);
+  });
+
+  it("a single Zepto shipment tab does NOT reconcile to the whole-order total", () => {
+    const t = checkTotals(normalizeOrder(ZEPTO_SHIPMENT_TAB));
+    expect(t.itemsTotal).toBe(700);
     expect(t.status).toBe("mismatch");
-    expect(t.difference).toBe(52);
+    expect(t.difference).toBe(712); // the missing shipment-1 mop
+    expect(t.itemsMatchPrinted).toBe(false);
   });
 
-  it("knows when the total is missing", () => {
-    expect(checkTotals(normalizeOrder({ ...AI_JSON, grandTotal: null })).status).toBe("no_total");
+  it("no grand total visible → no_total, not a failure", () => {
+    const t = checkTotals(normalizeOrder({ ...BLINKIT, grandTotal: null, itemTotal: null, page: { hasHeader: true, hasTotal: false } }));
+    expect(t.status).toBe("no_total");
+    expect(t.itemsMatchPrinted).toBeNull();
   });
 });
 
-describe("needsVisionBackup", () => {
-  it("not for a clean screenshot", () => {
-    const o = normalizeOrder(AI_JSON);
-    expect(needsVisionBackup(o, groundOrder(o, OCR), 92)).toBe(false);
+describe("parseModelJson", () => {
+  it("reads plain, fenced and <think>-prefixed answers", () => {
+    expect(parseModelJson('{"a":1}')).toEqual({ a: 1 });
+    expect(parseModelJson('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+    expect(parseModelJson('<think>hmm {not json}</think>\n{"a":1}')).toEqual({ a: 1 });
+    expect(parseModelJson('Here you go: {"a":1} hope that helps')).toEqual({ a: 1 });
   });
-  it("yes when nothing was found", () => {
-    expect(needsVisionBackup(normalizeOrder({}), 0, 40)).toBe(true);
+  it("returns undefined for non-JSON", () => {
+    expect(parseModelJson("")).toBeUndefined();
+    expect(parseModelJson("sorry, I can't read this")).toBeUndefined();
   });
 });

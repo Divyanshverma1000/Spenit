@@ -124,16 +124,18 @@ export default function ProfilePage() {
     if (!accessToken || !profile?.hasGroqKey) return;
     setTestingGroq(true);
     try {
-      const res = await fetch(`${API_URL}/ai/query`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId: "test", question: "test" })
+      // Real requests to Groq from the server — text model and vision model separately.
+      const res = await fetch(`${API_URL}/ai/test-key`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
-      const data = await res.json();
-      if (data.error === "missing_key") {
-        alert("API key is invalid or missing.");
+      type Ping = { ok: boolean; model: string; status?: number; message?: string; ms?: number };
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; text?: Ping; vision?: Ping } | null;
+      const line = (label: string, p?: Ping) =>
+        !p ? "" : p.ok ? `✅ ${label} (${p.model}) — ${p.ms}ms` : `❌ ${label} (${p.model}) — ${p.status ? `HTTP ${p.status}: ` : ""}${p.message ?? "failed"}`;
+      if (data?.text || data?.vision) {
+        alert(`${data.ok ? "Connection successful" : "Connection problem"}\n\n${line("Text AI", data.text)}\n${line("Image AI", data.vision)}`);
       } else {
-        alert("✅ Connection successful!");
+        alert(data?.error || `Test failed (HTTP ${res.status})`);
       }
     } catch (err) {
       console.error(err);

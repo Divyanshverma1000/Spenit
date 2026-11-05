@@ -18,22 +18,36 @@ export interface ExtractedOrder {
   platform: Platform;
   orderId: string | null;
   orderDate: string | null;
-  items: { name: string; variant: string | null; qty: number; unitPrice: number | null; lineTotal: number; grounded: boolean }[];
-  fees: { kind: string; label: string; amount: number; grounded: boolean }[];
-  discounts: { label: string; amount: number; grounded: boolean }[];
+  /** whole-order count as printed ("13 items in this order") */
+  itemCount: number | null;
+  items: { name: string; variant: string | null; qty: number; lineTotal: number; mrp: number | null }[];
+  fees: { kind: string; label: string; amount: number }[];
+  discounts: { label: string; amount: number }[];
+  itemTotal: number | null;
   grandTotal: number | null;
-  grandTotalGrounded: boolean;
   page: { hasHeader: boolean; hasTotal: boolean };
+  confidence: "high" | "medium" | "low";
+  /** short phrases the model was unsure of, e.g. "price of Ginger" */
+  uncertain: string[];
 }
 
 export interface ExtractResponse {
   order: ExtractedOrder;
-  totals: { status: string; difference: number | null };
-  groundedShare: number;
-  needsVision: boolean;
-  source: "text" | "vision";
+  totals: { status: string; difference: number | null; itemsMatchPrinted: boolean | null };
   model: string;
   latencyMs: number;
+  attempts: number;
+  usage: { promptTokens: number | null; completionTokens: number | null };
+}
+
+/** Why a screenshot could not be read — from the server, never a guess. */
+export interface ExtractFailure {
+  fallback: true;
+  reason: string;
+  stage: string;
+  status?: number;
+  message?: string;
+  model?: string;
 }
 
 /** One picked screenshot and its extraction. `index` = pick order, used for joining. */
@@ -49,7 +63,8 @@ export interface DraftItem {
   qty: number;
   lineTotal: number;
   sharedBy: string[];
-  grounded: boolean;
+  /** the model said it was unsure of this row — highlight it */
+  doubtful: boolean;
 }
 
 export interface DraftLine {
@@ -95,66 +110,121 @@ export function orderKey(o: { platform: Platform; orderId: string | null }): str
 
 // ── Joining screenshots of one order ───────────────────────────────────────────
 
-function sameItem(a: ExtractedOrder["items"][number], b: ExtractedOrder["items"][number]) {
-  return normName(a.name) === normName(b.name) && round2(a.lineTotal) === round2(b.lineTotal);
+type Item = ExtractedOrder["items"][number];
+const itemKey = (i: Item) => `${normName(i.name)}|${round2(i.lineTotal)}`;
+const lineKey = (l: { label: string; amount: number }) => `${normName(l.label)}|${round2(l.amount)}`;
+
+/**
+ * Union of rows across screenshots of ONE order. A row seen in several screenshots
+ * (overlap at a scroll boundary, Zepto's shipment tab repeating the overview) counts once;
+ * a row printed twice in a single screenshot stays twice. Order: first appearance,
+ * starting from the screenshot that shows the order's top.
+ */
+function unionRows<T>(lists: T[][], key: (t: T) => string): T[] {
+  const best = new Map<string, number>();
+  for (const list of lists) {
+    const counts = new Map<string, number>();
+    for (const t of list) counts.set(key(t), (counts.get(key(t)) ?? 0) + 1);
+    for (const [k, n] of counts) best.set(k, Math.max(best.get(k) ?? 0, n));
+  }
+  const out: T[] = [];
+  const used = new Map<string, number>();
+  for (const list of lists) {
+    for (const t of list) {
+      const k = key(t);
+      if ((used.get(k) ?? 0) < (best.get(k) ?? 0)) {
+        out.push(t);
+        used.set(k, (used.get(k) ?? 0) + 1);
+      }
+    }
+  }
+  return out;
 }
 
-function merge(a: ExtractedOrder, b: ExtractedOrder): ExtractedOrder {
-  // Long orders overlap at the screenshot boundary: drop B's leading items that repeat A's tail.
-  const tail = a.items.slice(-4);
-  let skip = 0;
-  while (skip < Math.min(4, b.items.length) && tail.some((t) => sameItem(t, b.items[skip]))) skip++;
-
-  const lineKey = (l: { label: string; amount: number }) => `${normName(l.label)}:${l.amount}`;
-  const union = <T extends { label: string; amount: number }>(x: T[], y: T[]) => {
-    const seen = new Set(x.map(lineKey));
-    return [...x, ...y.filter((l) => !seen.has(lineKey(l)))];
+function mergeGroup(parts: Piece[]): ExtractedOrder {
+  // top of the order first, the bill summary last, otherwise pick order
+  const rank = (p: Piece) => (p.order.page.hasHeader ? 0 : p.order.page.hasTotal ? 2 : 1);
+  const sorted = [...parts].sort((a, b) => rank(a) - rank(b) || a.index - b.index);
+  const first = <T,>(f: (o: ExtractedOrder) => T | null) => {
+    for (const p of sorted) { const v = f(p.order); if (v !== null) return v; }
+    return null;
   };
-
+  const orders = sorted.map((p) => p.order);
+  const conf = orders.some((o) => o.confidence === "low") ? "low" : orders.some((o) => o.confidence === "medium") ? "medium" : "high";
   return {
-    platform: a.platform !== "other" ? a.platform : b.platform,
-    orderId: a.orderId ?? b.orderId,
-    orderDate: a.orderDate ?? b.orderDate,
-    items: [...a.items, ...b.items.slice(skip)],
-    fees: union(a.fees, b.fees),
-    discounts: union(a.discounts, b.discounts),
-    grandTotal: a.grandTotal ?? b.grandTotal,
-    grandTotalGrounded: a.grandTotal !== null ? a.grandTotalGrounded : b.grandTotalGrounded,
-    page: { hasHeader: a.page.hasHeader || b.page.hasHeader, hasTotal: a.page.hasTotal || b.page.hasTotal },
+    platform: orders.find((o) => o.platform !== "other")?.platform ?? "other",
+    orderId: first((o) => o.orderId),
+    orderDate: first((o) => o.orderDate),
+    itemCount: first((o) => o.itemCount),
+    items: unionRows(orders.map((o) => o.items), itemKey),
+    fees: unionRows(orders.map((o) => o.fees), lineKey),
+    discounts: unionRows(orders.map((o) => o.discounts), lineKey),
+    itemTotal: first((o) => o.itemTotal),
+    grandTotal: first((o) => o.grandTotal),
+    page: { hasHeader: orders.some((o) => o.page.hasHeader), hasTotal: orders.some((o) => o.page.hasTotal) },
+    confidence: conf,
+    uncertain: Array.from(new Set(orders.flatMap((o) => o.uncertain))),
   };
 }
 
 /**
- * Join pieces (in pick order) into orders.
- *   - same platform + order id → same order, wherever it was picked
- *   - a piece with no header and no id continues the previous order if that one had no total yet
+ * Group screenshots into orders, in ANY pick order:
+ *   - same platform + order id → same order
+ *   - otherwise two groups join when they share a product row (same name and price),
+ *     e.g. the middle of a long Blinkit order overlaps both its top and its bottom.
+ * Two groups never join if both have an order id that differs, both show a header
+ * (two separate order tops), or both show a different grand total.
  */
 export function joinPieces(pieces: Piece[]): { order: ExtractedOrder; sources: number[] }[] {
-  const out: { order: ExtractedOrder; sources: number[] }[] = [];
+  type Group = { parts: Piece[]; key: string | null; headers: number; total: number | null; platform: Platform; items: Set<string> };
+  const groups: Group[] = [];
   for (const p of [...pieces].sort((a, b) => a.index - b.index)) {
     const key = orderKey(p.order);
-    let target = key ? out.find((o) => orderKey(o.order) === key) : undefined;
+    const g: Group = {
+      parts: [p], key, headers: p.order.page.hasHeader ? 1 : 0, total: p.order.grandTotal,
+      platform: p.order.platform, items: new Set(p.order.items.map(itemKey)),
+    };
+    const same = key ? groups.find((x) => x.key === key) : undefined;
+    if (same) absorb(same, g);
+    else groups.push(g);
+  }
 
-    if (!target && !key && !p.order.page.hasHeader && out.length > 0) {
-      const prev = out[out.length - 1];
-      const samePlatform = p.order.platform === "other" || prev.order.platform === "other" || p.order.platform === prev.order.platform;
-      if (samePlatform && !prev.order.page.hasTotal) target = prev;
-    }
-    // A header-only piece (id, no total) followed by the rest with the same id is handled above;
-    // a piece with an id joining a previous id-less top half:
-    if (!target && key && out.length > 0) {
-      const prev = out[out.length - 1];
-      if (!orderKey(prev.order) && !prev.order.page.hasTotal && !p.order.page.hasHeader && prev.order.platform === p.order.platform) target = prev;
-    }
+  function compatible(a: Group, b: Group) {
+    if (a.key && b.key && a.key !== b.key) return false;
+    if (a.platform !== "other" && b.platform !== "other" && a.platform !== b.platform) return false;
+    if (a.headers > 0 && b.headers > 0 && !(a.key && a.key === b.key)) return false;
+    if (a.total !== null && b.total !== null && round2(a.total) !== round2(b.total)) return false;
+    return true;
+  }
+  function absorb(into: Group, from: Group) {
+    into.parts.push(...from.parts);
+    into.key = into.key ?? from.key;
+    into.headers += from.headers;
+    into.total = into.total ?? from.total;
+    if (into.platform === "other") into.platform = from.platform;
+    from.items.forEach((k) => into.items.add(k));
+  }
 
-    if (target) {
-      target.order = merge(target.order, p.order);
-      target.sources.push(p.index);
-    } else {
-      out.push({ order: structuredClone(p.order), sources: [p.index] });
+  // Keep merging overlapping groups until nothing changes.
+  for (let changed = true; changed; ) {
+    changed = false;
+    outer: for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j];
+        const overlap = [...b.items].some((k) => a.items.has(k));
+        if (overlap && compatible(a, b)) {
+          absorb(a, b);
+          groups.splice(j, 1);
+          changed = true;
+          break outer;
+        }
+      }
     }
   }
-  return out;
+
+  return groups
+    .map((g) => ({ order: mergeGroup(g.parts), sources: g.parts.map((p) => p.index).sort((a, b) => a - b) }))
+    .sort((a, b) => a.sources[0] - b.sources[0]);
 }
 
 // ── Totals ─────────────────────────────────────────────────────────────────────
@@ -181,6 +251,17 @@ export function draftTotals(o: {
     status = Math.abs(difference) <= TOTALS_TOLERANCE ? "ok" : "mismatch";
   }
   return { itemsTotal, feesTotal, discountsTotal, computed, difference, status };
+}
+
+/**
+ * Does the "N items" heading match what we found? Apps count differently: Blinkit and
+ * Zepto count rows, Instamart counts units (3 x Maggi = 3), so either may match.
+ * null when no count was printed.
+ */
+export function itemCountCheck(o: Pick<ExtractedOrder, "itemCount" | "items">): { printed: number; ok: boolean } | null {
+  if (o.itemCount === null) return null;
+  const units = Math.round(o.items.reduce((a, i) => a + i.qty, 0));
+  return { printed: o.itemCount, ok: o.items.length === o.itemCount || units === o.itemCount };
 }
 
 /** An order can be saved once its totals add up, or the user accepted the items total. */
@@ -252,7 +333,7 @@ export function toDraft(order: ExtractedOrder, sources: number[], me: string, ev
       qty: i.qty,
       lineTotal: i.lineTotal,
       sharedBy: [...everyone],
-      grounded: i.grounded,
+      doubtful: order.uncertain.some((u) => normName(u).includes(normName(i.name).split(" ").slice(0, 2).join(" "))),
     })),
     fees: order.fees.map((f) => ({ id: uid(), label: f.label, amount: f.amount })),
     discounts: order.discounts.map((d) => ({ id: uid(), label: d.label, amount: d.amount })),

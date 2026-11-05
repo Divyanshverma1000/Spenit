@@ -15,7 +15,8 @@
     "cf:dev": "node scripts/cf-dev.js",
     "cf:deploy": "wrangler deploy",
     "cf:connect-db": "node scripts/cf-connect-db.js",
-    "cf:tail": "wrangler tail --format pretty"
+    "cf:tail": "wrangler tail --format pretty",
+    "test:frontend": "vitest run --root ../frontend lib"
   },
   "vitest": {
     "include": [

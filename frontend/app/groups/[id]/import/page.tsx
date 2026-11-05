@@ -3,13 +3,13 @@
 /**
  * Import orders — bulk quick-commerce order split (BulkOrderSplit_Plan.md §2).
  *
- *   Drop → Reading (OCR on the phone → text to AI, live cards) → Sort it out → Check → Saved
+ *   Drop → Reading (each screenshot → vision model, live cards) → Sort it out → Check → Saved
  *
- * Images never leave the phone unless the text route clearly failed for that one image
- * (the server answers needsVision: true) — then only that image is sent to the vision model.
+ * Each screenshot is compressed on the phone and read on its own; screenshots of the same
+ * order are joined in lib/orderImport. A failed screenshot shows the server's real reason.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence, PanInfo } from "framer-motion";
@@ -20,18 +20,17 @@ import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { readJson } from "@/lib/api";
 import { fileToCompressedDataUrl } from "@/lib/image";
-import { ocrImage, warmUpOcr, type OcrResult } from "@/lib/ocr";
 import { groupKey, useGroupOverview, type GroupMember } from "@/lib/queries";
 import {
-  adjustToBillTotal, draftTotals, formatINR, isReady, joinPieces, netForMe, orderKey, orderTitle,
+  adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody,
-  type DraftItem, type DraftOrder, type ExtractResponse, type FeePolicy,
+  type DraftItem, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Step = "drop" | "reading" | "sort" | "check" | "saving" | "saved";
-type PieceStatus = "queued" | "ocr" | "ai" | "vision" | "done" | "failed";
+type PieceStatus = "queued" | "ai" | "done" | "failed";
 
 interface PieceState {
   index: number;
@@ -39,7 +38,7 @@ interface PieceState {
   thumb: string;
   status: PieceStatus;
   error?: string;
-  ocr?: OcrResult;
+  failure?: ExtractFailure;
   resp?: ExtractResponse;
 }
 
@@ -47,13 +46,18 @@ const MAX_IMAGES = 30;
 
 /** Server fallback reason → what the user sees on that screenshot. */
 const AI_FAILURE: Record<string, string> = {
-  config_error: "AI key needed",
-  blocked: "Groq blocked this network (403) — try a VPN or mobile data",
+  config_error: "AI key missing or invalid — check it in Profile",
+  blocked: "Groq refused the server's network (403)",
+  model_unavailable: "The AI model is unavailable — the app needs an update",
+  too_large: "Image too large — try a smaller screenshot",
+  invalid_request: "The AI rejected this image",
   rate_limit: "AI is busy (rate limit) — wait a minute, then retry",
   timeout: "AI took too long — tap retry",
   network: "Couldn't reach the AI — tap retry",
   parse_error: "AI gave an unreadable answer — tap retry",
 };
+/** These fail the same way for every screenshot — no point sending the rest. */
+const ACCOUNT_FAILURES = new Set(["config_error", "blocked", "model_unavailable"]);
 const AI_CONCURRENCY = 3;
 
 async function hashFile(f: File): Promise<string> {
@@ -92,15 +96,11 @@ export default function ImportOrdersPage() {
   const nextIndex = useRef(0);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
 
-  useEffect(() => {
-    warmUpOcr();
-  }, []);
-
   const patchPiece = useCallback((index: number, patch: Partial<PieceState>) => {
     setPieces((ps) => ps.map((p) => (p.index === index ? { ...p, ...patch } : p)));
   }, []);
 
-  // ── Reading: OCR → text AI → (rarely) vision ───────────────────────────────
+  // ── Reading: screenshot → vision model ─────────────────────────────────────
 
   const aiSlots = useRef(0);
   const aiQueue = useRef<(() => void)[]>([]);
@@ -117,10 +117,16 @@ export default function ImportOrdersPage() {
 
   /** The AI's answer, or why there is none (so the screen never blames the screenshot for an AI outage). */
   const extract = useCallback(
-    async (body: object): Promise<ExtractResponse | { failed: string }> => {
-      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify(body) });
-      const data = await readJson<ExtractResponse | { fallback: true; reason: string; message?: string }>(res);
-      if ("fallback" in data) return { failed: data.reason };
+    async (imageBase64: string): Promise<ExtractResponse | ExtractFailure> => {
+      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64 }) });
+      const data = (await res.json().catch(() => null)) as ExtractResponse | ExtractFailure | { error?: string } | null;
+      if (data && "fallback" in data) return data;
+      if (!res.ok || !data || !("order" in data)) {
+        return {
+          fallback: true, reason: "network", stage: "server", status: res.status,
+          message: (data && "error" in data && data.error) || `Server answered ${res.status}`,
+        };
+      }
       return data;
     },
     [authFetch]
@@ -129,30 +135,18 @@ export default function ImportOrdersPage() {
   const processPiece = useCallback(
     async (p: PieceState) => {
       try {
-        patchPiece(p.index, { status: "ocr", error: undefined });
-        const ocr = await ocrImage(p.file);
-        patchPiece(p.index, { status: "ai", ocr });
-
-        const first = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence }));
-        // Account / network problems: retrying with the image would fail the same way.
-        if ("failed" in first && (first.failed === "config_error" || first.failed === "blocked")) {
-          if (first.failed === "config_error") setNoKey(true);
-          else setBlocked(true);
-          patchPiece(p.index, { status: "failed", error: AI_FAILURE[first.failed] });
-          return;
-        }
-
-        let resp: ExtractResponse | null = "failed" in first ? null : first;
-        let lastFailure = "failed" in first ? first.failed : null;
-        if (!resp || resp.needsVision) {
-          patchPiece(p.index, { status: "vision", resp: resp ?? undefined });
-          const imageBase64 = await fileToCompressedDataUrl(p.file, 2000, 0.85);
-          const vision = await withAiSlot(() => extract({ ocrText: ocr.text, ocrConfidence: ocr.confidence, imageBase64 }));
-          if ("failed" in vision) lastFailure = vision.failed;
-          else if (vision.order.items.length > 0 || !resp) resp = vision;
-        }
-        if (!resp) {
-          patchPiece(p.index, { status: "failed", error: AI_FAILURE[lastFailure ?? ""] ?? "AI couldn't read this one — tap retry" });
+        patchPiece(p.index, { status: "ai", error: undefined, failure: undefined });
+        // Tall screenshots: keep the long edge high enough for small price text.
+        const imageBase64 = await fileToCompressedDataUrl(p.file, 2000, 0.85);
+        const resp = await withAiSlot(() => extract(imageBase64));
+        if ("fallback" in resp) {
+          if (resp.reason === "config_error") setNoKey(true);
+          if (ACCOUNT_FAILURES.has(resp.reason) && resp.reason !== "config_error") setBlocked(true);
+          patchPiece(p.index, {
+            status: "failed",
+            failure: resp,
+            error: AI_FAILURE[resp.reason] ?? resp.message ?? "AI couldn't read this one — tap retry",
+          });
           return;
         }
         if (resp.order.items.length === 0) {
@@ -188,7 +182,7 @@ export default function ImportOrdersPage() {
   );
 
   const doneCount = pieces.filter((p) => p.status === "done").length;
-  const busy = pieces.some((p) => ["queued", "ocr", "ai", "vision"].includes(p.status));
+  const busy = pieces.some((p) => ["queued", "ai"].includes(p.status));
 
   // Live order cards while reading: join whatever has finished so far.
   const liveOrders = useMemo(
@@ -297,8 +291,8 @@ export default function ImportOrdersPage() {
 
       {blocked && (
         <div className="mx-4 mt-4 p-4 rounded-[16px] bg-[var(--negative)]/10 text-[13px]">
-          <b>Groq is blocking this network.</b> The AI service refused the request (403 &ldquo;Access denied&rdquo;).
-          Your screenshots are fine. Switch to mobile data or a VPN, then tap retry on each one.
+          <b>The AI service can&rsquo;t be used right now.</b> {pieces.find((p) => p.failure && ACCOUNT_FAILURES.has(p.failure.reason))?.failure?.message ?? ""}
+          {" "}Your screenshots are fine — this is on Spenit&rsquo;s side. Tap retry later.
         </div>
       )}
 
@@ -441,7 +435,7 @@ function DropStep({ onPick }: { onPick: () => void }) {
 // ── Step 2: Reading ────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<PieceStatus, string> = {
-  queued: "Waiting", ocr: "Reading text", ai: "Understanding", vision: "Looking closer", done: "Done", failed: "Failed",
+  queued: "Waiting", ai: "Reading", done: "Done", failed: "Failed",
 };
 
 function ReadingStep({
@@ -502,6 +496,7 @@ function ReadingStep({
         {liveOrders.map(({ order, sources }) => {
           const fake = { items: order.items, fees: order.fees, discounts: order.discounts, grandTotal: order.grandTotal };
           const t = draftTotals(fake);
+          const count = itemCountCheck(order);
           return (
             <motion.div
               key={sources.join("-")}
@@ -514,7 +509,14 @@ function ReadingStep({
                 <div className="font-extrabold tabular-nums">{formatINR(order.grandTotal ?? t.computed)}</div>
               </div>
               <div className="flex items-center justify-between mt-1 text-[12px] text-[var(--text-secondary)]">
-                <span>{order.items.length} items{sources.length > 1 ? ` · ${sources.length} screenshots joined` : ""}</span>
+                <span>
+                  {count && !count.ok ? (
+                    <b className="text-[var(--accent)]">{order.items.length} of {count.printed} items found</b>
+                  ) : (
+                    `${order.items.length} items`
+                  )}
+                  {sources.length > 1 ? ` · ${sources.length} screenshots joined` : ""}
+                </span>
                 {t.status === "ok" ? (
                   <span className="text-[var(--positive)] font-bold flex items-center gap-1"><Check size={12} strokeWidth={3} /> adds up</span>
                 ) : t.status === "mismatch" ? (
@@ -545,15 +547,23 @@ function DebugPiece({ p }: { p: PieceState }) {
       <button onClick={() => setOpen((o) => !o)} className="w-full p-3 flex items-center justify-between text-left">
         <span className="font-bold">#{p.index + 1} · {STATUS_LABEL[p.status]}</span>
         <span className="text-[var(--text-secondary)] tabular-nums">
-          {p.ocr ? `OCR ${p.ocr.confidence}% · ${p.ocr.ms}ms` : ""}
-          {p.resp ? ` · ${p.resp.source} ${p.resp.latencyMs}ms · grounded ${Math.round(p.resp.groundedShare * 100)}% · ${p.resp.totals.status}` : ""}
+          {p.resp ? `${p.resp.latencyMs}ms · ${p.resp.totals.status} · ${p.resp.order.confidence}` : ""}
+          {p.failure ? `${p.failure.stage} · ${p.failure.reason}${p.failure.status ? ` · HTTP ${p.failure.status}` : ""}` : ""}
         </span>
       </button>
       {open && (
         <div className="px-3 pb-3 space-y-2">
-          {p.resp && <div className="text-[var(--text-secondary)]">model: {p.resp.model}{p.resp.needsVision ? " · text route asked for vision" : ""}</div>}
-          <div className="font-bold">OCR text sent</div>
-          <pre className="whitespace-pre-wrap break-words bg-[var(--paper-dim)] p-2 rounded-[8px] max-h-72 overflow-auto font-[family-name:var(--font-mono)] text-[11px]">{p.ocr?.text ?? "—"}</pre>
+          {p.resp && (
+            <div className="text-[var(--text-secondary)]">
+              model: {p.resp.model} · attempts {p.resp.attempts} · tokens {p.resp.usage.promptTokens ?? "?"}+{p.resp.usage.completionTokens ?? "?"}
+              {p.resp.order.uncertain.length > 0 ? ` · unsure: ${p.resp.order.uncertain.join(", ")}` : ""}
+            </div>
+          )}
+          {p.failure && (
+            <div className="text-[var(--negative)] break-words">
+              {p.failure.model ? `model: ${p.failure.model} · ` : ""}{p.failure.message ?? "no message"}
+            </div>
+          )}
           <div className="font-bold">AI result</div>
           <pre className="whitespace-pre-wrap break-words bg-[var(--paper-dim)] p-2 rounded-[8px] max-h-72 overflow-auto font-[family-name:var(--font-mono)] text-[11px]">{p.resp ? JSON.stringify(p.resp.order, null, 2) : "—"}</pre>
         </div>
@@ -716,7 +726,7 @@ function OrderCard({
                 onClick={() =>
                   update((d) => ({
                     ...d,
-                    items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], grounded: true }],
+                    items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], doubtful: false }],
                   }))
                 }
                 className="w-full py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1 border-t border-[var(--hairline)]"
@@ -825,7 +835,7 @@ function ItemRow({
               type="number"
               inputMode="decimal"
               value={it.lineTotal || ""}
-              onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), grounded: true })}
+              onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), doubtful: false })}
               placeholder="0"
               className="w-20 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-bold text-right tabular-nums outline-none"
             />
@@ -842,8 +852,8 @@ function ItemRow({
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-              className={`text-[14px] font-bold tabular-nums px-1 rounded ${it.grounded ? "" : "text-[var(--accent)] underline decoration-dotted"}`}
-              title={it.grounded ? "Edit" : "This price wasn't found in the screenshot text — please check"}
+              className={`text-[14px] font-bold tabular-nums px-1 rounded ${it.doubtful ? "text-[var(--accent)] underline decoration-dotted" : ""}`}
+              title={it.doubtful ? "The AI was unsure of this row — please check it against the screenshot" : "Edit"}
             >
               {formatINR(it.lineTotal)}
             </button>

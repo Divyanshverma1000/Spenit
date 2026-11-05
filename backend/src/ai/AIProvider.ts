@@ -140,11 +140,29 @@ export interface LedgerQueryResponse {
 
 /**
  * One quick-commerce order screenshot → raw order JSON (validated later by lib/orderExtract).
- * `source` says which route produced it, for the accuracy benchmark.
+ * A failure always says which stage failed and why, so the screen can show the real cause.
  */
+export type OrderExtractStage = "config" | "groq_request" | "groq_response" | "json_parse";
+
+export interface OrderExtractUsage {
+  promptTokens: number | null;
+  completionTokens: number | null;
+}
+
 export type OrderExtractResult =
-  | { ok: true; raw: unknown; source: "text" | "vision"; model: string; latencyMs: number }
-  | { ok: false; reason: AIFallback["reason"]; message?: string };
+  | { ok: true; raw: unknown; model: string; latencyMs: number; attempts: number; usage: OrderExtractUsage }
+  | {
+      ok: false;
+      reason: AIFallback["reason"] | "invalid_request" | "model_unavailable" | "too_large";
+      stage: OrderExtractStage;
+      /** HTTP status from Groq, when it answered */
+      status?: number;
+      /** Groq's own error message (never contains the key) */
+      message?: string;
+      model: string;
+      /** raw model text when JSON parsing failed — trimmed, for diagnostics */
+      rawText?: string;
+    };
 
 // ── The interface — stable across all versions ─────────────────────────────────
 
@@ -165,11 +183,8 @@ export interface AIProvider {
    */
   parseReceiptImage(imageDatas: string[], groupContext: GroupMember[]): Promise<ParseResult>;
 
-  /**
-   * Structure ONE order screenshot. Primary route: OCR text from the phone (text model).
-   * Backup route: the image itself (vision model), with the OCR text as a hint.
-   */
-  extractOrder(input: { ocrText: string; imageBase64?: string }): Promise<OrderExtractResult>;
+  /** Read ONE order screenshot with the vision model into order JSON. */
+  extractOrder(input: { imageBase64: string }): Promise<OrderExtractResult>;
 
   /**
    * Phrase a settlement simplification in natural language.
