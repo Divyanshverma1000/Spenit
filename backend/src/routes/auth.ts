@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from "../lib/account";
 import { Router, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import pool from "../db/pool";
@@ -124,6 +125,12 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
     user = inserted.rows[0];
     console.log(`New user created: ${user.username} (${user.id})`);
   }
+
+  // Signing in means agreeing to the current Terms and Privacy Policy: record which version.
+  await pool.query(
+    'update "User" set terms_version = $2, terms_accepted_at = now() where id = $1 and terms_version is distinct from $2',
+    [user.id, TERMS_VERSION]
+  ).catch((err) => console.error("[auth] consent record failed:", (err as Error).message));
 
   // 3. Issue tokens
   const accessToken = issueAccessToken(user.id, user.username);

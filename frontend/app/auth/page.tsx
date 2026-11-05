@@ -158,8 +158,13 @@ export default function AuthPage() {
             No password required
           </div>
 
+          <p className="text-[11px] text-[var(--text-muted)] text-center leading-snug max-w-xs">
+            By continuing you agree to our{" "}
+            <a href="/terms" className="font-semibold text-[var(--text-secondary)] underline underline-offset-2">Terms</a> and{" "}
+            <a href="/privacy" className="font-semibold text-[var(--text-secondary)] underline underline-offset-2">Privacy Policy</a>.
+          </p>
           <p className="text-[10px] text-gray-400 font-medium tracking-wide">
-            Free forever for core splitting • No ads • No hidden limits
+            Free during early access • No ads
           </p>
         </div>
       </div>

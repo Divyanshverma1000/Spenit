@@ -47,7 +47,7 @@ What happens today, from the code:
 
 Today `privacy/page.tsx` and `terms/page.tsx` are ~4 short paragraphs, and **"Last updated" shows today's date on every visit**. That isn't a real date and could be called misleading.
 
-- [ ] **Privacy policy rewrite** with a fixed effective date and a version. It must cover:
+- [x] **Privacy policy rewrite** with a fixed effective date and a version. It must cover:
   - **What we collect:** Google account name, email and photo; profile photo uploads; group, expense and item data; receipt and order screenshots; push tokens; IP and device logs.
   - **Who processes it:**
     - Google (sign-in)
@@ -60,19 +60,19 @@ Today `privacy/page.tsx` and `terms/page.tsx` are ~4 short paragraphs, and **"La
   - **Group data is shared with the group.** Your expenses are visible to the other members; private items are masked.
   - Children: not for under-13s (16 in the EU).
   - Contact / grievance officer email.
-- [ ] **Terms of service:**
+- [x] **Terms of service:**
   - Spenit records who owes whom. It is **not** a payment service and doesn't hold money.
   - AI may be wrong; check amounts.
   - Acceptable use; account termination; liability cap; governing law.
   - Pricing and refunds, needed once paid plans exist.
 - [ ] **India — DPDP Act 2023:** notice and consent at sign-up, a grievance officer, a way to access, correct and erase data, breach notification.
 - [ ] **EU/UK — GDPR, if global:** lawful basis, data export, erasure, processor list, cookie notice. We only use essential storage, so no tracking-consent banner is needed unless analytics is added.
-- [ ] **Delete my account** (P0, also required by app stores):
+- [x] **Delete my account** (P0, also required by app stores):
   - Profile → Delete account, with a confirmation.
   - Personal data is erased and photos removed.
   - In groups, the person becomes "Deleted user" so balances stay correct for everyone else.
-- [ ] **Export my data** (JSON/CSV) from Profile.
-- [ ] Consent checkbox and policy links on the sign-in page; a "policy updated" notice when the version changes.
+- [x] **Export my data** (JSON/CSV) from Profile.
+- [x] Consent checkbox and policy links on the sign-in page; a "policy updated" notice when the version changes.
 - [ ] **Placeholders contain other people's names** (and maybe phone numbers). Mention this in the policy, and erase them when the group is deleted.
 
 > Note: these pages need a short review by a lawyer before a paid launch. I can draft them, but a draft isn't legal advice.

@@ -112,7 +112,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   );
 
   const settlement = result.rows[0];
-  await logActivitySafe(pool, { groupId, actorId: callerId, kind: "settlement_recorded", settlementId: settlement.id, summary: { ...{ from: await displayName(pool, settlement.group_id, settlement.from_user), to: await displayName(pool, settlement.group_id, settlement.to_user), amount: settlement.amount }, method } });
+  await logActivitySafe(pool, { groupId, actorId: callerId, kind: "settlement_recorded", settlementId: settlement.id, summary: { ...{ from: await displayName(pool, settlement.group_id, settlement.from_user), to: await displayName(pool, settlement.group_id, settlement.to_user), fromId: settlement.from_user, toId: settlement.to_user, amount: settlement.amount }, method } });
 
   // Fetch toUser info for UPI deep link generation (returned to client)
   const toUserRow = await pool.query(
@@ -210,7 +210,7 @@ router.post("/:id/confirm", requireAuth, async (req: Request, res: Response): Pr
     [userId, id]
   );
 
-  await logActivitySafe(pool, { groupId: s.group_id, actorId: userId, kind: "settlement_confirmed", settlementId: id, summary: { from: await displayName(pool, s.group_id, s.from_user), to: await displayName(pool, s.group_id, s.to_user), amount: s.amount } });
+  await logActivitySafe(pool, { groupId: s.group_id, actorId: userId, kind: "settlement_confirmed", settlementId: id, summary: { from: await displayName(pool, s.group_id, s.from_user), to: await displayName(pool, s.group_id, s.to_user), fromId: s.from_user, toId: s.to_user, amount: s.amount } });
 
   // Invalidate balance cache now that balance actually changes (Architecture.md §4)
   invalidateGroupBalanceCache(s.group_id).catch((err) =>
@@ -273,7 +273,7 @@ router.post("/:id/reject", requireAuth, async (req: Request, res: Response): Pro
      RETURNING id, status`,
     [id]
   );
-  await logActivitySafe(pool, { groupId: s.group_id, actorId: userId, kind: "settlement_rejected", settlementId: id, summary: { from: await displayName(pool, s.group_id, s.from_user), to: await displayName(pool, s.group_id, s.to_user), amount: s.amount } });
+  await logActivitySafe(pool, { groupId: s.group_id, actorId: userId, kind: "settlement_rejected", settlementId: id, summary: { from: await displayName(pool, s.group_id, s.from_user), to: await displayName(pool, s.group_id, s.to_user), fromId: s.from_user, toId: s.to_user, amount: s.amount } });
 
   res.json(updated.rows[0]);
 });

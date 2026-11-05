@@ -2,6 +2,8 @@ import { Router, Request, Response } from "express";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { MAX_PHOTO_BASE64, PHOTO_MIME } from "../lib/avatars";
+import { deleteAccount, exportAccount } from "../lib/account";
+import { getGroupBalance, invalidateGroupBalanceCache } from "./balance";
 
 const router = Router();
 
@@ -155,5 +157,50 @@ router.get("/:id/photo", async (req: Request, res: Response): Promise<void> => {
   res.send(Buffer.from(rows[0].data, "base64"));
 });
 
+
+// ─── GET /users/me/export ─────────────────────────────────────────────────────
+/** Download everything we hold about you (JSON). */
+router.get("/me/export", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const data = await exportAccount(pool, req.user!.userId);
+  res.setHeader("Content-Disposition", `attachment; filename="spenit-data-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.json(data);
+});
+
+// ─── DELETE /users/me ─────────────────────────────────────────────────────────
+/**
+ * Delete my account. Body: { confirm: "DELETE" }.
+ * Personal data is erased; group records stay under "Deleted user" (see lib/account.ts).
+ */
+router.delete("/me", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user!.userId;
+  if ((req.body ?? {}).confirm !== "DELETE") {
+    res.status(400).json({ error: 'Send { confirm: "DELETE" } to delete your account' });
+    return;
+  }
+  // Which groups still have money open for this person (they stay listed there).
+  const groups = await pool.query('select group_id from "GroupMember" where user_id = $1', [userId]);
+  const open = new Set<string>();
+  for (const { group_id } of groups.rows as { group_id: string }[]) {
+    await invalidateGroupBalanceCache(group_id).catch(() => {});
+    const bal = await getGroupBalance(group_id, userId);
+    const mine = bal?.memberBalances.find((m) => m.userId === userId);
+    if (mine && Math.abs(parseFloat(mine.signedAmount)) >= 0.005) open.add(group_id);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await deleteAccount(client, userId, open);
+    await client.query("COMMIT");
+    for (const { group_id } of groups.rows as { group_id: string }[]) invalidateGroupBalanceCache(group_id).catch(() => {});
+    res.clearCookie("refresh_token", { path: "/" });
+    res.clearCookie("refresh_token", { path: "/auth" });
+    res.json({ message: "Account deleted", ...result });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+});
 
 export default router;

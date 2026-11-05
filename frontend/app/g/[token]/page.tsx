@@ -211,6 +211,9 @@ export default function GroupInvitePage() {
                     text="continue_with"
                   />
                 </div>
+                <p className="text-[11px] text-[var(--text-muted)] text-center mt-3">
+                  By continuing you agree to our <a href="/terms" className="underline">Terms</a> and <a href="/privacy" className="underline">Privacy Policy</a>.
+                </p>
               </div>
             ) : (
               <div className="border-t border-[var(--border)] pt-5 space-y-4">

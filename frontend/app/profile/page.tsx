@@ -12,7 +12,8 @@ import { SettingsRow } from "@/components/ui/SettingsRow";
 import { LogOut, User, Bell, Cpu, Key, CheckCircle, AlertCircle, Wallet, Edit2, Copy, Check, Lock, HelpCircle, FileText, Info, Trash2, RefreshCw, ShieldCheck } from "lucide-react";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Palette, Camera, Loader2 } from "lucide-react";
+import { Palette, Camera, Loader2, Download, UserX } from "lucide-react";
+import DeleteAccountSheet from "@/components/DeleteAccountSheet";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { fileToSquareAvatar } from "@/lib/image";
 
@@ -31,7 +32,29 @@ interface UserProfile {
 
 export default function ProfilePage() {
   const authed = useRequireAuth();
-  const { user, logout, accessToken } = useAuth();
+  const { user, logout, accessToken, authFetch } = useAuth();
+  const [showDelete, setShowDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  /** Download everything we hold about you as a JSON file. */
+  async function downloadMyData() {
+    setExporting(true);
+    try {
+      const res = await authFetch("/users/me/export");
+      if (!res.ok) throw new Error();
+      const blob = new Blob([JSON.stringify(await res.json(), null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `spenit-data-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch {
+      alert("Couldn't download your data. Check your connection and try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
   const router = useRouter();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -430,6 +453,11 @@ export default function ProfilePage() {
                 <SettingsRow icon={<Lock size={18} />} label="Privacy Policy" onClick={() => router.push("/privacy")} />
                 <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => router.push("/terms")} />
                 <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => router.push("/about")} />
+                <SettingsRow
+                  icon={exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                  label="Download my data"
+                  onClick={() => { if (!exporting) void downloadMyData(); }}
+                />
                 <SettingsRow 
                   icon={<LogOut size={18} />} 
                   label="Log Out" 
@@ -442,14 +470,30 @@ export default function ProfilePage() {
               </SettingsList>
             </motion.div>
 
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-8">
+              <SettingsList title="Account">
+                <SettingsRow icon={<UserX size={18} />} label="Delete account" destructive onClick={() => setShowDelete(true)} />
+              </SettingsList>
+            </motion.div>
+
             <div className="text-center pb-6">
               <p className="text-[12px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Spenit v1.0</p>
-              <p className="text-[12px] font-medium text-[var(--text-muted)] mt-1">Premium Fintech Interface</p>
+              <p className="text-[12px] font-medium text-[var(--text-muted)] mt-1">Split fairly, stay friends</p>
             </div>
 
           </motion.div>
         ) : null}
       </main>
+      {showDelete && (
+        <DeleteAccountSheet
+          onClose={() => setShowDelete(false)}
+          onDeleted={() => {
+            try { localStorage.clear(); sessionStorage.clear(); } catch { /* private mode */ }
+            logout();
+            router.replace("/auth");
+          }}
+        />
+      )}
       <BottomNav />
     </>
   );
