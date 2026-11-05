@@ -10,8 +10,12 @@
 import type { NextFunction, Request, Response } from "express";
 import pool from "./pool";
 import m010 from "../../migrations/010_group_avatars.sql";
+import m011 from "../../migrations/011_group_safety.sql";
 
-const BUNDLED: { filename: string; sql: string }[] = [{ filename: "010_group_avatars.sql", sql: m010 }];
+const BUNDLED: { filename: string; sql: string }[] = [
+  { filename: "010_group_avatars.sql", sql: m010 },
+  { filename: "011_group_safety.sql", sql: m011 },
+];
 
 /** Any stable 64-bit number: serialises migration runs across concurrent isolates. */
 const LOCK_ID = 4_210_017;

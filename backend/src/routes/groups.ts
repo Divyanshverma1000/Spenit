@@ -6,6 +6,8 @@ import { isAvatarKey } from "../lib/avatars";
 import { invalidateGroupBalanceCache, getGroupBalance } from "./balance";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
+import { sendToUsers } from "../push";
+import { claimPlaceholder, undoClaim, logActivity, logActivitySafe, displayName, SELF_UNDO_MS, type ClaimRow } from "../lib/groupSafety";
 import {
   normalizeNickname,
   getMemberRole,
@@ -251,6 +253,7 @@ router.post("/join/:token", requireAuth, async (req: Request, res: Response): Pr
 
     const me = await client.query('select name from "User" where id = $1', [userId]);
     const myName: string = me.rows[0]?.name || "Member";
+    let joinedAs: string | null = null;
 
     const existing = await client.query(
       'select 1 from "GroupMember" where group_id = $1 and user_id = $2',
@@ -276,38 +279,19 @@ router.post("/join/:token", requireAuth, async (req: Request, res: Response): Pr
     }
 
     if (claimMemberId) {
-      // Claim a placeholder: take over the history recorded for them.
-      const ph = await client.query(
-        `select gm.nickname, u.name
-         from "GroupMember" gm join "User" u on u.id = gm.user_id
-         where gm.group_id = $1 and gm.user_id = $2 and u.is_placeholder = true
-         for update of gm`,
-        [group.id, claimMemberId]
-      );
-      if (ph.rows.length === 0) {
+      // Claim a placeholder: take over the history recorded for them (undoable, see MemberClaim).
+      const claimed = await claimPlaceholder(client, group.id, claimMemberId, userId, nickname);
+      if (!claimed.ok) {
         await client.query("ROLLBACK");
-        res.status(404).json({ error: "That person was already claimed or doesn't exist", code: "PLACEHOLDER_GONE" });
+        if (claimed.code === "PLACEHOLDER_GONE") res.status(404).json({ error: "That person was already claimed or doesn't exist", code: "PLACEHOLDER_GONE" });
+        else res.status(409).json({ error: `"${claimed.name}" is already used in this group`, code: "NICKNAME_TAKEN" });
         return;
       }
-
-      const finalNickname: string = nickname || ph.rows[0].nickname || ph.rows[0].name;
-      await transferUserReferences(client, claimMemberId, userId);
-      // Remove the placeholder first so its nickname is free to reuse.
-      await client.query(
-        'delete from "GroupMember" where group_id = $1 and user_id = $2',
-        [group.id, claimMemberId]
-      );
-      await client.query('update "User" set deleted_at = now() where id = $1', [claimMemberId]);
-      if (await isDisplayNameTaken(client, group.id, finalNickname)) {
-        await client.query("ROLLBACK");
-        res.status(409).json({ error: `"${finalNickname}" is already used in this group`, code: "NICKNAME_TAKEN" });
-        return;
-      }
-      await client.query(
-        `insert into "GroupMember" (group_id, user_id, role, nickname)
-         values ($1, $2, 'member', $3)`,
-        [group.id, userId, finalNickname]
-      );
+      await logActivity(client, {
+        groupId: group.id, actorId: userId, kind: "member_claimed", targetUser: userId,
+        summary: { accountName: myName, placeholderName: claimed.placeholderName, claimId: claimed.claimId },
+      });
+      joinedAs = claimed.placeholderName;
     } else {
       // Fresh join: a nickname is needed only if the name would be ambiguous.
       const effective = nickname || myName;
@@ -328,13 +312,29 @@ router.post("/join/:token", requireAuth, async (req: Request, res: Response): Pr
          values ($1, $2, 'member', $3)`,
         [group.id, userId, nickname]
       );
+      await logActivity(client, { groupId: group.id, actorId: userId, kind: "member_joined", targetUser: userId, summary: { name: nickname || myName } });
     }
 
     await client.query("COMMIT");
     invalidateGroupBalanceCache(group.id).catch(() => {});
 
+    // Tell the admins (and whoever the claimed name owes / is owed by) so a wrong pick is noticed.
+    if (joinedAs) {
+      const watchers = await pool.query(
+        `select user_id from "GroupMember" gm join "User" u on u.id = gm.user_id
+         where gm.group_id = $1 and u.is_placeholder = false and gm.user_id <> $2`,
+        [group.id, userId]
+      );
+      sendToUsers(watchers.rows.map((r: { user_id: string }) => r.user_id), {
+        title: group.name,
+        body: `${myName} joined as ${joinedAs}. Not right? Open the group to fix it.`,
+        url: `/groups/${group.id}`,
+      }).catch(() => {});
+    }
+
     res.json({
       message: "Joined successfully",
+      joinedAs,
       groupId: group.id,
       groupName: group.name,
       groupIcon: group.icon,
@@ -372,6 +372,15 @@ export async function getGroupDetail(id: string, myRole: string) {
     [id]
   );
 
+  // Active claims: lets the claimer say "Not me" and the admin undo or reassign.
+  const claims = await pool.query(
+    `select id, claimed_by, placeholder_nickname, created_at from "MemberClaim"
+     where group_id = $1 and undone_at is null`,
+    [id]
+  );
+  const claimOf = new Map<string, { claimId: string; placeholderName: string | null; claimedAt: string }>();
+  for (const c of claims.rows) claimOf.set(c.claimed_by, { claimId: c.id, placeholderName: c.placeholder_nickname, claimedAt: c.created_at });
+
   return {
     id: group.id,
     name: group.name,
@@ -391,6 +400,8 @@ export async function getGroupDetail(id: string, myRole: string) {
       role: m.role,
       isPlaceholder: m.is_placeholder,
       joinedAt: m.joined_at,
+      /** set when this person joined by picking a placeholder's name */
+      claim: claimOf.get(m.id) ?? null,
     })),
   };
 }
@@ -495,6 +506,7 @@ router.post("/:id/members", requireAuth, async (req: Request, res: Response): Pr
        values ($1, $2, 'member', $3, $4)`,
       [id, user.rows[0].id, nickname, userId]
     );
+    await logActivity(client, { groupId: id, actorId: userId, kind: "member_added", targetUser: user.rows[0].id, summary: { name: nickname } });
     await client.query("COMMIT");
 
     res.status(201).json({
@@ -654,18 +666,214 @@ router.delete("/:id/members/:userId", requireAuth, async (req: Request, res: Res
     res.status(404).json({ error: "Member not found" });
     return;
   }
-  if (!target.rows[0].is_placeholder) {
-    res.status(403).json({ error: "Only people who haven't joined can be removed" });
+  if (targetId === userId) {
+    res.status(400).json({ error: "Use Leave group to leave" });
     return;
   }
-  if (await userHasHistory(pool, targetId)) {
-    res.status(409).json({ error: "This person already has expenses. Delete those first." });
+  const isPh = target.rows[0].is_placeholder;
+  const hasHistory = await userHasHistory(pool, targetId);
+  if (hasHistory && !(await isSettled(id, targetId))) {
+    res.status(409).json({ error: "They still owe or are owed money here. Settle up first, then remove them.", code: "NOT_SETTLED" });
+    return;
+  }
+  const name = await displayName(pool, id, targetId);
+  await pool.query('delete from "GroupMember" where group_id = $1 and user_id = $2', [id, targetId]);
+  // A placeholder with no history is just a typo: drop it entirely.
+  if (isPh && !hasHistory) await pool.query('update "User" set deleted_at = now() where id = $1', [targetId]);
+  await invalidateGroupBalanceCache(id).catch(() => {});
+  await logActivitySafe(pool, { groupId: id, actorId: userId, kind: "member_removed", targetUser: targetId, summary: { name } });
+  res.json({ message: "Removed", id: targetId });
+});
+
+/** True when the person's balance in the group is zero (fresh numbers, not the cache). */
+async function isSettled(groupId: string, userId: string): Promise<boolean> {
+  await invalidateGroupBalanceCache(groupId).catch(() => {});
+  const bal = await getGroupBalance(groupId, userId);
+  const me = bal?.memberBalances.find((m) => m.userId === userId);
+  return !me || Math.abs(parseFloat(me.signedAmount)) < 0.005;
+}
+
+// ─── POST /groups/:id/leave ──────────────────────────────────────────────────
+/**
+ * Leave a group once you're settled up. Your past expenses stay (they still add up for
+ * everyone else). If you were the only admin, the longest-standing member takes over.
+ */
+router.post("/:id/leave", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+  const role = await getMemberRole(id, userId);
+  if (!role) { res.status(404).json({ error: "You're not in this group" }); return; }
+  if (!(await isSettled(id, userId))) {
+    res.status(409).json({ error: "You still owe or are owed money here. Settle up first, then leave.", code: "NOT_SETTLED" });
     return;
   }
 
-  await pool.query('delete from "GroupMember" where group_id = $1 and user_id = $2', [id, targetId]);
-  await pool.query('update "User" set deleted_at = now() where id = $1', [targetId]);
-  res.json({ message: "Removed", id: targetId });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const name = await displayName(client, id, userId);
+    await client.query('delete from "GroupMember" where group_id = $1 and user_id = $2', [id, userId]);
+    if (role === "admin") {
+      const admins = await client.query(`select 1 from "GroupMember" where group_id = $1 and role = 'admin' limit 1`, [id]);
+      if (admins.rows.length === 0) {
+        await client.query(
+          `update "GroupMember" set role = 'admin'
+           where group_id = $1 and user_id = (
+             select gm.user_id from "GroupMember" gm join "User" u on u.id = gm.user_id
+             where gm.group_id = $1 and u.is_placeholder = false order by gm.joined_at asc limit 1)`,
+          [id]
+        );
+      }
+    }
+    await logActivity(client, { groupId: id, actorId: userId, kind: "member_left", targetUser: userId, summary: { name } });
+    await client.query("COMMIT");
+    await invalidateGroupBalanceCache(id).catch(() => {});
+    res.json({ message: "Left the group" });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+// ─── POST /groups/:id/claims/:claimId/undo ───────────────────────────────────
+/**
+ * "That's not me": put a claim back. The placeholder returns with its history; the
+ * person stays in the group with nothing. Optional { claimMemberId } re-claims the right
+ * placeholder in the same step (reassign).
+ * Who: the person who claimed (within 7 days) or a group admin (any time).
+ */
+router.post("/:id/claims/:claimId/undo", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id, claimId } = req.params;
+  const userId = req.user!.userId;
+  const { claimMemberId } = (req.body || {}) as { claimMemberId?: string };
+  const role = await getMemberRole(id, userId);
+  if (!role) { res.status(403).json({ error: "You're not in this group" }); return; }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      'select * from "MemberClaim" where id = $1 and group_id = $2 and undone_at is null for update',
+      [claimId, id]
+    );
+    const claim = found.rows[0] as ClaimRow | undefined;
+    if (!claim) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Nothing to undo. It may have been undone already." });
+      return;
+    }
+    const isClaimer = claim.claimed_by === userId;
+    const inWindow = Date.now() - new Date(claim.created_at).getTime() < SELF_UNDO_MS;
+    if (!(role === "admin" || (isClaimer && inWindow))) {
+      await client.query("ROLLBACK");
+      res.status(403).json({ error: isClaimer ? "It's been more than 7 days. Ask the group admin to fix it." : "Only the group admin can do this" });
+      return;
+    }
+
+    const undone = await undoClaim(client, claim, userId);
+    await logActivity(client, {
+      groupId: id, actorId: userId, kind: "claim_undone", targetUser: claim.claimed_by,
+      summary: { placeholderName: undone.placeholderName, claimerName: undone.claimerName },
+    });
+
+    let reclaimed: string | null = null;
+    if (claimMemberId) {
+      if (claimMemberId === claim.placeholder_id) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Pick a different name" });
+        return;
+      }
+      const again = await claimPlaceholder(client, id, claimMemberId, claim.claimed_by, null);
+      if (!again.ok) {
+        await client.query("ROLLBACK");
+        res.status(again.code === "PLACEHOLDER_GONE" ? 404 : 409).json({ error: again.code === "PLACEHOLDER_GONE" ? "That person was already claimed" : `"${again.name}" is already used in this group`, code: again.code });
+        return;
+      }
+      reclaimed = again.placeholderName;
+      await logActivity(client, {
+        groupId: id, actorId: userId, kind: "member_claimed", targetUser: claim.claimed_by,
+        summary: { accountName: undone.claimerName, placeholderName: again.placeholderName, claimId: again.claimId, reassigned: true },
+      });
+    }
+
+    await client.query("COMMIT");
+    await invalidateGroupBalanceCache(id).catch(() => {});
+    if (!isClaimer) {
+      sendToUsers([claim.claimed_by], {
+        title: "Your name in the group was fixed",
+        body: reclaimed ? `You're now ${reclaimed} (not ${undone.placeholderName}).` : `You're no longer ${undone.placeholderName}. Pick your own name if you're on the list.`,
+        url: `/groups/${id}`,
+      }).catch(() => {});
+    }
+    res.json({ message: "Undone", placeholderName: undone.placeholderName, reclaimed });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+// ─── GET /groups/:id/activity ────────────────────────────────────────────────
+/** Newest first, 40 at a time. ?before=<id> pages back. */
+router.get("/:id/activity", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+  if (!(await getMemberRole(id, userId))) { res.status(403).json({ error: "You're not in this group" }); return; }
+  const before = Number(req.query.before);
+  const rows = await pool.query(
+    `select a.id, a.kind, a.actor_id, a.expense_id, a.settlement_id, a.target_user, a.summary, a.created_at,
+            coalesce(gm.nickname, u.name) as actor_name,
+            (e.deleted_at is not null) as expense_deleted
+     from "GroupActivity" a
+     left join "User" u on u.id = a.actor_id
+     left join "GroupMember" gm on gm.group_id = a.group_id and gm.user_id = a.actor_id
+     left join "Expense" e on e.id = a.expense_id
+     where a.group_id = $1 and ($2::bigint is null or a.id < $2)
+     order by a.id desc limit 40`,
+    [id, Number.isFinite(before) && before > 0 ? before : null]
+  );
+  res.json({
+    items: rows.rows.map((r) => ({
+      id: Number(r.id),
+      kind: r.kind,
+      actor: r.actor_id ? { id: r.actor_id, name: r.actor_name ?? "Someone" } : null,
+      expenseId: r.expense_id,
+      expenseDeleted: r.expense_deleted === true,
+      settlementId: r.settlement_id,
+      targetUser: r.target_user,
+      summary: r.summary,
+      createdAt: r.created_at,
+    })),
+    nextBefore: rows.rows.length === 40 ? Number(rows.rows[rows.rows.length - 1].id) : null,
+  });
+});
+
+// ─── GET /groups/preview/:token/claim/:memberId ──────────────────────────────
+/** Before claiming a name: what you'd take over (signed-in joiners only). */
+router.get("/preview/:token/claim/:memberId", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { token, memberId } = req.params;
+  const g = await pool.query('select id from "Group" where invite_token = $1 and deleted_at is null', [token]);
+  if (g.rows.length === 0) { res.status(404).json({ error: "Invite link not found" }); return; }
+  const groupId = g.rows[0].id;
+  const ph = await pool.query(
+    `select 1 from "GroupMember" gm join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and gm.user_id = $2 and u.is_placeholder = true`,
+    [groupId, memberId]
+  );
+  if (ph.rows.length === 0) { res.status(404).json({ error: "That person was already claimed" }); return; }
+  const count = await pool.query(
+    `select count(distinct e.id)::int as n from "Expense" e
+     left join "ExpensePayer" ep on ep.expense_id = e.id and ep.user_id = $2
+     left join "ExpenseSplit" es on es.expense_id = e.id and es.user_id = $2
+     where e.group_id = $1 and e.deleted_at is null and (ep.user_id is not null or es.user_id is not null)`,
+    [groupId, memberId]
+  );
+  const bal = await getGroupBalance(groupId, memberId);
+  const mine = bal?.memberBalances.find((m) => m.userId === memberId);
+  res.json({ expenseCount: count.rows[0]?.n ?? 0, signedAmount: mine?.signedAmount ?? "0.00" });
 });
 
 export default router;

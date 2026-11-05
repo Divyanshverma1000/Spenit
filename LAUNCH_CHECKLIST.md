@@ -18,26 +18,26 @@ What happens today, from the code:
 
 ### 1a. Wrong-claim fix (the Pratik / Sourabh case)
 
-- [ ] **Confirm before claiming.** The join screen asks "You'll take over Sourabh's ₹1,240 balance and 6 expenses. Is this you?", with the amount and history shown.
+- [x] **Confirm before claiming.** The join screen asks "You'll take over Sourabh's ₹1,240 balance and 6 expenses. Is this you?", with the amount and history shown.
   - If the admin set a phone or email hint on the placeholder, show it. Warn if the joiner's account name doesn't match ("Your account is *Pratik Shah*").
-- [ ] **Record every claim.** New `MemberClaim` table:
+- [x] **Record every claim.** New `MemberClaim` table:
   - who claimed which placeholder, and when
   - the placeholder's name and avatar
   - the exact rows moved (payer / split / settlement / item ids)
-- [ ] **"Not me — undo".**
+- [x] **"Not me — undo".**
   - The person who claimed can undo for 7 days.
   - The admin can undo any time.
   - Undo puts the placeholder back exactly as it was, moves the rows back, and leaves the person in the group as a fresh member with no history.
   - They can then claim the right name (Pratik).
-- [ ] **Admin "Reassign"** does undo plus the correct claim in one step, from the member's menu.
-- [ ] **Notify everyone affected:** the admin, plus whoever the claimed placeholder owed or was owed by. Example: "Pratik joined as Sourabh — wrong? Tap to fix".
-- [ ] **Leave group.** Allowed when your balance is settled. If not settled, offer "Settle up first". The admin can remove a real member once they're settled. Their past expenses stay, shown as "Left the group".
+- [x] **Admin "Reassign"** does undo plus the correct claim in one step, from the member's menu.
+- [x] **Notify everyone affected:** the admin, plus whoever the claimed placeholder owed or was owed by. Example: "Pratik joined as Sourabh — wrong? Tap to fix".
+- [x] **Leave group.** Allowed when your balance is settled. If not settled, offer "Settle up first". The admin can remove a real member once they're settled. Their past expenses stay, shown as "Left the group".
 
 ### 1b. Mischief and mistakes
 
-- [ ] **Activity log per group**, visible to all members: added / edited / deleted expense, payments, joins, claims, undos, role changes. Each edit stores a before/after snapshot, so "₹500 → ₹5,000 by Rahul" is visible.
+- [x] **Activity log per group**, visible to all members: added / edited / deleted expense, payments, joins, claims, undos, role changes. Each edit stores a before/after snapshot, so "₹500 → ₹5,000 by Rahul" is visible.
 - [ ] **Notify people whose share changes** when an expense is edited or deleted. Example: "Rahul changed 'Dinner': your share ₹300 → ₹900".
-- [ ] **Restore deleted expenses** from the activity log (admin or creator). Already soft-deleted in the DB, so this is mostly UI.
+- [x] **Restore deleted expenses** from the activity log (admin or creator). Already soft-deleted in the DB, so this is mostly UI.
 - [ ] **"Flag this expense"** (dispute): marks it for the group with a reason, notifies the creator and admin, and shows a badge until resolved. It doesn't block balances.
 - [ ] **Payments need the receiver's confirmation.** Already true for settlements; keep it. Nobody can mark themselves as "paid" alone.
 - [ ] **Admin tools:** transfer the admin role, make a co-admin, remove a settled member, lock the group (read-only).

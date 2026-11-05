@@ -17,6 +17,8 @@ export interface GroupMember {
   nickname: string | null;
   realName: string | null;
   isPlaceholder: boolean;
+  /** set when this person joined by picking a placeholder's name (can be undone) */
+  claim?: { claimId: string; placeholderName: string | null; claimedAt: string } | null;
 }
 
 export interface GroupDetail {

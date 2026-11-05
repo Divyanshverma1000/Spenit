@@ -28,6 +28,9 @@ import {
   MessageCircle,
   Clock,
   ExternalLink,
+  History,
+  LogOut,
+  Undo2,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
@@ -44,6 +47,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
 import AvatarPicker from "@/components/AvatarPicker";
 import GroupChat from "@/components/GroupChat";
+import ClaimFixSheet from "@/components/ClaimFixSheet";
 import MemberAvatar, { AvatarPeople } from "@/components/ui/MemberAvatar";
 import { lookAlikes, initials } from "@/lib/avatar";
 import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
@@ -153,6 +157,8 @@ export default function GroupDetailPage() {
   const [newPersonName, setNewPersonName] = useState("");
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
+  // Fixing a wrong "I'm …" pick (by the person themself, or the admin)
+  const [claimFix, setClaimFix] = useState<{ member: GroupMember; asAdmin: boolean } | null>(null);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   /** whose group avatar is being picked */
   const [avatarFor, setAvatarFor] = useState<GroupMember | null>(null);
@@ -247,6 +253,20 @@ export default function GroupDetailPage() {
     finally { setMemberBusy(false); }
   }
 
+  async function leaveGroup() {
+    if (!confirm("Leave this group? Your past expenses stay in the group's history.")) return;
+    setMemberBusy(true); setMemberError(null);
+    try {
+      const res = await authFetch(`/groups/${id}/leave`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setMemberError(data.error || "Couldn't leave the group"); return; }
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      queryClient.invalidateQueries({ queryKey: ["balance"] });
+      router.replace("/groups");
+    } catch { setMemberError("Network error. Please try again."); }
+    finally { setMemberBusy(false); }
+  }
+
   async function removePerson(memberId: string, name: string) {
     if (!confirm(`Remove ${name} from the group?`)) return;
     setMemberBusy(true); setMemberError(null);
@@ -318,6 +338,10 @@ export default function GroupDetailPage() {
           <Link href={`/groups/${id}/settle`} className="bg-white border border-[var(--hairline)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
             <ArrowRightLeft className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
             Settle Up
+          </Link>
+          <Link href={`/groups/${id}/activity`} className="bg-white border border-[var(--hairline)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
+            <History className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
+            Activity
           </Link>
           <button onClick={shareGroupSummary} className="bg-white border border-[var(--hairline)] shadow-sm flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-[14px] font-semibold rounded-full active:scale-95 transition-transform">
             <Share2 className="h-4 w-4 text-[var(--accent)]" strokeWidth={2} />
@@ -512,6 +536,19 @@ export default function GroupDetailPage() {
           )}
 
           {(() => {
+            const meM = group.members.find((x) => x.id === user?.id);
+            const c = meM?.claim;
+            if (!meM || !c || Date.now() - new Date(c.claimedAt).getTime() > 7 * 86_400_000) return null;
+            return (
+              <div className="mb-3 p-3.5 rounded-[16px] bg-[var(--accent-subtle)] text-[13px] flex items-center gap-3">
+                <UserPlus size={18} className="text-[var(--accent)] flex-shrink-0" />
+                <p className="flex-1">You joined as <b>{c.placeholderName ?? meM.name}</b>. Picked the wrong name?</p>
+                <button onClick={() => setClaimFix({ member: meM, asAdmin: false })} className="px-3 py-1.5 rounded-full bg-[var(--paper)] font-bold text-[var(--accent)] flex-shrink-0">Not me</button>
+              </div>
+            );
+          })()}
+
+          {(() => {
             // Two people with no picture and the same initials can't be told apart at a glance.
             const sets = lookAlikes(group.members);
             if (sets.length === 0) return null;
@@ -594,6 +631,14 @@ export default function GroupDetailPage() {
                             ? m.realName
                             : `@${m.username}`}
                       </p>
+                      {isAdmin && m.claim && m.id !== user?.id && (
+                        <button
+                          onClick={() => setClaimFix({ member: m, asAdmin: true })}
+                          className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-bold text-[var(--accent)]"
+                        >
+                          <Undo2 size={12} strokeWidth={2.5} /> Joined as {m.claim.placeholderName ?? m.name} · Fix
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -623,7 +668,7 @@ export default function GroupDetailPage() {
                           <MessageCircle size={15} strokeWidth={2.2} />
                         </button>
                       )}
-                      {isAdmin && m.isPlaceholder && !hasBalance && (
+                      {isAdmin && m.id !== user?.id && !hasBalance && (
                         <button
                           onClick={() => removePerson(m.id, m.name)}
                           aria-label={`Remove ${m.name}`}
@@ -639,8 +684,33 @@ export default function GroupDetailPage() {
               );
             })}
           </div>
+
+          {user && (
+            <button
+              onClick={leaveGroup}
+              disabled={memberBusy}
+              className="mt-4 mx-auto flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-muted)] hover:text-[var(--negative)] px-3 py-2"
+            >
+              <LogOut size={14} /> Leave group
+            </button>
+          )}
         </div>
       </main>
+
+      {claimFix && (
+        <ClaimFixSheet
+          groupId={id}
+          member={claimFix.member}
+          members={group.members}
+          asAdmin={claimFix.asAdmin}
+          onClose={() => setClaimFix(null)}
+          onDone={async () => {
+            setClaimFix(null);
+            await loadData();
+            queryClient.invalidateQueries({ queryKey: ["balance"] });
+          }}
+        />
+      )}
 
       {chatOpen && (
         <GroupChat

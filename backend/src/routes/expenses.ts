@@ -19,6 +19,7 @@ import { invalidateGroupBalanceCache } from "./balance";
 import { sendToUsers } from "../push";
 import { computeItemizedShares, FeePolicy } from "../lib/itemizedSplit";
 import { maskReceipt, restoreMasked, setItemVisibility } from "../lib/receiptPrivacy";
+import { logActivity, logActivitySafe, expenseSnapshot } from "../lib/groupSafety";
 import type { PoolClient } from "pg";
 
 const router = Router();
@@ -337,6 +338,9 @@ async function insertExpense(
       [expense.id, split.userId, split.shareAmount.toFixed(2)]
     );
   }
+
+  const snap = await expenseSnapshot(client, expense.id);
+  await logActivity(client, { groupId, actorId: userId, kind: "expense_added", expenseId: expense.id, summary: { after: snap } });
 
   return {
     id: expense.id,
@@ -777,6 +781,7 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
   const prepared = await prepareExpense(body, userId, res);
   if (!prepared) return;
 
+  const before = await expenseSnapshot(pool, id);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -810,6 +815,7 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
         [id, split.userId, split.shareAmount.toFixed(2)]
       );
     }
+    await logActivity(client, { groupId: e.group_id, actorId: userId, kind: "expense_edited", expenseId: id, summary: { before, after: await expenseSnapshot(client, id) } });
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
@@ -939,11 +945,33 @@ router.delete("/:id", requireAuth, async (req: Request, res: Response): Promise<
     'UPDATE "Expense" SET deleted_at = now(), updated_at = now() WHERE id = $1',
     [id]
   );
+  await logActivitySafe(pool, { groupId: e.group_id, actorId: userId, kind: "expense_deleted", expenseId: id, summary: { before: await expenseSnapshot(pool, id) } });
 
   // Architecture §9: Invalidate the group and cross-group caches so the UI updates immediately
   await invalidateGroupBalanceCache(e.group_id);
 
   res.json({ message: "Expense deleted", id });
+});
+
+// ─── POST /expenses/:id/restore ───────────────────────────────────────────────
+/** Bring back a deleted expense (its creator or the group admin), e.g. from the activity log. */
+router.post("/:id/restore", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+  const found = await pool.query(
+    'SELECT e.group_id, e.created_by, gm.role FROM "Expense" e LEFT JOIN "GroupMember" gm ON gm.group_id = e.group_id AND gm.user_id = $2 WHERE e.id = $1 AND e.deleted_at IS NOT NULL',
+    [id, userId]
+  );
+  const e = found.rows[0];
+  if (!e || !e.role) { res.status(404).json({ error: "Nothing to restore" }); return; }
+  if (e.created_by !== userId && e.role !== "admin") {
+    res.status(403).json({ error: "Only the person who added it or the group admin can restore it" });
+    return;
+  }
+  await pool.query('UPDATE "Expense" SET deleted_at = NULL, updated_at = now() WHERE id = $1', [id]);
+  await logActivitySafe(pool, { groupId: e.group_id, actorId: userId, kind: "expense_restored", expenseId: id, summary: { after: await expenseSnapshot(pool, id) } });
+  await invalidateGroupBalanceCache(e.group_id);
+  res.json({ message: "Restored", id });
 });
 
 export default router;

@@ -28,7 +28,7 @@ type PageState =
   | { stage: "preview"; group: GroupPreview }
   | { stage: "signing_in" }
   | { stage: "joining" }
-  | { stage: "joined"; groupId: string; groupName: string };
+  | { stage: "joined"; groupId: string; groupName: string; joinedAs?: string | null };
 
 export default function GroupInvitePage() {
   const { token } = useParams<{ token: string }>();
@@ -41,6 +41,18 @@ export default function GroupInvitePage() {
   const [claimId, setClaimId] = useState<string | null>(null);
   const [nickname, setNickname] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // What picking a name means: their expenses and balance move to you.
+  const [claimInfo, setClaimInfo] = useState<{ id: string; expenseCount: number; signed: number } | null>(null);
+
+  useEffect(() => {
+    if (!claimId || !accessToken) return;
+    let live = true;
+    fetch(`${API_URL}/groups/preview/${token}/claim/${claimId}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live && d) setClaimInfo({ id: claimId, expenseCount: d.expenseCount, signed: parseFloat(d.signedAmount) || 0 }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [claimId, accessToken, token]);
 
   useEffect(() => {
     fetch(`${API_URL}/groups/preview/${token}`)
@@ -99,7 +111,7 @@ export default function GroupInvitePage() {
         setState({ stage: "not_found" });
         return;
       }
-      setState({ stage: "joined", groupId: data.groupId, groupName: data.groupName });
+      setState({ stage: "joined", groupId: data.groupId, groupName: data.groupName, joinedAs: data.joinedAs ?? null });
     } catch {
       setState({ stage: "not_found" });
     }
@@ -126,6 +138,12 @@ export default function GroupInvitePage() {
 
   const preview = state.stage === "preview" ? state.group : null;
   const showNicknameField = !claimId;
+  const picked = preview?.unclaimedMembers.find((m) => m.id === claimId) ?? null;
+  const info = claimInfo && claimInfo.id === claimId ? claimInfo : null;
+  // Does the account name look like the picked name? (first names, either way round)
+  const first = (n: string) => n.trim().split(/s+/)[0]?.toLowerCase() ?? "";
+  const nameMismatch = !!(picked && user?.name && !first(user.name).startsWith(first(picked.nickname).slice(0, 3)) && !first(picked.nickname).startsWith(first(user.name).slice(0, 3)));
+  const money = (n: number) => `₹${Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
   return (
     <main className="min-h-screen bg-[var(--ink)] flex flex-col items-center justify-center p-6 page-content">
@@ -246,6 +264,27 @@ export default function GroupInvitePage() {
                   </div>
                 )}
 
+                {picked && (
+                  <div className={`rounded-[14px] border p-3.5 text-[13px] leading-snug ${nameMismatch ? "border-[var(--negative)]/40 bg-[var(--negative)]/5" : "border-[var(--hairline)] bg-[var(--paper-dim)]"}`}>
+                    <p className="font-semibold text-[var(--text-primary)]">
+                      You&apos;ll take over {picked.nickname}&apos;s place in this group
+                    </p>
+                    <p className="text-[var(--text-secondary)] mt-1">
+                      {info === null
+                        ? "Checking their expenses…"
+                        : `${info.expenseCount} ${info.expenseCount === 1 ? "expense" : "expenses"} · ${
+                            Math.abs(info.signed) < 0.005 ? "settled up" : info.signed > 0 ? `is owed ${money(info.signed)}` : `owes ${money(info.signed)}`
+                          }`}
+                    </p>
+                    {nameMismatch && user?.name && (
+                      <p className="mt-2 font-semibold text-[var(--negative)]">
+                        Your account name is {user.name}. Only continue if you really are {picked.nickname}.
+                      </p>
+                    )}
+                    <p className="text-[12px] text-[var(--text-muted)] mt-2">Picked the wrong name? You can undo it from the group for 7 days.</p>
+                  </div>
+                )}
+
                 {error && (
                   <p role="alert" className="text-sm font-medium text-[var(--negative)]">{error}</p>
                 )}
@@ -256,7 +295,7 @@ export default function GroupInvitePage() {
                   disabled={!claimId && nickname.trim().length === 0}
                   className="btn-primary w-full py-3 disabled:opacity-50"
                 >
-                  {claimId ? "Join as this person" : "Join group"}
+                  {picked ? `Yes, I'm ${picked.nickname}. Join` : "Join group"}
                 </button>
               </div>
             )}
@@ -279,7 +318,11 @@ export default function GroupInvitePage() {
               <p className="text-[var(--positive)] font-semibold text-lg">You&apos;re in!</p>
               <p className="text-[var(--text-secondary)] text-sm mt-1">
                 You&apos;ve joined <span className="font-semibold text-[var(--text-primary)]">{state.groupName}</span>
+                {state.joinedAs ? <> as <span className="font-semibold text-[var(--text-primary)]">{state.joinedAs}</span></> : null}
               </p>
+              {state.joinedAs && (
+                <p className="text-[var(--text-muted)] text-xs mt-2">Not you? Open the group and tap &quot;Not me&quot; to undo.</p>
+              )}
             </div>
             <button
               id="go-to-group-btn"
