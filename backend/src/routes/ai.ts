@@ -23,6 +23,7 @@ import { normalizeOrder, checkTotals } from "../lib/orderExtract";
 import { MAX_IMAGE_CHARS, MAX_RECEIPT_IMAGES, IMAGE_DATA_URL } from "../lib/limits";
 import { open as openSecret } from "../lib/secretBox";
 import { strictLimit } from "../lib/strictLimit";
+import { bump } from "../lib/telemetry";
 
 /** AI calls cost money and share the Groq quota: an exact limit per account, across every server. */
 const aiLimit = strictLimit("ai", [
@@ -268,6 +269,7 @@ router.post(
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: "[receipt image]" };
     }
+    await bump({ ai_calls: 1, receipt_scans: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) });
 
     res.json(result);
   }
@@ -314,6 +316,9 @@ router.post(
     }
 
     const result = await new GroqProvider(key).extractOrder({ imageBase64 });
+    await bump(result.ok
+      ? { ai_calls: 1, order_reads: 1, ai_tokens_in: result.usage?.promptTokens ?? 0, ai_tokens_out: result.usage?.completionTokens ?? 0 }
+      : { ai_calls: 1, ai_failures: 1 });
     if (!result.ok) {
       console.warn(
         `[ai] stage=EXTRACT_FAILED at=${result.stage} reason=${result.reason} status=${result.status ?? "-"} model=${result.model} keySource=${source} msg=${(result.message ?? "").slice(0, 160)}`
@@ -437,6 +442,9 @@ router.post(
       .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
     const result = await new GroqProvider(key).groupChat(ctx.text, question.trim(), turns);
+    await bump(result.ok
+      ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
+      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
     if (!result.ok) {
       const status = result.reason === "rate_limit" ? 429 : result.reason === "config_error" ? 502 : 503;
       res.status(status).json({ error: result.reason, message: result.message, retryAfterMs: result.retryAfterMs });

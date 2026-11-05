@@ -612,7 +612,7 @@ No markdown fences, just the raw JSON.`;
     question: string,
     history: { role: "user" | "assistant"; content: string }[]
   ): Promise<
-    | { ok: true; answer: string; refs: string[]; followUps: string[] }
+    | { ok: true; answer: string; refs: string[]; followUps: string[]; usage: { in: number; out: number } }
     | { ok: false; reason: "rate_limit" | "timeout" | "config_error" | "unavailable"; message: string; retryAfterMs: number }
   > {
     const system = `You are Spenit's assistant inside one expense-sharing group. You talk with a member of the group like a friendly, sharp accountant who knows every bill.
@@ -666,7 +666,14 @@ ${ledger}`;
     const answer = typeof parsed?.answer === "string" && parsed.answer.trim() ? parsed.answer.trim() : content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, n) : []);
     console.log(`[ai] groupChat ok ms=${call.ms} tokens=${(call.json as any)?.usage?.total_tokens ?? "?"}`);
-    return { ok: true, answer: answer || "I couldn't work that out. Try asking another way.", refs: strs(parsed?.refs, 20), followUps: strs(parsed?.followUps, 3) };
+    const usage = (call.json as any)?.usage ?? {};
+    return {
+      ok: true,
+      answer: answer || "I couldn't work that out. Try asking another way.",
+      refs: strs(parsed?.refs, 20),
+      followUps: strs(parsed?.followUps, 3),
+      usage: { in: Number(usage.prompt_tokens) || 0, out: Number(usage.completion_tokens) || 0 },
+    };
   }
 
   // ── Internal fallback helper ──────────────────────────────────────────────────

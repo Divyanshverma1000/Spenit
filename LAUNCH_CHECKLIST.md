@@ -133,12 +133,12 @@ Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), an
 
 ## 7. Monitoring (P1)
 
-- [ ] **Error tracking:** Sentry on the frontend (with source maps) and the Worker. Alert on new errors.
-- [ ] **Uptime:** an external check on `/health` every minute (Better Stack / UptimeRobot), alerting by email/WhatsApp.
+- [x] **Error tracking** (own, not Sentry: app + server errors grouped per day on /admin, push alert to admins on the first of each kind): Sentry on the frontend (with source maps) and the Worker. Alert on new errors.
+- [x] **Uptime** (GitHub Actions every 10 min, emails on failure): an external check on `/health` every minute (Better Stack / UptimeRobot), alerting by email/WhatsApp.
 - [ ] **Worker metrics:** Cloudflare dashboard + Workers Logs / Logpush. Track error rate, p95 latency, CPU time.
-- [ ] **AI health:** success and failure rate per reason (rate_limit, timeout, model_unavailable), tokens per day vs. the Groq quota. Alert when the server key nears its limit.
+- [x] **AI health:** success and failure rate per reason (rate_limit, timeout, model_unavailable), tokens per day vs. the Groq quota. Alert when the server key nears its limit.
 - [ ] **DB:** Supabase usage alerts (connections, storage, slow queries).
-- [ ] Product events (privacy-safe, no item names): sign-up, group created, expense added, import done, settle-up, chat question. These feed the admin dashboard (§9).
+- [x] Product events (privacy-safe, no item names): sign-up, group created, expense added, import done, settle-up, chat question. These feed the admin dashboard (§9).
 
 ## 8. Load and scaling (P1)
 

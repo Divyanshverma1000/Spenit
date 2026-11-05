@@ -1,3 +1,4 @@
+import { touchUser } from "../lib/telemetry";
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
@@ -40,7 +41,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   try {
     const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET as string) as AuthPayload;
     req.user = payload;
-    next();
+    // Daily / live user counts for the admin dashboard (at most one write a minute per person).
+    touchUser(payload.userId).then(() => next(), () => next());
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
       res.status(401).json({ error: "Access token expired" });

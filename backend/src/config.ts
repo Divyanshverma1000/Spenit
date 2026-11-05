@@ -66,6 +66,9 @@ export function checkEnv(opts: { runtime: "node" | "worker"; hasDatabase?: boole
   if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
     warnings.push("VAPID keys are not set: push notifications are disabled");
   }
+  if (!env.ADMIN_EMAILS) {
+    warnings.push("ADMIN_EMAILS is not set: nobody can open the admin dashboard or get error alerts");
+  }
   if (!env.AI_KEY_SECRET) {
     warnings.push("AI_KEY_SECRET is not set: AI keys people save are stored unencrypted");
   }

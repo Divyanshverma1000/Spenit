@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { MAX_PHOTO_BASE64, PHOTO_MIME } from "../lib/avatars";
 import { deleteAccount, exportAccount } from "../lib/account";
 import { open as openSecret, seal } from "../lib/secretBox";
+import { adminEmails } from "../lib/telemetry";
 import { getGroupBalance, invalidateGroupBalanceCache } from "./balance";
 
 const router = Router();
@@ -50,6 +51,7 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
     upiId: u.upi_id,
     createdAt: u.created_at,
     hasGroqKey: !!u.groq_api_key,
+    isAdmin: !!u.email && adminEmails().includes(String(u.email).toLowerCase()),
     groqKeyMasked,
   });
 });

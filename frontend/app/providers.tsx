@@ -7,7 +7,8 @@ import { AuthProvider } from "@/context/AuthContext";
 import { OutboxProvider } from "@/context/OutboxContext";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { idbPersister } from "@/lib/persister";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { installErrorReporting } from "@/lib/errorReport";
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 // Bump when the shape of cached API data changes, so old caches are discarded.
@@ -20,6 +21,8 @@ const CACHE_VERSION = "2";
  */
 export default function Providers({ children }: { children: ReactNode }) {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
+  // Crashes on people's phones reach the admin dashboard.
+  useEffect(() => installErrorReporting(), []);
 
   const [queryClient] = useState(
     () =>

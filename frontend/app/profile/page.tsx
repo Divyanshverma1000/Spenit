@@ -28,6 +28,8 @@ interface UserProfile {
   createdAt: string;
   hasGroqKey?: boolean;
   groqKeyMasked?: string | null;
+  /** owner accounts (ADMIN_EMAILS on the server) see the admin dashboard */
+  isAdmin?: boolean;
 }
 
 export default function ProfilePage() {
@@ -453,6 +455,9 @@ export default function ProfilePage() {
                 <SettingsRow icon={<Lock size={18} />} label="Privacy Policy" onClick={() => router.push("/privacy")} />
                 <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => router.push("/terms")} />
                 <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => router.push("/about")} />
+                {profile?.isAdmin && (
+                  <SettingsRow icon={<ShieldCheck size={18} />} label="Admin dashboard" onClick={() => router.push("/admin")} />
+                )}
                 <SettingsRow
                   icon={exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                   label="Download my data"

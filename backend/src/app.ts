@@ -1,3 +1,5 @@
+import { recordError } from "./lib/telemetry";
+import adminRouter from "./routes/admin";
 import { installSafeConsole } from "./lib/safeLog";
 import "express-async-errors"; // makes errors thrown in async route handlers reach the error middleware instead of crashing the process
 import express, { NextFunction, Request, RequestHandler, Response } from "express";
@@ -212,6 +214,16 @@ export function buildApp(options: AppOptions = {}) {
   app.use("/ai", aiLimiter, aiRouter);
   app.use("/personal_expenses", personalExpensesRouter);
   app.use("/owe", publicTokenLimiter, oweRouter);
+  app.use("/admin", adminRouter);
+
+  // The app reports its own crashes here (no sign-in needed: a crash can happen before it).
+  app.post("/telemetry/error", publicTokenLimiter, async (req: Request, res: Response) => {
+    const { message, path } = (req.body ?? {}) as { message?: unknown; path?: unknown };
+    if (typeof message === "string" && message.trim()) {
+      await recordError("app", message.slice(0, 500), typeof path === "string" ? path.slice(0, 200) : null);
+    }
+    res.status(204).end();
+  });
 
   // ── Errors ──────────────────────────────────────────────────────────────────
   app.use((_req: Request, res: Response) => {
@@ -219,7 +231,7 @@ export function buildApp(options: AppOptions = {}) {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, next: NextFunction) => {
+  app.use(async (err: Error & { status?: number; type?: string }, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
     if (err.type === "entity.parse.failed") {
       res.status(400).json({ error: "Invalid JSON in request body" });
@@ -240,6 +252,7 @@ export function buildApp(options: AppOptions = {}) {
       return;
     }
     console.error(`[error] ${req.method} ${req.originalUrl.split("?")[0]}:`, err);
+    if (!(err.status && err.status < 500)) await recordError("api", `${err.name}: ${err.message}`, `${req.method} ${req.route?.path ?? req.originalUrl}`);
     res.status(err.status && err.status < 500 ? err.status : 500).json({
       error: isProd ? "Something went wrong. Please try again." : err.message,
     });
