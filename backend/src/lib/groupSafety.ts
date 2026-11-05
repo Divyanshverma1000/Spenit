@@ -17,7 +17,7 @@ type Db = Pick<PoolClient, "query">;
 export type ActivityKind =
   | "expense_added" | "expense_edited" | "expense_deleted" | "expense_restored"
   | "settlement_recorded" | "settlement_confirmed" | "settlement_rejected"
-  | "member_joined" | "member_claimed" | "claim_undone" | "member_left" | "member_removed" | "member_added" | "account_deleted";
+  | "member_joined" | "member_claimed" | "claim_undone" | "member_left" | "member_removed" | "member_added" | "account_deleted" | "invite_disputed";
 
 /** Write one activity row. Runs inside the caller's transaction when given its client. */
 export async function logActivity(

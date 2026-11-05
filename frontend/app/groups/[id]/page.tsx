@@ -201,6 +201,13 @@ export default function GroupDetailPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setMemberError(data.error || "Couldn't create the link"); return; }
       const bal = memberBalances[m.id];
+      // Not joined yet: a personal invite. Opening it says "Join as Ankit", no list to pick from.
+      if (m.isPlaceholder && group?.inviteToken) {
+        const invite = `${window.location.origin}/g/${group.inviteToken}?as=${encodeURIComponent(data.token)}`;
+        const owes = bal && bal.direction === "owes" ? ` You owe ₹${parseFloat(bal.netAmount).toFixed(2)} so far.` : bal && bal.direction === "owed" ? ` You get back ₹${parseFloat(bal.netAmount).toFixed(2)} so far.` : "";
+        openWhatsApp(`Hi ${m.name}! I've added you to "${group.name}" on Spenit, where we split our expenses.${owes} Tap to join as ${m.name}: ${invite}`);
+        return;
+      }
       const url = `${window.location.origin}/owe/${data.token}`;
       openWhatsApp(
         bal && bal.direction === "owes"
@@ -662,7 +669,7 @@ export default function GroupDetailPage() {
                       {isAdmin && m.id !== user?.id && (m.isPlaceholder || bal?.direction === "owes") && (
                         <button
                           onClick={() => shareOweLink(m)}
-                          aria-label={`Send ${m.name} their summary on WhatsApp`}
+                          aria-label={m.isPlaceholder ? `Invite ${m.name} on WhatsApp` : `Send ${m.name} their summary on WhatsApp`}
                           className="text-[var(--positive)]"
                         >
                           <MessageCircle size={15} strokeWidth={2.2} />
@@ -738,7 +745,13 @@ export default function GroupDetailPage() {
           groupId={id}
           currentUserId={user?.id}
           isAdmin={isAdmin}
-          onEdit={(e) => router.push(`/groups/${id}/expenses/new?edit=${encodeURIComponent(e.id)}`)}
+          onEdit={(e) =>
+            router.push(
+              e.splitType === "itemized"
+                ? `/groups/${id}/import?edit=${encodeURIComponent(e.id)}` // same item editor as import
+                : `/groups/${id}/expenses/new?edit=${encodeURIComponent(e.id)}`
+            )
+          }
           onRepeat={(e) => {
             router.push(`/groups/${id}/expenses/new?repeat=${encodeURIComponent(e.id)}`);
           }}

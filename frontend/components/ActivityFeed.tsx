@@ -15,7 +15,7 @@ const ICON: Record<string, typeof Pencil> = {
   expense_added: PlusCircle, expense_edited: Pencil, expense_deleted: Trash2, expense_restored: RotateCcw,
   settlement_recorded: ArrowRightLeft, settlement_confirmed: CheckCircle2, settlement_rejected: XCircle,
   member_joined: UserPlus, member_added: UserPlus, member_claimed: UserCheck, claim_undone: Undo2,
-  member_left: LogOut, member_removed: UserMinus, account_deleted: UserMinus,
+  member_left: LogOut, member_removed: UserMinus, account_deleted: UserMinus, invite_disputed: XCircle,
 };
 const FILTERS: { key: Category | "all"; label: string }[] = [
   { key: "all", label: "All" }, { key: "bills", label: "Bills" }, { key: "payments", label: "Payments" }, { key: "people", label: "People" },

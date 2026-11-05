@@ -201,12 +201,57 @@ router.get("/preview/:token", async (req: Request, res: Response): Promise<void>
     [group.id]
   );
 
+  // A personal invite (?as=<share token>) names who it was sent to, so they just confirm.
+  const as = typeof req.query.as === "string" ? req.query.as : null;
+  let invitedAs: { id: string; nickname: string } | null = null;
+  if (as) {
+    const ph = await pool.query(
+      `select gm.user_id as id, coalesce(gm.nickname, u.name) as nickname
+       from "GroupMember" gm join "User" u on u.id = gm.user_id
+       where gm.group_id = $1 and gm.share_token = $2 and u.is_placeholder = true`,
+      [group.id, as]
+    );
+    invitedAs = ph.rows[0] ?? null;
+  }
+
   res.json({
     name: group.name,
     icon: group.icon,
     memberCount: group.member_count,
     unclaimedMembers: unclaimed.rows,
+    invitedAs,
+    /** the personal link was for someone who has already joined */
+    personalInviteUsed: !!as && !invitedAs,
   });
+});
+
+// ─── POST /groups/preview/:token/not-me ──────────────────────────────────────
+/**
+ * Someone opened a personal invite that isn't for them ("I'm not Ankit"). The admins
+ * are told, so a wrong number or a forwarded link gets noticed. Body: { as }.
+ */
+router.post("/preview/:token/not-me", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { token } = req.params;
+  const as = typeof req.body?.as === "string" ? req.body.as : null;
+  const g = await pool.query('select id, name from "Group" where invite_token = $1 and deleted_at is null', [token]);
+  if (g.rows.length === 0 || !as) { res.status(404).json({ error: "Invite link not found" }); return; }
+  const group = g.rows[0];
+  const ph = await pool.query(
+    `select coalesce(gm.nickname, u.name) as nickname from "GroupMember" gm join "User" u on u.id = gm.user_id
+     where gm.group_id = $1 and gm.share_token = $2`,
+    [group.id, as]
+  );
+  const who = await pool.query('select name from "User" where id = $1', [req.user!.userId]);
+  const placeholderName = ph.rows[0]?.nickname ?? "someone";
+  const accountName = who.rows[0]?.name ?? "Someone";
+  const admins = await pool.query(`select user_id from "GroupMember" where group_id = $1 and role = 'admin'`, [group.id]);
+  sendToUsers(admins.rows.map((r: { user_id: string }) => r.user_id), {
+    title: group.name,
+    body: `${accountName} opened ${placeholderName}'s invite and says it isn't them. Check who you sent it to.`,
+    url: `/groups/${group.id}`,
+  }).catch(() => {});
+  await logActivitySafe(pool, { groupId: group.id, actorId: req.user!.userId, kind: "invite_disputed", summary: { accountName, placeholderName } });
+  res.json({ message: "The admin has been told" });
 });
 
 // ─── POST /groups/join/:token ─────────────────────────────────────────────────

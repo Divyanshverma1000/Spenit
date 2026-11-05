@@ -69,6 +69,8 @@ export interface DraftItem {
   sharedBy: string[];
   /** the model said it was unsure of this row — highlight it */
   doubtful: boolean;
+  /** a one-person item its owner chose to show the group (kept when a bill is edited) */
+  visible?: boolean;
 }
 
 export interface DraftLine {
@@ -400,6 +402,53 @@ export function adjustToBillTotal(o: DraftOrder): DraftOrder {
     : { ...o, discounts: [...o.discounts, line], acceptItemsTotal: false };
 }
 
+/**
+ * Turn a saved imported order back into a draft, to edit it in the same item editor.
+ * Null when it isn't an imported order, or when some items are hidden from this viewer
+ * (someone else's private items) — those can only be edited by the person who added it.
+ */
+export function draftFromExpense(e: {
+  amount: string | number;
+  receiptData?: unknown;
+  payers: { userId: string }[];
+}): DraftOrder | null {
+  const r = e.receiptData as Record<string, unknown> | null;
+  if (!r || typeof r !== "object" || Array.isArray(r) || !Array.isArray(r.items) || r.items.length === 0) return null;
+  const items = r.items as Record<string, unknown>[];
+  if (items.some((i) => i?.masked)) return null;
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const lines = (v: unknown) =>
+    (Array.isArray(v) ? (v as Record<string, unknown>[]) : []).map((x) => ({ id: uid(), label: String(x.label ?? ""), amount: n(x.amount) }));
+  const platform = typeof r.platform === "string" && r.platform in PLATFORM_LABEL ? (r.platform as Platform) : "other";
+  const billTotal = r.billTotal === null || r.billTotal === undefined ? null : n(r.billTotal);
+  return {
+    id: uid(),
+    platform,
+    orderId: typeof r.orderId === "string" ? r.orderId : null,
+    orderDate: typeof r.orderDate === "string" ? r.orderDate : null,
+    items: items.map((i) => ({
+      id: uid(),
+      name: String(i.name ?? ""),
+      short: typeof i.short === "string" ? i.short : null,
+      variant: typeof i.variant === "string" ? i.variant : null,
+      qty: n(i.qty) || 1,
+      lineTotal: n(i.lineTotal),
+      sharedBy: Array.isArray(i.sharedBy) ? (i.sharedBy as string[]) : [],
+      doubtful: false,
+      visible: i.visible === true,
+    })),
+    fees: lines(r.fees),
+    discounts: lines(r.discounts),
+    grandTotal: billTotal,
+    payerId: e.payers[0]?.userId ?? "",
+    feePolicy: r.feePolicy === "equal" || r.feePolicy === "payer" ? r.feePolicy : "proportional",
+    skipped: false,
+    acceptItemsTotal: billTotal === null,
+    sources: [],
+    alreadyAdded: null,
+  };
+}
+
 export function orderTitle(o: Pick<DraftOrder, "platform" | "orderDate">): string {
   const date = o.orderDate
     ? new Date(o.orderDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })
@@ -424,7 +473,7 @@ export function toExpenseBody(o: DraftOrder) {
       orderKey: orderKey(o),
       orderDate: o.orderDate,
       billTotal: o.grandTotal,
-      items: o.items.map((i) => ({ name: i.name, ...(i.short ? { short: i.short } : {}), variant: i.variant, qty: i.qty, lineTotal: i.lineTotal, sharedBy: i.sharedBy })),
+      items: o.items.map((i) => ({ name: i.name, ...(i.short ? { short: i.short } : {}), ...(i.visible ? { visible: true } : {}), variant: i.variant, qty: i.qty, lineTotal: i.lineTotal, sharedBy: i.sharedBy })),
       fees: o.fees.filter((f) => f.amount > 0).map((f) => ({ label: f.label.trim() || "Fee", amount: f.amount })),
       discounts: o.discounts.map((d) => ({ label: d.label, amount: d.amount })),
       feePolicy: o.feePolicy,

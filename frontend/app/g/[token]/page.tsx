@@ -2,11 +2,11 @@
 
 import { API_URL } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GoogleLogin, CredentialResponse } from "@react-oauth/google";
 import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/Card";
-import { Users, Link2Off, Clock, PartyPopper, UserCheck, UserPlus } from "lucide-react";
+import { Users, Link2Off, Clock, PartyPopper, UserCheck, UserPlus, Flag, ChevronRight } from "lucide-react";
 
 
 interface UnclaimedMember {
@@ -19,6 +19,10 @@ interface GroupPreview {
   icon: string | null;
   memberCount: number;
   unclaimedMembers: UnclaimedMember[];
+  /** personal invite: who the admin sent this link to */
+  invitedAs?: UnclaimedMember | null;
+  /** personal invite for someone who has already joined */
+  personalInviteUsed?: boolean;
 }
 
 type PageState =
@@ -34,7 +38,13 @@ export default function GroupInvitePage() {
   const { token } = useParams<{ token: string }>();
   const { accessToken, user, isAuthenticated, initializing, login } = useAuth();
   const router = useRouter();
+  // ?as=<token>: a personal invite the admin sent to one person on the list.
+  const asToken = useSearchParams()?.get("as") || null;
+  const previewUrl = `${API_URL}/groups/preview/${token}${asToken ? `?as=${encodeURIComponent(asToken)}` : ""}`;
   const [state, setState] = useState<PageState>({ stage: "loading" });
+  // "I'm not Ankit": then only joining as someone new (or telling the admin) is offered.
+  const [notMe, setNotMe] = useState(false);
+  const [reported, setReported] = useState(false);
 
   // "Who are you in this group?": either claim a name the admin already added,
   // or join as new with an optional nickname.
@@ -55,16 +65,27 @@ export default function GroupInvitePage() {
   }, [claimId, accessToken, token]);
 
   useEffect(() => {
-    fetch(`${API_URL}/groups/preview/${token}`)
+    fetch(previewUrl)
       .then(async (res) => {
         if (res.status === 404) { setState({ stage: "not_found" }); return; }
         if (res.status === 410) { setState({ stage: "expired" }); return; }
         if (!res.ok) { setState({ stage: "not_found" }); return; }
         const data: GroupPreview = await res.json();
         setState({ stage: "preview", group: data });
+        if (data.invitedAs) setClaimId(data.invitedAs.id);
       })
       .catch(() => setState({ stage: "not_found" }));
-  }, [token]);
+  }, [previewUrl]);
+
+  async function reportNotMe() {
+    if (!accessToken || !asToken) return;
+    await fetch(`${API_URL}/groups/preview/${token}/not-me`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ as: asToken }),
+    }).catch(() => {});
+    setReported(true);
+  }
 
   // Prefill the nickname field with the user's first name once we know who they are.
   useEffect(() => {
@@ -105,7 +126,7 @@ export default function GroupInvitePage() {
           if (data.code === "PLACEHOLDER_GONE") setClaimId(null);
           setError(data.error || "Couldn't join. Please try again.");
           // Refresh the preview so the claim list is current.
-          const pv = await fetch(`${API_URL}/groups/preview/${token}`);
+          const pv = await fetch(previewUrl);
           if (pv.ok) { setState({ stage: "preview", group: await pv.json() }); return; }
         }
         setState({ stage: "not_found" });
@@ -137,7 +158,10 @@ export default function GroupInvitePage() {
   }
 
   const preview = state.stage === "preview" ? state.group : null;
+  const personal = preview?.invitedAs && !notMe ? preview.invitedAs : null;
   const showNicknameField = !claimId;
+  // With a personal invite the list of names is never shown: confirm, or join as someone new.
+  const showList = !!preview && !preview.invitedAs && preview.unclaimedMembers.length > 0;
   const picked = preview?.unclaimedMembers.find((m) => m.id === claimId) ?? null;
   const info = claimInfo && claimInfo.id === claimId ? claimInfo : null;
   // Does the account name look like the picked name? (first names, either way round)
@@ -215,9 +239,58 @@ export default function GroupInvitePage() {
                   By continuing you agree to our <a href="/terms" className="underline">Terms</a> and <a href="/privacy" className="underline">Privacy Policy</a>.
                 </p>
               </div>
+            ) : personal ? (
+              <div className="border-t border-[var(--border)] pt-5 space-y-4">
+                <div className="text-center">
+                  <p className="text-[13px] text-[var(--text-secondary)]">This invite is for</p>
+                  <p className="text-[24px] font-extrabold text-[var(--text-primary)] mt-0.5">{personal.nickname}</p>
+                </div>
+                {picked && (
+                  <div className={`rounded-[14px] border p-3.5 text-[13px] leading-snug ${nameMismatch ? "border-[var(--negative)]/40 bg-[var(--negative)]/5" : "border-[var(--hairline)] bg-[var(--paper-dim)]"}`}>
+                    <p className="text-[var(--text-secondary)]">
+                      {info === null
+                        ? "Checking your expenses…"
+                        : `Already recorded for you: ${info.expenseCount} ${info.expenseCount === 1 ? "expense" : "expenses"} · ${
+                            Math.abs(info.signed) < 0.005 ? "settled up" : info.signed > 0 ? `you get back ${money(info.signed)}` : `you owe ${money(info.signed)}`
+                          }`}
+                    </p>
+                    {nameMismatch && user?.name && (
+                      <p className="mt-2 font-semibold text-[var(--negative)]">Your account name is {user.name}. Only continue if you are {personal.nickname}.</p>
+                    )}
+                  </div>
+                )}
+                {error && <p role="alert" className="text-sm font-medium text-[var(--negative)]">{error}</p>}
+                <button id="join-group-btn" onClick={() => joinGroup()} className="btn-primary w-full py-3">
+                  Join as {personal.nickname}
+                </button>
+                <button
+                  onClick={() => { setNotMe(true); setClaimId(null); setError(null); }}
+                  className="w-full text-center text-[13px] font-semibold text-[var(--text-secondary)] py-1"
+                >
+                  I&apos;m not {personal.nickname}
+                </button>
+              </div>
             ) : (
               <div className="border-t border-[var(--border)] pt-5 space-y-4">
-                {preview.unclaimedMembers.length > 0 && (
+                {preview.invitedAs && notMe && (
+                  <div className="rounded-[14px] bg-[var(--paper-dim)] p-3.5 text-[13px] space-y-2.5">
+                    <p className="text-[var(--text-primary)] font-semibold">This invite was sent to {preview.invitedAs.nickname}.</p>
+                    {reported ? (
+                      <p className="text-[var(--positive)] font-semibold">Thanks. The admin has been told.</p>
+                    ) : (
+                      <button onClick={reportNotMe} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[12px] bg-[var(--paper)] border border-[var(--hairline)] text-left font-semibold">
+                        <Flag size={15} className="text-[var(--negative)]" /> <span className="flex-1">Tell the admin it isn&apos;t me</span> <ChevronRight size={15} className="text-[var(--text-muted)]" />
+                      </button>
+                    )}
+                    <p className="text-[var(--text-secondary)]">Or join below as yourself. Ask the admin for the group&apos;s own link if you&apos;re someone else on the list.</p>
+                  </div>
+                )}
+                {preview.personalInviteUsed && (
+                  <p className="rounded-[14px] bg-[var(--paper-dim)] p-3.5 text-[13px] text-[var(--text-secondary)]">
+                    This personal invite has already been used. If that wasn&apos;t you, ask the group admin.
+                  </p>
+                )}
+                {showList && (
                   <div>
                     <p className="text-sm font-semibold text-[var(--text-primary)] mb-2">
                       Are you already on the list?
@@ -248,7 +321,7 @@ export default function GroupInvitePage() {
                 {showNicknameField && (
                   <div>
                     <label htmlFor="nickname" className="block text-sm font-semibold text-[var(--text-primary)] mb-1.5">
-                      {preview.unclaimedMembers.length > 0 ? "Or join as someone new" : "What should the group call you?"}
+                      {showList ? "Or join as someone new" : "What should the group call you?"}
                     </label>
                     <div className="relative">
                       <UserPlus size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -267,7 +340,7 @@ export default function GroupInvitePage() {
                   </div>
                 )}
 
-                {picked && (
+                {picked && showList && (
                   <div className={`rounded-[14px] border p-3.5 text-[13px] leading-snug ${nameMismatch ? "border-[var(--negative)]/40 bg-[var(--negative)]/5" : "border-[var(--hairline)] bg-[var(--paper-dim)]"}`}>
                     <p className="font-semibold text-[var(--text-primary)]">
                       You&apos;ll take over {picked.nickname}&apos;s place in this group

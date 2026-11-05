@@ -9,8 +9,8 @@
  * order are joined in lib/orderImport. A failed screenshot shows the server's real reason.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -25,7 +25,7 @@ import { shortNames } from "@/lib/avatar";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import {
   adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
-  previewShares, toDraft, toExpenseBody,
+  previewShares, toDraft, toExpenseBody, draftFromExpense,
   type DraftItem, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
 
@@ -107,6 +107,21 @@ export default function ImportOrdersPage() {
   const hashes = useRef(new Set<string>());
   const nextIndex = useRef(0);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
+
+  // ?edit=<expenseId>: change a saved order in this same item editor.
+  const searchParams = useSearchParams();
+  const editId = searchParams?.get("edit") || null;
+  const editing = overview?.expenses.find((e) => e.id === editId) ?? null;
+  const editLoaded = useRef(false);
+  useEffect(() => {
+    if (!editId || editLoaded.current || !overview) return;
+    editLoaded.current = true;
+    const d = editing ? draftFromExpense(editing) : null;
+    // Not an imported order (or has items hidden from you): use the normal edit form.
+    if (!d) { router.replace(`/groups/${groupId}/expenses/new?edit=${encodeURIComponent(editId)}`); return; }
+    setDrafts([d]);
+    setStep("sort");
+  }, [editId, editing, overview, groupId, router]);
 
   const patchPiece = useCallback((index: number, patch: Partial<PieceState>) => {
     setPieces((ps) => ps.map((p) => (p.index === index ? { ...p, ...patch } : p)));
@@ -257,6 +272,19 @@ export default function ImportOrdersPage() {
   const save = useCallback(async () => {
     setSaveError(null);
     setStep("saving");
+    if (editId) {
+      try {
+        const body = { ...toExpenseBody(toSave[0]), groupId, description: editing?.description ?? toExpenseBody(toSave[0]).description };
+        await readJson(await authFetch(`/expenses/${editId}`, { method: "PUT", body: JSON.stringify(body) }));
+        await queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
+        queryClient.invalidateQueries({ queryKey: ["balance"] });
+        router.push(`/groups/${groupId}`);
+      } catch (err) {
+        setSaveError((err as Error).message || "Couldn't save your changes");
+        setStep("check");
+      }
+      return;
+    }
     try {
       const res = await authFetch("/expenses/batch", {
         method: "POST",
@@ -275,7 +303,7 @@ export default function ImportOrdersPage() {
       setSaveError(msg);
       setStep("check");
     }
-  }, [authFetch, groupId, queryClient, toSave]);
+  }, [authFetch, groupId, queryClient, toSave, editId, editing, router]);
 
   const undo = useCallback(async () => {
     await Promise.all(savedIds.map((id) => authFetch(`/expenses/${id}`, { method: "DELETE" }).catch(() => null)));
@@ -287,12 +315,15 @@ export default function ImportOrdersPage() {
   if (!authed) return null;
 
   const back = () => {
+    if (editId && step !== "check") { router.back(); return; }
     if (step === "check") setStep("sort");
     else if (step === "sort") setStep("reading");
     else router.push(`/groups/${groupId}`);
   };
 
-  const title = { drop: "Import orders", reading: "Reading orders", sort: "Sort it out", check: "Check", saving: "Saving", saved: "Done" }[step];
+  const title = editId
+    ? step === "check" || step === "saving" ? "Check changes" : "Edit order"
+    : { drop: "Import orders", reading: "Reading orders", sort: "Sort it out", check: "Check", saving: "Saving", saved: "Done" }[step];
 
   return (
     <div className="min-h-screen bg-[var(--ink)] text-[var(--text-primary)] pb-36">
@@ -304,13 +335,13 @@ export default function ImportOrdersPage() {
           <h1 className="text-[20px] font-extrabold leading-tight">{title}</h1>
           <p className="text-[12px] text-[var(--text-secondary)] truncate">{overview?.group.name}</p>
         </div>
-        <button
+        {searchParams?.get("debug") === "1" && <button
           onClick={() => setDebug((d) => !d)}
           className={`p-2 rounded-full ${debug ? "text-[var(--accent)] bg-[var(--accent-subtle)]" : "text-[var(--text-muted)]"}`}
           aria-label="Toggle debug details"
         >
           <Bug size={16} />
-        </button>
+        </button>}
       </header>
 
       <input
@@ -336,7 +367,10 @@ export default function ImportOrdersPage() {
         </div>
       )}
 
-      {step === "drop" && <DropStep onPick={() => fileRef.current?.click()} />}
+      {step === "drop" && editId && (
+        <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[var(--text-muted)]" /></div>
+      )}
+      {step === "drop" && !editId && <DropStep onPick={() => fileRef.current?.click()} />}
 
       {step === "reading" && (
         <ReadingStep
@@ -389,7 +423,7 @@ export default function ImportOrdersPage() {
             onClick={() => setStep("check")}
             className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] disabled:opacity-40"
           >
-            Check {toSave.length} order{toSave.length === 1 ? "" : "s"}
+            {editId ? "Check changes" : <>Check {toSave.length} order{toSave.length === 1 ? "" : "s"}</>}
           </button>
         </BottomBar>
       )}
@@ -400,7 +434,7 @@ export default function ImportOrdersPage() {
             onClick={() => void save()}
             className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] flex items-center justify-center gap-2 disabled:opacity-60"
           >
-            {step === "saving" ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : `Add ${toSave.length} expense${toSave.length === 1 ? "" : "s"}`}
+            {step === "saving" ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : editId ? "Save changes" : `Add ${toSave.length} expense${toSave.length === 1 ? "" : "s"}`}
           </button>
         </BottomBar>
       )}

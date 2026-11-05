@@ -141,7 +141,7 @@ export default function OwePage() {
                 <p className="text-sm text-[var(--text-secondary)]">
                   Join {data.groupName} on Spenit to see the full list, add your own expenses and settle up in a tap.
                 </p>
-                <Link href={`/g/${data.inviteToken}`} className="btn-primary block w-full py-3 text-sm text-center">
+                <Link href={`/g/${data.inviteToken}?as=${encodeURIComponent(String(token))}`} className="btn-primary block w-full py-3 text-sm text-center">
                   Open in Spenit
                 </Link>
               </Card>

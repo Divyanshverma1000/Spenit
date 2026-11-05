@@ -80,6 +80,8 @@ export function describe(a: ActivityItem, me?: string): Described {
     case "member_left": return D([person("name", a.targetUser), txt("left the group")], "people", "people", "Left");
     case "member_removed": return D([actor, txt("removed"), person("name", a.targetUser)], "removed", "people", "Removed");
     case "member_added": return D([actor, txt("added"), person("name", a.targetUser), txt("(not joined yet)")], "people", "people", "Added");
+    case "invite_disputed":
+      return D([actor, txt("said the invite for"), { t: "thing", text: str("placeholderName") }, txt("isn't for them")], "bad", "people", "Wrong invite");
     case "account_deleted": return D([person("name", a.targetUser), txt("deleted their account")], "people", "people", "Left");
     default: return D([actor, txt("made a change")], "changed", "bills", "Change");
   }
