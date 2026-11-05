@@ -22,7 +22,7 @@ import { readJson } from "@/lib/api";
 import { fileToCompressedDataUrl } from "@/lib/image";
 import { groupKey, useGroupOverview, type GroupMember } from "@/lib/queries";
 import {
-  adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, netForMe, orderKey, orderTitle,
+  adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody,
   type DraftItem, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
@@ -638,11 +638,26 @@ function SortStep({
   me: string;
 }) {
   const [brush, setBrush] = useState<string | null>(null);
+  /** drafts as they were before the last "Same order as…", for Undo */
+  const [beforeJoin, setBeforeJoin] = useState<DraftOrder[] | null>(null);
   const update = useCallback(
     (id: string, fn: (o: DraftOrder) => DraftOrder) => setDrafts((ds) => ds.map((d) => (d.id === id ? fn(d) : d))),
     [setDrafts]
   );
   const brushMember = members.find((m) => m.id === brush);
+
+  const join = useCallback(
+    (aId: string, bId: string) => {
+      const a = drafts.find((d) => d.id === aId), b = drafts.find((d) => d.id === bId);
+      if (!a || !b) return;
+      // The part without the bill total is usually the top of the order: its rows go first.
+      const [into, from] = b.grandTotal === null && a.grandTotal !== null ? [b, a] : a.grandTotal === null ? [a, b] : [b, a];
+      const merged = mergeDrafts(into, from);
+      setBeforeJoin(drafts);
+      setDrafts(drafts.filter((d) => d.id !== from.id).map((d) => (d.id === into.id ? merged : d)));
+    },
+    [drafts, setDrafts]
+  );
 
   return (
     <main className="max-w-md mx-auto">
@@ -669,8 +684,25 @@ function SortStep({
       </div>
 
       <div className="px-4 pt-4 space-y-4">
+        {beforeJoin && (
+          <div className="flex items-center justify-between gap-3 p-3 rounded-[14px] bg-[var(--accent-subtle)] text-[13px]">
+            <span><b>Orders joined.</b> Check the items and the bill total.</span>
+            <button onClick={() => { setDrafts(beforeJoin); setBeforeJoin(null); }} className="font-bold text-[var(--accent)] flex items-center gap-1">
+              <RotateCcw size={14} /> Undo
+            </button>
+          </div>
+        )}
         {drafts.map((o) => (
-          <OrderCard key={o.id} o={o} members={members} me={me} brush={brush} update={(fn) => update(o.id, fn)} />
+          <OrderCard
+            key={o.id}
+            o={o}
+            others={drafts.filter((d) => d.id !== o.id && !d.alreadyAdded)}
+            members={members}
+            me={me}
+            brush={brush}
+            update={(fn) => update(o.id, fn)}
+            onJoin={(otherId) => join(o.id, otherId)}
+          />
         ))}
       </div>
     </main>
@@ -678,14 +710,18 @@ function SortStep({
 }
 
 function OrderCard({
-  o, members, me, brush, update,
+  o, others, members, me, brush, update, onJoin,
 }: {
   o: DraftOrder;
+  /** other cards this one can be joined with */
+  others: DraftOrder[];
   members: GroupMember[];
   me: string;
   brush: string | null;
   update: (fn: (o: DraftOrder) => DraftOrder) => void;
+  onJoin: (otherId: string) => void;
 }) {
+  const partial = looksPartial(o) && !o.alreadyAdded;
   const [open, setOpen] = useState(!o.skipped && !isReady(o) ? true : !o.skipped);
   const t = draftTotals(o);
   const everyone = members.map((m) => m.id);
@@ -748,6 +784,40 @@ function OrderCard({
               {o.skipped ? "Skipped — include" : "Skip order"}
             </button>
           </div>
+
+          {/* Join by hand: e.g. the middle screenshot of a long order is missing, so nothing overlapped. */}
+          {others.length > 0 && !o.alreadyAdded && (
+            <div className={`mx-4 mb-3 rounded-[12px] ${partial ? "p-3 bg-[var(--accent-subtle)]" : ""}`}>
+              {partial && (
+                <p className="text-[12px] mb-2">
+                  <b>Looks like part of an order.</b> {draftTotals(o).status === "no_total" ? "No bill total on these screenshots." : "Items fall short of the bill."} If another card is the rest of it, join them.
+                </p>
+              )}
+              <label className={`relative flex items-center gap-2 h-9 px-3 rounded-full border text-[12px] font-bold ${
+                partial ? "bg-[var(--paper)] border-[var(--accent)] text-[var(--accent)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"
+              }`}>
+                <ShoppingBag size={14} /> Same order as…
+                <ChevronDown size={14} className="ml-auto" />
+                <select
+                  value=""
+                  onChange={(e) => e.target.value && onJoin(e.target.value)}
+                  className="absolute inset-0 opacity-0 w-full"
+                  aria-label="Join with another order"
+                >
+                  <option value="">Same order as…</option>
+                  {others.map((d) => {
+                    const dt = draftTotals(d);
+                    return (
+                      <option key={d.id} value={d.id}>
+                        {orderTitle(d)} · {d.items.length} items · {formatINR(d.grandTotal ?? dt.computed)}
+                        {d.grandTotal === null ? " (no bill)" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            </div>
+          )}
 
           {!o.skipped && (
             <>

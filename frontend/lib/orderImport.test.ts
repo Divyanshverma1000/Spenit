@@ -6,7 +6,7 @@
  * Run from backend/: npm run test:frontend
  */
 import { describe, it, expect } from "vitest";
-import { draftTotals, itemCountCheck, joinPieces, type ExtractedOrder, type Piece } from "./orderImport";
+import { draftTotals, itemCountCheck, joinPieces, looksPartial, mergeDrafts, toDraft, type ExtractedOrder, type Piece } from "./orderImport";
 
 type Row = [name: string, lineTotal: number, qty?: number];
 const order = (o: Partial<ExtractedOrder> & { rows: Row[] }): ExtractedOrder => ({
@@ -143,5 +143,32 @@ describe("joinPieces on the real screenshots", () => {
     const a = order({ platform: "blinkit", page: HEADER, itemCount: 2, rows: [["Milk", 33], ["Bread", 40]] });
     const b = order({ platform: "blinkit", page: HEADER, itemCount: 2, rows: [["Milk", 33], ["Eggs", 60]] });
     expect(joinPieces(pieces([a, b]))).toHaveLength(2);
+  });
+});
+
+describe("mergeDrafts (\"Same order as…\")", () => {
+  it("joins the top and bottom of the Blinkit order when the middle screenshot is missing", () => {
+    const [top, bottom] = joinPieces(pieces([blinkitTop, blinkitBottom])).map((j) => toDraft(j.order, j.sources, "me", ["me", "s"]));
+    expect(looksPartial(top)).toBe(true); // no bill total
+    expect(looksPartial(bottom)).toBe(true); // ₹170 of items vs ₹614 bill
+    top.items[0].sharedBy = ["me"]; // a choice already made on the target survives
+    const joined = mergeDrafts(top, bottom);
+    expect(joined.items).toHaveLength(12);
+    expect(joined.items[0].sharedBy).toEqual(["me"]);
+    expect(joined.orderId).toBe("ORD41691704471");
+    expect(joined.sources).toEqual([0, 1]);
+    const t = draftTotals(joined);
+    expect(t.itemsTotal).toBe(573); // French Beans ₹32 was only on the missing screenshot
+    expect(t.difference).toBe(32);
+  });
+
+  it("does not add a row twice when both parts show it", () => {
+    const [top, middle] = [blinkitTop, blinkitMiddle].map((o, i) => toDraft(o, [i], "me", ["me"]));
+    expect(mergeDrafts(top, middle).items).toHaveLength(13); // 8 + 7 − Chole Masala, Spring Onion
+  });
+
+  it("a complete order does not look partial", () => {
+    const d = toDraft(blinkit4, [0], "me", ["me"]);
+    expect(looksPartial(d)).toBe(false);
   });
 });

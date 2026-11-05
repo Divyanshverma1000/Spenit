@@ -349,6 +349,44 @@ export function toDraft(order: ExtractedOrder, sources: number[], me: string, ev
   };
 }
 
+/**
+ * "Same order as…": the user joins two cards by hand, e.g. when the middle screenshot of a
+ * long order is missing so nothing overlaps. Rows already in `into` (same name and price)
+ * are not added twice; people already chosen on `into` are kept.
+ */
+export function mergeDrafts(into: DraftOrder, from: DraftOrder): DraftOrder {
+  const key = (i: { name: string; lineTotal: number }) => `${normName(i.name)}|${round2(i.lineTotal)}`;
+  const have = new Set(into.items.map(key));
+  const line = (l: DraftLine) => `${normName(l.label)}|${round2(l.amount)}`;
+  const addLines = (a: DraftLine[], b: DraftLine[]) => {
+    const seen = new Set(a.map(line));
+    return [...a, ...b.filter((l) => !seen.has(line(l)))];
+  };
+  return {
+    ...into,
+    platform: into.platform !== "other" ? into.platform : from.platform,
+    orderId: into.orderId ?? from.orderId,
+    orderDate: into.orderDate ?? from.orderDate,
+    items: [...into.items, ...from.items.filter((i) => !have.has(key(i)))],
+    fees: addLines(into.fees, from.fees),
+    discounts: addLines(into.discounts, from.discounts),
+    grandTotal: into.grandTotal ?? from.grandTotal,
+    skipped: false,
+    acceptItemsTotal: false,
+    sources: [...into.sources, ...from.sources].sort((a, b) => a - b),
+    alreadyAdded: into.alreadyAdded ?? from.alreadyAdded,
+  };
+}
+
+/**
+ * Does this card look like only part of an order? Then "Same order as…" is offered prominently.
+ * (A full order adds up to its bill; a part has no bill, or its items fall short of it.)
+ */
+export function looksPartial(o: DraftOrder): boolean {
+  const t = draftTotals(o);
+  return t.status === "no_total" || (t.status === "mismatch" && (t.difference ?? 0) > 0);
+}
+
 /** Put the difference to the bill total on a visible "Adjustment" line. */
 export function adjustToBillTotal(o: DraftOrder): DraftOrder {
   const t = draftTotals(o);
