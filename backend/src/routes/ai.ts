@@ -101,6 +101,7 @@ router.post(
     let result;
     try {
       result = await ai.parseExpenseText(text.trim(), groupContext);
+      await bump({ ai_calls: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) });
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: text.trim() };
     }
@@ -518,6 +519,7 @@ router.post(
     try {
       const ai = new GroqProvider(apiKey);
       const result = await ai.answerLedgerQuery(question, context);
+      await bump({ ai_calls: 1, chat_questions: 1 });
       
       if (result.action === "log" && result.logDetails) {
         await pool.query(

@@ -467,7 +467,10 @@ export function toExpenseBody(o: DraftOrder) {
     amount: t.computed,
     currency: "INR",
     splitType: "itemized" as const,
-    category: o.platform === "swiggy" || o.platform === "zomato" ? "Food" : "Shopping",
+    category:
+      o.platform === "swiggy" || o.platform === "zomato" ? "Food"
+      : o.platform === "amazon" || o.platform === "flipkart" ? "Shopping"
+      : "Groceries", // Blinkit, Zepto, Instamart, BigBasket, JioMart, DMart
     payers: [{ userId: o.payerId, amountPaid: t.computed }],
     participants: [],
     receiptData: {

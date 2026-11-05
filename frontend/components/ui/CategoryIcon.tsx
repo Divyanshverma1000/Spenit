@@ -8,7 +8,8 @@ import {
   Pill, 
   Lightbulb, 
   Film, 
-  Package 
+  Package,
+  ShoppingBasket
 } from 'lucide-react';
 
 interface CategoryIconProps {
@@ -28,6 +29,9 @@ export function CategoryIcon({ category, size = 16, className }: CategoryIconPro
       break;
     case 'travel':
       Icon = Plane;
+      break;
+    case 'groceries':
+      Icon = ShoppingBasket;
       break;
     case 'shopping':
       Icon = ShoppingBag;

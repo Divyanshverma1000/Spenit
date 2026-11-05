@@ -1,140 +1,163 @@
 "use client";
 
-import { API_URL } from "@/lib/api";
-import { useEffect, useState } from "react";
-import { useRequireAuth } from "@/hooks/useRequireAuth";
-import { useAuth } from "@/context/AuthContext";
-import BottomNav from "@/components/BottomNav";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Card } from "@/components/ui/Card";
-import { Wallet, Plus, Trash2, Sparkles } from "lucide-react";
+import { Suspense, useCallback, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { Sparkles } from "lucide-react";
 import Link from "next/link";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
+import BottomNav from "@/components/BottomNav";
+import { SpendingView } from "@/components/spending/SpendingView";
+import EntrySheet, { draftFrom, type EntryDraft } from "@/components/spending/EntrySheet";
+import BudgetSheet from "@/components/spending/BudgetSheet";
+import { dayStart, type QuickEntry } from "@/lib/quickAdd";
+import { inr, useSpending, useSpendingActions, type SpendEntry } from "@/lib/spending";
 
+const thisMonth = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
 
-interface PersonalExpense {
-  id: string;
-  description: string;
-  amount: string;
-  currency: string;
-  category: string;
-  created_at: string;
+interface Toast { text: string; undo?: () => Promise<unknown> }
+
+/**
+ * Spending: what you spent this month (your own + your share of group bills), with a
+ * two-second quick add. See PERSONAL_SPENDING_PLAN.md.
+ */
+export default function SpendingPageWrapper() {
+  // useSearchParams needs a Suspense boundary on this (otherwise static) page.
+  return (
+    <Suspense fallback={null}>
+      <SpendingPage />
+    </Suspense>
+  );
 }
 
-export default function PersonalExpensesPage() {
+function SpendingPage() {
   const authed = useRequireAuth();
-  const { accessToken } = useAuth();
-  const [expenses, setExpenses] = useState<PersonalExpense[]>([]);
-  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+  const params = useSearchParams();
+  const [month, setMonth] = useState(thisMonth);
+  const { data } = useSpending(month);
+  const actions = useSpendingActions();
+  // /personal?add=1 (old "Add Log" links) opens the sheet straight away.
+  const [sheet, setSheet] = useState<{ mode: "add"; prefill?: Partial<EntryDraft> } | { mode: "edit"; entry: SpendEntry } | null>(() =>
+    params?.get("add") ? { mode: "add" } : null
+  );
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!accessToken) return;
-    fetchExpenses();
-  }, [accessToken]);
+  const show = useCallback((t: Toast) => {
+    setToast(t);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 5000);
+  }, []);
 
-  async function fetchExpenses() {
+  async function quickAdd(e: QuickEntry): Promise<boolean> {
+    setQuickBusy(true);
     try {
-      const res = await fetch(`${API_URL}/personal_expenses`, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setExpenses(data);
-      }
+      const created = await actions.add({ description: e.description, amount: e.amount, category: e.category, spentAt: dayStart(e.daysAgo).toISOString() });
+      show({ text: `Added ${e.description} · ${inr(e.amount)}`, undo: () => actions.remove(created.id) });
+      return true;
     } catch (err) {
-      console.error(err);
+      show({ text: (err as Error).message || "Couldn't add it. Check your connection." });
+      return false;
     } finally {
-      setLoading(false);
+      setQuickBusy(false);
     }
   }
-
-  async function deleteExpense(id: string) {
-    if (!confirm("Delete this expense?")) return;
-    try {
-      await fetch(`${API_URL}/personal_expenses/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-      setExpenses(prev => prev.filter(e => e.id !== id));
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  const totalSpent = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
 
   if (!authed) return null;
 
   return (
-    <div className="min-h-screen bg-[var(--bg-main)] pb-24">
-      <PageHeader title="Personal" />
-      
-      <main className="p-4 space-y-6 max-w-lg mx-auto">
-        <Card className="bg-gradient-to-br from-[var(--paper)] to-[var(--paper-dim)] p-5 border-none shadow-sm">
-          <div className="flex items-center gap-3 text-[var(--text-secondary)] mb-2">
-            <Wallet className="w-5 h-5" />
-            <span className="font-medium text-sm">Total Logged</span>
+    <>
+      <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb max-w-md mx-auto">
+        <header className="px-5 pt-14 pb-4 flex items-end justify-between">
+          <div>
+            <p className="text-[13px] font-semibold text-[var(--text-secondary)]">Personal</p>
+            <h1 className="text-[28px] font-bold tracking-tight leading-tight">Your spending</h1>
           </div>
-          <h2 className="text-3xl font-black text-[var(--text-primary)]">
-            ₹{totalSpent.toFixed(2)}
-          </h2>
-        </Card>
-
-        <div className="flex items-center justify-between">
-          <h3 className="font-bold text-lg text-[var(--text-primary)]">Your Logs</h3>
-          <Link href="/personal/new">
-            <button className="flex items-center gap-1 text-[var(--accent)] font-bold text-sm bg-[var(--accent-subtle)] px-3 py-1.5 rounded-full hover:opacity-80 transition-opacity">
-              <Plus size={16} /> Add Log
-            </button>
+          <Link href="/personal/chat" className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-bold">
+            <Sparkles size={15} className="text-[var(--accent)]" /> Ask
           </Link>
-        </div>
+        </header>
 
-        {loading ? (
-          <div className="flex justify-center p-8 text-[var(--text-muted)] text-sm">Loading...</div>
-        ) : expenses.length === 0 ? (
-          <div className="text-center p-8 bg-[var(--paper-dim)] rounded-[24px] text-[var(--text-secondary)] text-sm">
-            No personal expenses yet. Track your standalone spending here!
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {expenses.map(expense => (
-              <Card key={expense.id} className="p-4 flex items-center justify-between group">
-                <div>
-                  <h4 className="font-bold text-[var(--text-primary)]">{expense.description}</h4>
-                  <div className="flex items-center gap-2 mt-1">
-                    {expense.category && (
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)] bg-[var(--paper-dim)] px-2 py-0.5 rounded-full">
-                        {expense.category}
-                      </span>
-                    )}
-                    <span className="text-xs text-[var(--text-muted)]">
-                      {new Date(expense.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="font-bold tabular-nums">₹{parseFloat(expense.amount).toFixed(2)}</span>
-                  <button 
-                    onClick={() => deleteExpense(expense.id)}
-                    className="text-[var(--text-muted)] hover:text-[var(--negative)] transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+        <div className="px-5 pb-10">
+          <SpendingView
+            o={data}
+            month={month}
+            onMonth={setMonth}
+            onQuickAdd={quickAdd}
+            onOpenAdd={(prefill) => setSheet({ mode: "add", prefill: prefill as Partial<EntryDraft> })}
+            onEdit={(entry) => setSheet({ mode: "edit", entry })}
+            onBudget={() => setBudgetOpen(true)}
+            quickBusy={quickBusy}
+          />
+        </div>
       </main>
 
-      <div className="fixed bottom-24 right-4 z-40">
-        <Link href="/personal/chat">
-          <button className="flex items-center justify-center w-14 h-14 bg-gradient-to-tr from-[var(--accent)] to-blue-400 text-white rounded-full shadow-lg hover:scale-105 active:scale-95 transition-transform">
-            <Sparkles size={24} />
-          </button>
-        </Link>
-      </div>
+      {sheet && (
+        <EntrySheet
+          initial={sheet.mode === "edit" ? draftFrom(sheet.entry) : sheet.prefill}
+          onClose={() => { setSheet(null); if (params?.get("add")) router.replace("/personal"); }}
+          onSave={async (d) => {
+            if (sheet.mode === "edit") {
+              await actions.update(sheet.entry.id, d);
+              show({ text: "Saved" });
+            } else {
+              const created = await actions.add(d);
+              show({ text: `Added ${d.description} · ${inr(d.amount)}`, undo: () => actions.remove(created.id) });
+            }
+            setSheet(null);
+          }}
+          onDelete={
+            sheet.mode === "edit"
+              ? async () => {
+                  const id = sheet.entry.id;
+                  await actions.remove(id);
+                  setSheet(null);
+                  show({ text: `Deleted ${sheet.entry.description}`, undo: () => actions.restore(id) });
+                }
+              : undefined
+          }
+        />
+      )}
 
+      {budgetOpen && (
+        <BudgetSheet
+          current={data?.budget ?? null}
+          lastMonth={data?.prevTotal ?? 0}
+          onClose={() => setBudgetOpen(false)}
+          onSave={async (amount) => {
+            await actions.setBudget(amount);
+            setBudgetOpen(false);
+            show({ text: amount ? `Budget set to ${inr(amount)} a month` : "Budget removed" });
+          }}
+        />
+      )}
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 20, opacity: 0 }}
+            className="fixed left-1/2 -translate-x-1/2 bottom-[88px] z-[95] w-[calc(100%-32px)] max-w-sm flex items-center gap-3 px-4 py-3 rounded-[16px] bg-[#16181D] text-white shadow-xl"
+            role="status"
+          >
+            <span className="flex-1 text-[14px] font-medium truncate">{toast.text}</span>
+            {toast.undo && (
+              <button
+                onClick={async () => { const u = toast.undo!; setToast(null); await u().catch(() => {}); }}
+                className="text-[14px] font-bold text-[#FCD34D]"
+              >
+                Undo
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
       <BottomNav />
-    </div>
+    </>
   );
 }
+
