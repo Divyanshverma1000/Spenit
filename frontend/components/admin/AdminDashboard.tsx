@@ -184,7 +184,7 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
                     <li key={f.id} className={`p-3.5 ${f.status === "done" ? "opacity-55" : ""}`}>
                       <div className="flex items-start gap-2">
                         <span className="mt-0.5 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--paper-dim)] text-[var(--text-secondary)] flex-shrink-0">
-                          {f.kind === "problem" ? "Problem" : f.kind === "idea" ? "Idea" : "Other"}
+                          {f.kind === "problem" ? "Problem" : f.kind === "idea" ? "Idea" : f.kind === "test" ? "Test" : "Other"}
                         </span>
                         <p className="flex-1 text-[13.5px] text-[var(--text-primary)] whitespace-pre-wrap break-words">{f.message}</p>
                       </div>

@@ -455,6 +455,7 @@ export default function ProfilePage() {
             <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-8">
               <SettingsList title="More Options">
                 <SettingsRow icon={<HelpCircle size={18} />} label="Report a problem or share an idea" onClick={() => setShowFeedback(true)} />
+                <SettingsRow icon={<CheckCircle size={18} />} label="Help test Spenit (checklist)" onClick={() => router.push("/testing")} />
                 <SettingsRow icon={<Lock size={18} />} label="Privacy Policy" onClick={() => router.push("/privacy")} />
                 <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => router.push("/terms")} />
                 <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => router.push("/about")} />

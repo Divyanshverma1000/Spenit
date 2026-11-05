@@ -14,7 +14,7 @@ import { adminEmails } from "../lib/telemetry";
 import { scrub } from "../lib/safeLog";
 
 const router = Router();
-const KINDS = ["problem", "idea", "other"];
+const KINDS = ["problem", "idea", "other", "test"];
 
 /** A short, non-identifying device line from the user agent ("Android · Chrome"). */
 function device(ua: string | undefined): string {
@@ -53,7 +53,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   if (admins.length) {
     const ids = await pool.query('select id from "User" where lower(email) = any($1::text[]) and deleted_at is null', [admins]);
     sendToUsers(ids.rows.map((a: { id: string }) => a.id), {
-      title: k === "problem" ? "New problem report" : k === "idea" ? "New idea" : "New feedback",
+      title: k === "problem" ? "New problem report" : k === "idea" ? "New idea" : k === "test" ? "Test results in" : "New feedback",
       body: scrub(text).slice(0, 100),
       url: "/admin",
       tag: `feedback-${r.rows[0].id}`,

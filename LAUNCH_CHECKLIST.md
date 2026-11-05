@@ -92,6 +92,8 @@ Today the app is India-only in places:
 
 ## 4. PWA and real-device testing (P0)
 
+Testers run this from **spenit.vercel.app/testing** (Profile → Help test Spenit); results arrive on /admin.
+
 Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), and desktop Chrome.
 
 - [ ] Install → icon, splash and name are correct; opening from the home screen lands on Home when signed in.
@@ -105,7 +107,7 @@ Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), an
 - [ ] Every screen at 320px width, in dark and light mode, with large system font; no text cut off or hidden behind the bottom nav.
 - [ ] Slow 3G: every screen shows a loader or the cached data, never a blank page.
 - [ ] Two people editing the same group at once; deleting while someone else has it open.
-- [ ] Back button (Android) closes sheets before leaving the page.
+- [ ] Back button (Android) closes sheets before leaving the page. **Known gap: not built yet** (left out of /testing).
 
 ## 5. Production clean-up (P0)
 

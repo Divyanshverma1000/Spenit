@@ -18,11 +18,20 @@ const KINDS = [
  * Report a problem or share an idea. Goes straight to the team (the admin dashboard and
  * a notification), with the screen you came from, the app version and the device type.
  */
-export default function FeedbackSheet({ from, onClose }: { from?: string; onClose: () => void }) {
+export default function FeedbackSheet({
+  from, onClose, initialMessage = "", label,
+}: {
+  from?: string;
+  onClose: () => void;
+  /** e.g. "[Test: Pay with a UPI app] " from the testing checklist */
+  initialMessage?: string;
+  /** shown under the title, e.g. which test this is about */
+  label?: string;
+}) {
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
   const [kind, setKind] = useState<(typeof KINDS)[number]["key"]>("problem");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(initialMessage);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +79,7 @@ export default function FeedbackSheet({ from, onClose }: { from?: string; onClos
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-bold text-[17px]">Tell us</p>
-                  <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">Goes straight to the people who build Spenit.</p>
+                  <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">{label ?? "Goes straight to the people who build Spenit."}</p>
                 </div>
                 <button onClick={onClose} className="p-1.5 -mr-1.5 text-[var(--text-muted)]" aria-label="Close"><X size={20} /></button>
               </div>
