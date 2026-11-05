@@ -729,7 +729,8 @@ export default function GroupDetailPage() {
       {selectedExpense && (
         <AvatarPeople people={group.members}>
         <ExpenseDetailModal
-          expense={selectedExpense}
+          expense={expenses.find((x) => x.id === selectedExpense.id) ?? selectedExpense}
+          groupId={id}
           currentUserId={user?.id}
           isAdmin={isAdmin}
           onEdit={(e) => router.push(`/groups/${id}/expenses/new?edit=${encodeURIComponent(e.id)}`)}

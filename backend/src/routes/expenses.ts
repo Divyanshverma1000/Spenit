@@ -18,6 +18,7 @@ import { requireAuth } from "../middleware/auth";
 import { invalidateGroupBalanceCache } from "./balance";
 import { sendToUsers } from "../push";
 import { computeItemizedShares, FeePolicy } from "../lib/itemizedSplit";
+import { maskReceipt, restoreMasked, setItemVisibility } from "../lib/receiptPrivacy";
 import type { PoolClient } from "pg";
 
 const router = Router();
@@ -631,8 +632,11 @@ router.post("/order-keys", requireAuth, async (req: Request, res: Response): Pro
   });
 });
 
-/** Non-deleted expenses for a group with payers/splits (display names = nicknames). */
-export async function listGroupExpenses(groupId: string) {
+/**
+ * Non-deleted expenses for a group with payers/splits (display names = nicknames).
+ * Item lists are shown as `viewerId` may see them: other people's private items are masked.
+ */
+export async function listGroupExpenses(groupId: string, viewerId: string) {
   // Fetch expenses with payers and splits in a single query set
   const expenses = await pool.query(
       `SELECT e.id, e.description, e.amount, e.currency, e.split_type, e.receipt_data, e.category,
@@ -691,7 +695,7 @@ export async function listGroupExpenses(groupId: string) {
       currency: e.currency,
       splitType: e.split_type,
       category: e.category,
-      receiptData: e.receipt_data,
+      receiptData: maskReceipt(e.receipt_data, viewerId, e.created_by),
       createdBy: { id: e.created_by, name: e.created_by_name, username: e.created_by_username },
       createdAt: e.created_at,
       // set only when the expense was changed after being created
@@ -732,7 +736,7 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  res.json(await listGroupExpenses(groupId));
+  res.json(await listGroupExpenses(groupId, userId));
 });
 
 // ─── PUT /expenses/:id (edit) ─────────────────────────────────────────────────
@@ -747,7 +751,7 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
   const userId = req.user!.userId;
 
   const existing = await pool.query(
-    'SELECT id, group_id, created_by FROM "Expense" WHERE id = $1 AND deleted_at IS NULL',
+    'SELECT id, group_id, created_by, receipt_data FROM "Expense" WHERE id = $1 AND deleted_at IS NULL',
     [id]
   );
   if (existing.rows.length === 0) {
@@ -768,6 +772,8 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
   }
 
   const body = { ...(req.body as CreateExpenseBody), groupId: e.group_id };
+  // An editor who saw private items masked must not wipe them: restore from what's stored.
+  body.receiptData = restoreMasked(body.receiptData, e.receipt_data);
   const prepared = await prepareExpense(body, userId, res);
   if (!prepared) return;
 
@@ -846,6 +852,53 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
       console.error("[push] expense edit notification failed:", err);
     }
   })();
+});
+
+// ─── PATCH /expenses/:id/item-visibility ──────────────────────────────────────
+/**
+ * Show or hide your own private items (items only you share) to the rest of the group.
+ * Body: { items: number[] (indexes in receiptData.items), visible: boolean }.
+ * Doesn't change any money, so it isn't recorded as an edit.
+ */
+router.patch("/:id/item-visibility", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const userId = req.user!.userId;
+  const { items, visible } = (req.body ?? {}) as { items?: unknown; visible?: unknown };
+  if (!Array.isArray(items) || items.length === 0 || items.length > 500 || typeof visible !== "boolean") {
+    res.status(400).json({ error: "Send { items: [indexes], visible: true|false }" });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      `SELECT e.receipt_data FROM "Expense" e
+       JOIN "GroupMember" gm ON gm.group_id = e.group_id AND gm.user_id = $2
+       WHERE e.id = $1 AND e.deleted_at IS NULL
+       FOR UPDATE OF e`,
+      [id, userId]
+    );
+    if (found.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Expense not found" });
+      return;
+    }
+    const result = setItemVisibility(found.rows[0].receipt_data, userId, items as number[], visible);
+    if (!result.ok) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    await client.query('UPDATE "Expense" SET receipt_data = $2 WHERE id = $1', [id, JSON.stringify(result.receipt)]);
+    await client.query("COMMIT");
+    res.json({ id, items, visible });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 // ─── DELETE /expenses/:id (soft-delete) ───────────────────────────────────────

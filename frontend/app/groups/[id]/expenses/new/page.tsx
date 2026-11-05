@@ -67,6 +67,8 @@ export default function UniversalExpensePage() {
   const [splitSearch, setSplitSearch] = useState("");
   // Set when the form was pre-filled from an earlier expense ("Repeat")
   const [repeatedFrom, setRepeatedFrom] = useState<string | null>(null);
+  // Editing an imported order: its item list, kept as a record (the form can't edit items)
+  const [keptBill, setKeptBill] = useState<Record<string, unknown> | null>(null);
 
   // Set the form defaults once, when the members first become available.
   // With ?repeat=<expenseId> the form is pre-filled as an exact copy of that expense:
@@ -86,6 +88,10 @@ export default function UniversalExpensePage() {
     if (source) {
       const plan = planRepeat(source, mems);
       setRepeatedFrom(source.description);
+      const rd = source.receiptData;
+      if (searchParams?.get("edit") && rd && typeof rd === "object" && !Array.isArray(rd) && Array.isArray((rd as { items?: unknown }).items)) {
+        setKeptBill(rd as Record<string, unknown>);
+      }
       setDescription(source.description);
       setTotalAmount(String(parseFloat(source.amount)));
 
@@ -278,7 +284,7 @@ export default function UniversalExpensePage() {
             splitType: "exact",
             payers: finalPayers,
             participants: participantsPayload,
-            receiptData: items.length > 0 ? items : null,
+            receiptData: keptBill ? { ...keptBill, editedByHand: true } : items.length > 0 ? items : null,
           }),
         });
         const data = await res.json().catch(() => ({}));
@@ -334,7 +340,7 @@ export default function UniversalExpensePage() {
               <div className="flex items-center gap-2 bg-[var(--accent-subtle)] text-[var(--accent)] p-3 rounded-xl text-sm font-semibold">
                 <Repeat size={16} />
                 {isEdit
-                  ? <>Editing &quot;{repeatedFrom}&quot;. Changes apply to everyone&apos;s balance once saved.</>
+                  ? <>Editing &quot;{repeatedFrom}&quot;. Changes apply to everyone&apos;s balance once saved.{keptBill && <> The order&apos;s item list stays saved as a record, but the split you set here replaces the item-by-item split.</>}</>
                   : <>Repeating &quot;{repeatedFrom}&quot;. Same people and shares. Change anything you like.</>}
               </div>
             )}

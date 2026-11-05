@@ -441,7 +441,7 @@ router.get("/:id/overview", requireAuth, async (req: Request, res: Response): Pr
 
   const [group, expenses, settlements, balance] = await Promise.all([
     getGroupDetail(id, role),
-    listGroupExpenses(id),
+    listGroupExpenses(id, userId),
     listGroupSettlements(id, userId),
     getGroupBalance(id, userId),
   ]);

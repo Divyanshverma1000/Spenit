@@ -965,8 +965,8 @@ function ItemRow({
   const onlyMe = it.sharedBy.length === 1 && it.sharedBy[0] === me;
   const share =
     nobody ? null
-    : onlyMe ? "Only you"
-    : it.sharedBy.length === 1 ? `Only ${firstName(members.find((m) => m.id === it.sharedBy[0]), me)}`
+    : onlyMe ? "Only you · private"
+    : it.sharedBy.length === 1 ? `Only ${firstName(members.find((m) => m.id === it.sharedBy[0]), me)} · private`
     : `${formatINR(Math.round((it.lineTotal / it.sharedBy.length) * 100) / 100)} each · ${it.sharedBy.length} people`;
 
   return (

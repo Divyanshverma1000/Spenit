@@ -61,3 +61,6 @@ export function AvatarById({ id, name, size = 32 }: { id: string; name: string; 
   const person = usePerson(id);
   return <MemberAvatar person={person ?? { id, name }} size={size} />;
 }
+
+/** Everyone in the nearest <AvatarPeople>, by id. */
+export const usePeople = (): Record<string, AvatarPerson> => useContext(PeopleContext);
