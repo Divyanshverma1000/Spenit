@@ -64,7 +64,7 @@ export function DashboardView({
 
   return (
     <>
-      <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb overflow-x-hidden">
+      <main className="min-h-screen bg-[var(--ink)] page-content safe-area-pb overflow-x-hidden max-w-md mx-auto">
         {/* ── Greeting ─────────────────────────────────────────────────────── */}
         <motion.header
           initial={{ opacity: 0, y: -8 }}
@@ -128,7 +128,7 @@ export function DashboardView({
               initial={{ opacity: 0, scale: 0.9, rotate: -4 }}
               animate={{ opacity: 1, scale: 1, rotate: 0, y: [0, -4, 0] }}
               transition={{ delay: 0.2, duration: 0.6, y: { duration: 5, repeat: Infinity, ease: "easeInOut" } }}
-              className="pointer-events-none absolute -right-5 -top-2 w-[150px] h-[150px] object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.35)]"
+              className="pointer-events-none absolute -right-3 -top-1 w-[126px] h-[126px] object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.35)] [mask-image:linear-gradient(to_bottom,#000_78%,transparent)]"
             />
 
             <div className="relative pr-[110px]">
@@ -155,19 +155,27 @@ export function DashboardView({
 
             {/* owed / owe split */}
             <div className="relative mt-5 grid grid-cols-2 gap-2">
-              <div className="rounded-2xl bg-white/[0.07] border border-white/10 px-3 py-2.5 backdrop-blur-sm">
+              <div className={`rounded-2xl border px-3 py-2.5 backdrop-blur-sm transition-opacity ${owedToMe > 0.004 ? "bg-white/[0.07] border-white/10" : "bg-white/[0.03] border-white/[0.06] opacity-70"}`}>
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/60">
                   <span className="w-5 h-5 rounded-full bg-[#4ADE80]/15 text-[#4ADE80] flex items-center justify-center"><ArrowDownLeft size={12} strokeWidth={3} /></span>
                   Coming to you
                 </div>
-                <div className="mt-1 text-[17px] font-bold tabular-nums">{inr(owedToMe)}</div>
+                {owedToMe > 0.004 ? (
+                  <div className="mt-1 text-[17px] font-bold tabular-nums">{inr(owedToMe)}</div>
+                ) : (
+                  <div className="mt-1 h-[25.5px] flex items-center gap-1 text-[13px] font-semibold text-white/55"><Check size={13} strokeWidth={3} /> Nothing due</div>
+                )}
               </div>
-              <div className="rounded-2xl bg-white/[0.07] border border-white/10 px-3 py-2.5 backdrop-blur-sm">
+              <div className={`rounded-2xl border px-3 py-2.5 backdrop-blur-sm transition-opacity ${iOwe > 0.004 ? "bg-white/[0.07] border-white/10" : "bg-white/[0.03] border-white/[0.06] opacity-70"}`}>
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/60">
                   <span className="w-5 h-5 rounded-full bg-[#FB7185]/15 text-[#FB7185] flex items-center justify-center"><ArrowUpRight size={12} strokeWidth={3} /></span>
                   You pay
                 </div>
-                <div className="mt-1 text-[17px] font-bold tabular-nums">{inr(iOwe)}</div>
+                {iOwe > 0.004 ? (
+                  <div className="mt-1 text-[17px] font-bold tabular-nums">{inr(iOwe)}</div>
+                ) : (
+                  <div className="mt-1 h-[25.5px] flex items-center gap-1 text-[13px] font-semibold text-white/55"><Check size={13} strokeWidth={3} /> Nothing to pay</div>
+                )}
               </div>
             </div>
           </motion.section>
