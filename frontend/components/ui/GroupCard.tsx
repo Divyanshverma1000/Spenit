@@ -34,7 +34,7 @@ export function GroupCard({ id, name, members, netAmount, direction, lastActivit
         whileTap={{ scale: 0.98 }}
         className="bg-white rounded-[24px] p-4 shadow-[0_8px_30px_rgba(0,0,0,0.04),0_2px_10px_rgba(0,0,0,0.02)] border border-[var(--hairline)] flex flex-col gap-3"
       >
-        <div className="flex justify-between items-start">
+        <div className="flex justify-between items-center gap-3">
           <div className="flex gap-3 items-center">
             <div className="h-10 w-10 rounded-[14px] bg-[var(--paper-dim)] text-[var(--accent)] flex flex-shrink-0 items-center justify-center text-[18px] font-bold">
               {name.charAt(0).toUpperCase()}
@@ -54,16 +54,21 @@ export function GroupCard({ id, name, members, netAmount, direction, lastActivit
             {netAmount && direction ? (
               <BalanceAmount amount={netAmount} direction={direction} variant="compact" />
             ) : null}
-            <div className="flex -space-x-1.5 mt-1">
+            {/* Overlapping stack: equal circles, a white gap ring, first person on top */}
+            <div className="flex items-center pl-2">
               {displayMembers.map((m, i) => (
-                <span key={m.id} className="relative rounded-full ring-2 ring-[var(--paper)] shadow-sm" style={{ zIndex: 10 - i }}>
-                  <MemberAvatar person={m} size={24} />
+                <span
+                  key={m.id}
+                  className="relative -ml-2 flex rounded-full ring-[2.5px] ring-[var(--paper)]"
+                  style={{ zIndex: displayMembers.length - i }}
+                >
+                  <MemberAvatar person={m} size={28} plain />
                 </span>
               ))}
               {overflowCount > 0 && (
-                <div className="relative z-[0] flex items-center justify-center w-6 h-6 rounded-full border-2 border-white bg-[var(--paper-dim)] text-[var(--text-secondary)] font-bold text-[9px] shadow-sm">
+                <span className="relative -ml-2 flex items-center justify-center w-7 h-7 rounded-full ring-[2.5px] ring-[var(--paper)] bg-[var(--paper-dim)] text-[var(--text-secondary)] font-bold text-[10px]">
                   +{overflowCount}
-                </div>
+                </span>
               )}
             </div>
           </div>

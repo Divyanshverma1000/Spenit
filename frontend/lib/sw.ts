@@ -4,4 +4,4 @@
  * otherwise browsers treat it as a different script and swap registrations.
  */
 export const SW_URL =
-  process.env.NODE_ENV === "production" ? "/sw.js?cache=1&v=1" : "/sw.js";
+  process.env.NODE_ENV === "production" ? "/sw.js?cache=1&v=2" : "/sw.js";

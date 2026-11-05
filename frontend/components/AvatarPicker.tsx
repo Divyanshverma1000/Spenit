@@ -1,6 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
+
+const noSubscribe = () => () => {};
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Check, Loader2, Sparkles, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -25,6 +28,7 @@ export default function AvatarPicker({
   onClose: () => void;
 }) {
   const { authFetch } = useAuth();
+  const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const queryClient = useQueryClient();
   const names = useMemo(() => shortNames(members, me), [members, me]);
   const takenBy = useMemo(() => {
@@ -61,7 +65,9 @@ export default function AvatarPicker({
 
   const preview = { ...target, avatarKey: choice };
 
-  return (
+  // Portal into <body> so the sheet always sits above the fixed bottom nav. Client-only.
+  if (!isClient) return null;
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40" onClick={onClose}>
       <motion.div
         initial={{ y: 40, opacity: 0 }}
@@ -107,9 +113,9 @@ export default function AvatarPicker({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={avatarImage(suggested)} alt="" className="w-9 h-9 rounded-full" />
-              <span className="text-[13px] font-bold leading-tight flex items-center gap-1">
-                <Sparkles size={13} className="text-[var(--accent)]" /> Suggested
-                <span className="block text-[11px] font-medium text-[var(--text-secondary)] ml-0.5">{AVATAR_LABEL[suggested]}</span>
+              <span className="text-[13px] font-bold leading-tight min-w-0">
+                <span className="flex items-center gap-1"><Sparkles size={13} className="text-[var(--accent)] flex-shrink-0" /> Suggested</span>
+                <span className="block text-[11px] font-medium text-[var(--text-secondary)] truncate">{AVATAR_LABEL[suggested]} · free</span>
               </span>
             </button>
           )}
@@ -165,6 +171,7 @@ export default function AvatarPicker({
           </button>
         </div>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }

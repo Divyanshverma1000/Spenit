@@ -20,7 +20,7 @@
 /* eslint-env serviceworker */
 /* global self, clients, caches */
 
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC_CACHE = `spenit-static-${VERSION}`;
 const PAGE_CACHE = `spenit-pages-${VERSION}`;
 const KNOWN_CACHES = [STATIC_CACHE, PAGE_CACHE];

@@ -8,11 +8,13 @@ import { avatarSrc, colorFor, initials, type AvatarPerson } from "@/lib/avatar";
  * two-letter initials on their own colour. People who haven't joined get a dashed ring.
  */
 export default function MemberAvatar({
-  person, size = 32, dim = false, className = "",
+  person, size = 32, dim = false, plain = false, className = "",
 }: {
   person: AvatarPerson;
   size?: number;
   dim?: boolean;
+  /** no dashed "not joined" ring — for small overlapping stacks */
+  plain?: boolean;
   className?: string;
 }) {
   const src = avatarSrc(person);
@@ -20,7 +22,7 @@ export default function MemberAvatar({
     <span
       title={person.name}
       className={`relative inline-flex rounded-full items-center justify-center overflow-hidden flex-shrink-0 font-bold select-none ${
-        person.isPlaceholder ? "outline-2 outline-dashed outline-[var(--border-dark)] outline-offset-1" : ""
+        person.isPlaceholder && !plain ? "outline-2 outline-dashed outline-[var(--border-dark)] outline-offset-1" : ""
       } ${dim ? "opacity-40 grayscale" : ""} ${className}`}
       style={{
         width: size,
