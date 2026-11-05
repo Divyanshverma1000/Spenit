@@ -28,6 +28,8 @@ export type FeeKind = (typeof FEE_KINDS)[number];
 
 export interface ExtractedItem {
   name: string;
+  /** what it is in a word or two ("milk", "chips") — for bill summaries */
+  short: string | null;
   variant: string | null;
   qty: number;
   lineTotal: number;
@@ -123,7 +125,8 @@ export function normalizeOrder(raw: any): ExtractedOrder {
     const lineTotal = toMoney(it?.lineTotal);
     if (!name || lineTotal === null) continue;
     const mrp = toMoney(it?.mrp);
-    items.push({ name, variant: str(it?.variant), qty, lineTotal, mrp: mrp !== null && mrp > lineTotal ? mrp : null });
+    const short = str(it?.short)?.toLowerCase().slice(0, 24) ?? null;
+    items.push({ name, short, variant: str(it?.variant), qty, lineTotal, mrp: mrp !== null && mrp > lineTotal ? mrp : null });
   }
 
   const fees: ExtractedFee[] = [];

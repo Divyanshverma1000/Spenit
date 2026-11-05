@@ -92,3 +92,48 @@ export const FEE_POLICY_TEXT: Record<Bill["feePolicy"], string> = {
   equal: "Fees and discounts split equally among people with items",
   payer: "Fees and discounts paid by the person who paid",
 };
+
+// ─── One-line bill summary ("Milk, chips, shampoo +9") ─────────────────────────
+
+const SIZE = /\b\d+(\.\d+)?\s*(g|gm|kg|ml|l|ltr|litre|pcs?|pieces?|units?|pack|x)\b/gi;
+const FILLER = new Set(["pack", "combo", "pouch", "bottle", "can", "jar", "box", "tin", "set", "of", "and", "with", "new", "fresh", "premium", "family", "value", "mini", "large", "small", "big"]);
+
+/** A word or two for what an item is. Uses the model's `short`; otherwise guesses from the name
+ * (Indian quick-commerce names usually end in the product type: "... Potato Chips"). */
+export function shortLabel(item: { name?: string | null; short?: string | null }): string | null {
+  const s = item.short?.trim();
+  if (s) return s.toLowerCase();
+  if (!item.name) return null;
+  const words = item.name
+    .replace(/\(.*?\)|\[.*?\]/g, " ")
+    .replace(SIZE, " ")
+    .replace(/[^\p{L}\s'-]/gu, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !FILLER.has(w));
+  if (words.length === 0) return null;
+  return words.slice(-2).join(" ");
+}
+
+/**
+ * A few words saying what was on the bill, priciest things first: "Milk, chips, shampoo +9".
+ * Built from what this viewer can see, so private items never show up in it.
+ */
+export function billSummary(receiptData: unknown, max = 3): string | null {
+  const bill = readBill(receiptData);
+  if (!bill) return null;
+  const raw = (receiptData as { items: { short?: string | null }[] }).items;
+  const seen = new Set<string>();
+  const picked: string[] = [];
+  const visible = bill.items.filter((i) => !i.masked).sort((a, b) => b.lineTotal - a.lineTotal);
+  for (const it of visible) {
+    const label = shortLabel({ name: it.name, short: raw[it.index]?.short });
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    if (picked.length < max) picked.push(label);
+  }
+  const rest = bill.items.length - picked.length;
+  if (picked.length === 0) return `${bill.items.length} private ${bill.items.length === 1 ? "item" : "items"}`;
+  const text = picked.join(", ") + (rest > 0 ? ` +${rest}` : "");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

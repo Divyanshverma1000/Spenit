@@ -20,7 +20,7 @@ export interface ExtractedOrder {
   orderDate: string | null;
   /** whole-order count as printed ("13 items in this order") */
   itemCount: number | null;
-  items: { name: string; variant: string | null; qty: number; lineTotal: number; mrp: number | null }[];
+  items: { name: string; short?: string | null; variant: string | null; qty: number; lineTotal: number; mrp: number | null }[];
   fees: { kind: string; label: string; amount: number }[];
   discounts: { label: string; amount: number }[];
   itemTotal: number | null;
@@ -61,6 +61,8 @@ export interface Piece {
 export interface DraftItem {
   id: string;
   name: string;
+  /** what it is in a word or two, from the model; cleared when the name is edited */
+  short?: string | null;
   variant: string | null;
   qty: number;
   lineTotal: number;
@@ -331,6 +333,7 @@ export function toDraft(order: ExtractedOrder, sources: number[], me: string, ev
     items: order.items.map((i) => ({
       id: uid(),
       name: i.name,
+      short: i.short ?? null,
       variant: i.variant,
       qty: i.qty,
       lineTotal: i.lineTotal,
@@ -421,7 +424,7 @@ export function toExpenseBody(o: DraftOrder) {
       orderKey: orderKey(o),
       orderDate: o.orderDate,
       billTotal: o.grandTotal,
-      items: o.items.map((i) => ({ name: i.name, variant: i.variant, qty: i.qty, lineTotal: i.lineTotal, sharedBy: i.sharedBy })),
+      items: o.items.map((i) => ({ name: i.name, ...(i.short ? { short: i.short } : {}), variant: i.variant, qty: i.qty, lineTotal: i.lineTotal, sharedBy: i.sharedBy })),
       fees: o.fees.filter((f) => f.amount > 0).map((f) => ({ label: f.label.trim() || "Fee", amount: f.amount })),
       discounts: o.discounts.map((d) => ({ label: d.label, amount: d.amount })),
       feePolicy: o.feePolicy,

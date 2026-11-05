@@ -106,12 +106,12 @@ describe("normalizeOrder", () => {
   it("keeps usable rows when the model returns junk ones", () => {
     const o = normalizeOrder({
       platform: "Zepto",
-      items: [{ name: "", lineTotal: 10 }, { name: "Matchbox", lineTotal: "₹10" }, { name: "Mop", lineTotal: null }],
+      items: [{ name: "", lineTotal: 10 }, { name: "Matchbox", short: " Matches ", lineTotal: "₹10" }, { name: "Mop", lineTotal: null }],
       grandTotal: "₹10",
       confidence: "weird",
     });
     expect(o.platform).toBe("zepto");
-    expect(o.items).toEqual([{ name: "Matchbox", variant: null, qty: 1, lineTotal: 10, mrp: null }]);
+    expect(o.items).toEqual([{ name: "Matchbox", short: "matches", variant: null, qty: 1, lineTotal: 10, mrp: null }]);
     expect(o.page.hasTotal).toBe(true);
     expect(o.confidence).toBe("medium");
   });

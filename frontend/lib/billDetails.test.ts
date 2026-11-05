@@ -41,3 +41,27 @@ describe("myPart", () => {
     expect(p.extras).toBe(2.08);
   });
 });
+
+import { billSummary, shortLabel } from "./billDetails";
+
+describe("billSummary", () => {
+  it("names the priciest things first and counts the rest", () => {
+    const r = {
+      items: [
+        { name: "Harvest Gold White Bread 400 g", lineTotal: 45, sharedBy: ["a", "b"] },
+        { name: "Amul Taaza Toned Milk", short: "milk", lineTotal: 68, sharedBy: ["a", "b"] },
+        { name: "Lay's India's Magic Masala Potato Chips (52 g)", lineTotal: 20, sharedBy: ["a"] },
+        { name: "Amul Gold Milk", short: "milk", lineTotal: 34, sharedBy: ["b"] },
+        { name: null, lineTotal: 199, sharedBy: ["b"], masked: true },
+      ],
+    };
+    expect(billSummary(r)).toBe("Milk, white bread, potato chips +2");
+  });
+  it("never leaks private items", () => {
+    expect(billSummary({ items: [{ name: null, lineTotal: 9, sharedBy: ["b"], masked: true }] })).toBe("1 private item");
+  });
+  it("guesses a label from the name", () => {
+    expect(shortLabel({ name: "Dove Hair Fall Rescue Shampoo 340 ml" })).toBe("rescue shampoo");
+    expect(shortLabel({ name: "Coca-Cola 750 ml", short: "cola" })).toBe("cola");
+  });
+});

@@ -27,7 +27,8 @@ RULES
 11. page.hasHeader = the top of the order is visible (order id heading, "Order summary", item-count heading). page.hasTotal = the grand total row is visible.
 12. Some apps split one order into shipments. Return every product row visible in this screenshot, from all shipments shown, each row once.
 13. Ignore app chrome: status bar, ratings, "Order again", "Repeat order", "Get help", addresses, phone numbers, names, payment method, ads.
-14. confidence = "high" if every price was clearly readable, "medium" if some were hard to read, "low" if many were. List anything you were unsure of in uncertain (short phrases, e.g. "price of Ginger").
+14. short = what the item IS in 1-2 plain lowercase words, no brand, no size, no flavour: "Amul Taaza Toned Milk 1 L" -> "milk", "Lay's India's Magic Masala" -> "chips", "Dove Hair Fall Rescue Shampoo" -> "shampoo", "Harvest Gold White Bread" -> "bread", "Coca-Cola 750 ml" -> "cola", "Fresh Onion" -> "onions".
+15. confidence = "high" if every price was clearly readable, "medium" if some were hard to read, "low" if many were. List anything you were unsure of in uncertain (short phrases, e.g. "price of Ginger").
 
 OUTPUT — JSON only, exactly these keys:
 {
@@ -35,7 +36,7 @@ OUTPUT — JSON only, exactly these keys:
   "orderId": string|null,
   "orderDate": "YYYY-MM-DD"|null,
   "itemCount": integer|null,
-  "items": [{ "name": string, "variant": string|null, "qty": number, "lineTotal": number, "mrp": number|null }],
+  "items": [{ "name": string, "short": string, "variant": string|null, "qty": number, "lineTotal": number, "mrp": number|null }],
   "fees": [{ "kind": "delivery"|"handling"|"platform"|"small_cart"|"packaging"|"tip"|"late_night"|"surge"|"tax"|"other", "label": string, "amount": number }],
   "discounts": [{ "label": string, "amount": number }],
   "itemTotal": number|null,

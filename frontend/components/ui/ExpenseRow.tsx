@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
-import { BalanceAmount } from "@/components/ui/BalanceAmount";
+import { billSummary, readBill } from "@/lib/billDetails";
 
 export interface Expense {
   id: string;
@@ -26,6 +26,9 @@ export function ExpenseRow({ expense, onClick }: { expense: Expense; onClick?: (
 
   const formattedDate = new Date(expense.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   const payerNames = expense.payers.map(p => p.name).join(", ");
+  // Imported orders: a few words on what was in it, and how many items.
+  const summary = billSummary(expense.receiptData);
+  const itemCount = summary ? readBill(expense.receiptData)?.items.length ?? 0 : 0;
 
   const handleTap = () => {
     if (onClick) {
@@ -52,15 +55,25 @@ export function ExpenseRow({ expense, onClick }: { expense: Expense; onClick?: (
             <span className="text-[16px] font-bold text-[var(--text-primary)] tabular-nums tracking-tight">₹{parseFloat(expense.amount).toFixed(2)}</span>
           </div>
           
+          {summary && (
+            <p className="text-[12px] leading-[16px] text-[var(--text-muted)] truncate mt-px" title={summary}>{summary}</p>
+          )}
+
           <div className="flex justify-between items-center w-full mt-0.5">
             <div className="text-[13px] text-[var(--text-secondary)] truncate flex items-center gap-1.5">
               <span>{formattedDate}</span>
               <span className="w-1 h-1 rounded-full bg-[var(--border-dark)]"></span>
               <span>{payerNames} paid</span>
             </div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)] px-2 py-0.5 rounded-[8px] bg-[var(--accent-subtle)]">
-              {expense.splitType}
-            </span>
+            {summary ? (
+              <span className="text-[11px] font-semibold text-[var(--text-secondary)] px-2 py-0.5 rounded-[8px] bg-[var(--paper-dim)] whitespace-nowrap flex-shrink-0">
+                {itemCount} {itemCount === 1 ? "item" : "items"}
+              </span>
+            ) : (
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)] px-2 py-0.5 rounded-[8px] bg-[var(--accent-subtle)]">
+                {expense.splitType}
+              </span>
+            )}
           </div>
         </div>
       </div>

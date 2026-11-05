@@ -828,7 +828,7 @@ function OrderCard({
                     onToggle={(u) => toggle(it.id, u)}
                     onJustMe={() => setItem(it.id, (i) => ({ ...i, sharedBy: [me] }))}
                     onEveryone={() => setItem(it.id, (i) => ({ ...i, sharedBy: [...everyone] }))}
-                    onEdit={(patch) => setItem(it.id, (i) => ({ ...i, ...patch }))}
+                    onEdit={(patch) => setItem(it.id, (i) => ({ ...i, ...patch, ...(patch.name !== undefined && patch.name !== i.name ? { short: null } : {}) }))}
                     onDelete={() => update((d) => ({ ...d, items: d.items.filter((i) => i.id !== it.id) }))}
                   />
                 ))}
