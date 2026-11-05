@@ -57,3 +57,19 @@ describe("setItemVisibility", () => {
     expect(setItemVisibility(receipt, "b", [9], true).ok).toBe(false);
   });
 });
+
+import { repairSharedBy } from "./receiptPrivacy";
+describe("repairSharedBy", () => {
+  it("swaps a claimed placeholder's old id for the person who has its shares", () => {
+    const r = { items: [{ name: "Milk", lineTotal: 30, sharedBy: ["a", "b", "OLD"] }, { name: "Chips", lineTotal: 10, sharedBy: ["OLD"] }] };
+    const fixed = repairSharedBy(r, ["a", "b", "c"]) as typeof r;
+    expect(fixed.items[0].sharedBy).toEqual(["a", "b", "c"]);
+    expect(fixed.items[1].sharedBy).toEqual(["c"]);
+  });
+  it("leaves it alone when it isn't clear", () => {
+    const r = { items: [{ name: "Milk", lineTotal: 30, sharedBy: ["X", "Y"] }] };
+    expect(repairSharedBy(r, ["a", "b"])).toBe(r);
+    const ok = { items: [{ name: "Milk", lineTotal: 30, sharedBy: ["a", "b"] }] };
+    expect(repairSharedBy(ok, ["a", "b"])).toBe(ok);
+  });
+});

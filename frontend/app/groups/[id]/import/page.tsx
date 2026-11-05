@@ -14,7 +14,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Check, AlertTriangle, ChevronDown, ImagePlus, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug,
+  ArrowLeft, Check, AlertTriangle, ChevronDown, ImagePlus, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -274,7 +274,7 @@ export default function ImportOrdersPage() {
     setStep("saving");
     if (editId) {
       try {
-        const body = { ...toExpenseBody(toSave[0]), groupId, description: editing?.description ?? toExpenseBody(toSave[0]).description };
+        const body = { ...toExpenseBody(toSave[0]), groupId };
         await readJson(await authFetch(`/expenses/${editId}`, { method: "PUT", body: JSON.stringify(body) }));
         await queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
         queryClient.invalidateQueries({ queryKey: ["balance"] });
@@ -772,7 +772,7 @@ function OrderCard({
     <div className={`rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] overflow-hidden ${o.skipped ? "opacity-60" : ""}`}>
       <button onClick={() => setOpen((v) => !v)} className="w-full p-4 flex items-center gap-3 text-left">
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-[15px] truncate">{orderTitle(o)}</div>
+          <div className="font-bold text-[15px] truncate">{o.title?.trim() || orderTitle(o)}</div>
           <div className="text-[12px] text-[var(--text-secondary)] flex items-center gap-2">
             <span>{o.items.length} items</span>
             <TotalsBadge o={o} />
@@ -789,6 +789,17 @@ function OrderCard({
 
       {open && (
         <div className="border-t border-[var(--hairline)]">
+          {/* Name of the order, as it shows in the group */}
+          <label className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-[12px] bg-[var(--paper-dim)] focus-within:ring-2 focus-within:ring-[var(--accent-subtle)]">
+            <Pencil size={13} className="text-[var(--text-muted)] flex-shrink-0" />
+            <span className="sr-only">Order name</span>
+            <input
+              value={o.title ?? ""}
+              onChange={(e) => update((d) => ({ ...d, title: e.target.value.slice(0, 80) }))}
+              placeholder={`${orderTitle(o)} order`}
+              className="flex-1 min-w-0 bg-transparent text-[14px] font-semibold focus:outline-none placeholder:text-[var(--text-muted)] placeholder:font-medium"
+            />
+          </label>
           {/* Order-level defaults */}
           <div className="px-4 py-3 flex gap-2 overflow-x-auto hide-scrollbar">
             {([
@@ -1138,7 +1149,7 @@ function CheckStep({ drafts, members, me, error }: { drafts: DraftOrder[]; membe
         return (
           <div key={o.id} className="rounded-[16px] bg-[var(--paper)] border border-[var(--hairline)] p-4 text-[13px]">
             <div className="flex justify-between font-bold">
-              <span>{orderTitle(o)}</span>
+              <span>{o.title?.trim() || orderTitle(o)}</span>
               <span className="tabular-nums">{formatINR(t.computed)}</span>
             </div>
             <div className="text-[11px] text-[var(--text-secondary)] tabular-nums mt-0.5">

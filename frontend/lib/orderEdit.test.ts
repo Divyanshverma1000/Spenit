@@ -37,3 +37,11 @@ describe("editing an imported order", () => {
     expect(draftFromExpense({ ...saved, receiptData: [{ id: "1", label: "x", amount: "5", sharedBy: [] }] })).toBeNull();
   });
 });
+
+describe("order name", () => {
+  it("keeps the saved name when editing, and uses a typed one", () => {
+    const d = draftFromExpense({ ...saved, description: "Weekly veggies" })!;
+    expect(toExpenseBody(d).description).toBe("Weekly veggies");
+    expect(toExpenseBody({ ...d, title: "  " }).description).toBe("Blinkit · 5 Nov order");
+  });
+});

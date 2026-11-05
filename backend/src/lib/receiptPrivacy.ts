@@ -79,3 +79,25 @@ export function setItemVisibility(
   const items = receipt.items.map((it, i) => (want.has(i) ? { ...it, visible } : it));
   return { ok: true, receipt: { ...receipt, items } };
 }
+
+/**
+ * Item lists saved before claims moved them still name a placeholder's old id (the person
+ * who claimed that name has the shares now, but "sharedBy" kept the old id). Swap it for
+ * the right person when the bill makes it unambiguous: exactly one id in the items isn't
+ * among the people sharing the bill, and exactly one person sharing the bill appears in
+ * no item. Returns the receipt unchanged otherwise.
+ */
+export function repairSharedBy(receipt: unknown, splitUserIds: string[]): unknown {
+  if (!isReceipt(receipt)) return receipt;
+  const inSplits = new Set(splitUserIds);
+  const seen = new Set<string>();
+  for (const it of receipt.items) for (const u of it.sharedBy ?? []) seen.add(u);
+  const unknown = [...seen].filter((u) => !inSplits.has(u));
+  const missing = splitUserIds.filter((u) => !seen.has(u));
+  if (unknown.length !== 1 || missing.length !== 1) return receipt;
+  const [from, to] = [unknown[0], missing[0]];
+  return {
+    ...receipt,
+    items: receipt.items.map((it) => ({ ...it, sharedBy: (it.sharedBy ?? []).map((u) => (u === from ? to : u)) })),
+  };
+}

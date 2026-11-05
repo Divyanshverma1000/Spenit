@@ -18,7 +18,7 @@ import { requireAuth } from "../middleware/auth";
 import { invalidateGroupBalanceCache } from "./balance";
 import { sendToUsers } from "../push";
 import { computeItemizedShares, FeePolicy } from "../lib/itemizedSplit";
-import { maskReceipt, restoreMasked, setItemVisibility } from "../lib/receiptPrivacy";
+import { maskReceipt, restoreMasked, setItemVisibility, repairSharedBy } from "../lib/receiptPrivacy";
 import { logActivity, logActivitySafe, expenseSnapshot } from "../lib/groupSafety";
 import type { PoolClient } from "pg";
 
@@ -699,7 +699,11 @@ export async function listGroupExpenses(groupId: string, viewerId: string) {
       currency: e.currency,
       splitType: e.split_type,
       category: e.category,
-      receiptData: maskReceipt(e.receipt_data, viewerId, e.created_by),
+      receiptData: maskReceipt(
+        repairSharedBy(e.receipt_data, (splitsByExpense[e.id] || []).map((s) => s.user_id)),
+        viewerId,
+        e.created_by
+      ),
       createdBy: { id: e.created_by, name: e.created_by_name, username: e.created_by_username },
       createdAt: e.created_at,
       // set only when the expense was changed after being created

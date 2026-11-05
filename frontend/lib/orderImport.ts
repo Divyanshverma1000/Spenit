@@ -81,6 +81,8 @@ export interface DraftLine {
 
 export interface DraftOrder {
   id: string;
+  /** a name the user typed for this order; empty = "Blinkit · 5 Nov order" */
+  title?: string;
   platform: Platform;
   orderId: string | null;
   orderDate: string | null;
@@ -408,6 +410,7 @@ export function adjustToBillTotal(o: DraftOrder): DraftOrder {
  * (someone else's private items) — those can only be edited by the person who added it.
  */
 export function draftFromExpense(e: {
+  description?: string;
   amount: string | number;
   receiptData?: unknown;
   payers: { userId: string }[];
@@ -423,6 +426,7 @@ export function draftFromExpense(e: {
   const billTotal = r.billTotal === null || r.billTotal === undefined ? null : n(r.billTotal);
   return {
     id: uid(),
+    title: e.description ?? "",
     platform,
     orderId: typeof r.orderId === "string" ? r.orderId : null,
     orderDate: typeof r.orderDate === "string" ? r.orderDate : null,
@@ -459,7 +463,7 @@ export function orderTitle(o: Pick<DraftOrder, "platform" | "orderDate">): strin
 export function toExpenseBody(o: DraftOrder) {
   const t = draftTotals(o);
   return {
-    description: `${orderTitle(o)} order`,
+    description: o.title?.trim() || `${orderTitle(o)} order`,
     amount: t.computed,
     currency: "INR",
     splitType: "itemized" as const,
