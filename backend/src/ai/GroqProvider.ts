@@ -28,8 +28,14 @@ import { EXPENSE_CATEGORIES } from "./AIProvider";
 import { ORDER_EXTRACT_PROMPT, ORDER_JSON_SCHEMA } from "./orderPrompt";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_TIMEOUT_MS = 10_000;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_TIMEOUT_MS = 20_000;
+/** Groq retired llama-3.3-70b-versatile on 2026-08-16; gpt-oss-120b is its recommended replacement. */
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+/**
+ * gpt-oss models think before answering, and that thinking counts toward the token limit.
+ * Low effort keeps short JSON tasks fast; other models do not accept the parameter.
+ */
+const textModelOptions = () => (GROQ_MODEL.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {});
 /** Groq retired qwen/qwen3.6-27b on 2026-09-14; qwen3.8-27b is its successor. Read per call so a Worker var applies. */
 const visionModel = () => process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b";
 
@@ -255,8 +261,9 @@ export class GroqProvider implements AIProvider {
               { role: "user", content: userMessage },
             ],
             temperature: 0.1, // low temp for deterministic JSON extraction
-            max_tokens: 1024,
+            max_completion_tokens: 2048,
             response_format: { type: "json_object" },
+            ...textModelOptions(),
           }),
           signal: controller.signal,
         });
@@ -494,7 +501,8 @@ If there are items, you MUST include them in the "items" array.`;
     const one = async (model: string, content: unknown): Promise<PingResult> => {
       if (!this.apiKey) return { ok: false, model, message: "No Groq API key" };
       const call = await groqChat(this.apiKey, {
-        model, messages: [{ role: "user", content }], temperature: 0, max_completion_tokens: 20,
+        model, messages: [{ role: "user", content }], temperature: 0, max_completion_tokens: 200,
+        ...(model === GROQ_MODEL ? textModelOptions() : {}),
       }, 20_000);
       if (call.kind === "ok") return { ok: true, model, ms: call.ms };
       if (call.kind === "http") return { ok: false, model, status: call.status, message: call.message, ms: call.ms };
@@ -574,6 +582,7 @@ No markdown fences, just the raw JSON.`;
           ],
           temperature: 0.1,
           response_format: { type: "json_object" },
+          ...textModelOptions(),
         }),
         signal: controller.signal,
       });

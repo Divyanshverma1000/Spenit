@@ -21,7 +21,7 @@
     "NODE_ENV": "production",
     "FRONTEND_URL": "https://spenit.vercel.app",
     "GOOGLE_CLIENT_ID": "762976241231-a2ohr923e9nmhrbuks7no7avhuufr25p.apps.googleusercontent.com",
-    "GROQ_MODEL": "llama-3.3-70b-versatile",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
     "GROQ_VISION_MODEL": "qwen/qwen3.8-27b"
   },
 
