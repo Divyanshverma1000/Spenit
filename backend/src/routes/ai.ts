@@ -306,6 +306,7 @@ router.post(
         status: result.status,
         message: result.message,
         model: result.model,
+        retryAfterMs: result.retryAfterMs,
         rawText: "",
       });
       return;

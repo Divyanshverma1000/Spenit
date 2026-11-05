@@ -34,6 +34,7 @@ type PieceStatus = "queued" | "ai" | "done" | "failed";
 
 interface PieceState {
   index: number;
+  /** an in-memory copy: Android revokes read access to picked files soon after picking */
   file: File;
   thumb: string;
   status: PieceStatus;
@@ -58,13 +59,18 @@ const AI_FAILURE: Record<string, string> = {
 };
 /** These fail the same way for every screenshot — no point sending the rest. */
 const ACCOUNT_FAILURES = new Set(["config_error", "blocked", "model_unavailable"]);
-const AI_CONCURRENCY = 3;
+/** Groq's free tier allows only a few thousand tokens a minute; each screenshot is ~2k. */
+const AI_CONCURRENCY = 2;
+/** Busy / slow / flaky answers are retried automatically, waiting longer each time. */
+const AUTO_RETRY = new Set(["rate_limit", "timeout", "network"]);
+const AUTO_RETRY_WAITS_MS = [8_000, 20_000, 40_000];
 
-async function hashFile(f: File): Promise<string> {
-  const buf = await f.arrayBuffer();
+async function hashBytes(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return Array.from(new Uint8Array(digest).slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -138,7 +144,17 @@ export default function ImportOrdersPage() {
         patchPiece(p.index, { status: "ai", error: undefined, failure: undefined });
         // Tall screenshots: keep the long edge high enough for small price text.
         const imageBase64 = await fileToCompressedDataUrl(p.file, 2000, 0.85);
-        const resp = await withAiSlot(() => extract(imageBase64));
+        let resp = await withAiSlot(() => extract(imageBase64));
+        for (let attempt = 0; "fallback" in resp && AUTO_RETRY.has(resp.reason) && attempt < AUTO_RETRY_WAITS_MS.length; attempt++) {
+          const waitMs = Math.max(resp.retryAfterMs ?? 0, AUTO_RETRY_WAITS_MS[attempt]);
+          patchPiece(p.index, {
+            status: "queued",
+            error: `${resp.reason === "rate_limit" ? "AI is busy" : "AI didn't answer"} — trying again in ${Math.round(waitMs / 1000)}s`,
+          });
+          await sleep(waitMs);
+          patchPiece(p.index, { status: "ai", error: undefined });
+          resp = await withAiSlot(() => extract(imageBase64));
+        }
         if ("fallback" in resp) {
           if (resp.reason === "config_error") setNoKey(true);
           if (ACCOUNT_FAILURES.has(resp.reason) && resp.reason !== "config_error") setBlocked(true);
@@ -164,19 +180,37 @@ export default function ImportOrdersPage() {
   const addFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
+      // Read every picked file into memory right away, all at once: Android may revoke
+      // access to the originals moments later ("The requested file could not be read").
+      const picked = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      const copies = await Promise.all(
+        picked.map(async (f) => {
+          try {
+            const buf = await f.arrayBuffer();
+            return { file: new File([buf], f.name, { type: f.type }), hash: await hashBytes(buf) };
+          } catch {
+            return null;
+          }
+        })
+      );
       const added: PieceState[] = [];
-      for (const file of Array.from(files)) {
-        if (!file.type.startsWith("image/")) continue;
-        if (nextIndex.current >= MAX_IMAGES) break;
-        const h = await hashFile(file).catch(() => `${file.name}:${file.size}`);
-        if (hashes.current.has(h)) continue; // exact duplicate image
-        hashes.current.add(h);
-        added.push({ index: nextIndex.current++, file, thumb: URL.createObjectURL(file), status: "queued" });
-      }
+      copies.forEach((c, i) => {
+        if (nextIndex.current >= MAX_IMAGES) return;
+        if (!c) {
+          added.push({
+            index: nextIndex.current++, file: picked[i], thumb: "", status: "failed",
+            error: "Couldn't open this image — pick it again",
+          });
+          return;
+        }
+        if (hashes.current.has(c.hash)) return; // exact duplicate image
+        hashes.current.add(c.hash);
+        added.push({ index: nextIndex.current++, file: c.file, thumb: URL.createObjectURL(c.file), status: "queued" });
+      });
       if (added.length === 0) return;
       setPieces((ps) => [...ps, ...added]);
       setStep("reading");
-      added.forEach((p) => void processPiece(p));
+      added.filter((p) => p.status === "queued").forEach((p) => void processPiece(p));
     },
     [processPiece]
   );
@@ -479,16 +513,26 @@ function ReadingStep({
         </button>
       )}
 
-      {pieces.filter((p) => p.status === "failed").map((p) => (
+      {pieces.filter((p) => p.status === "failed" || (p.status === "queued" && p.error)).map((p) => (
         <div key={p.index} className="flex items-center gap-3 p-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.thumb} alt="" className="w-10 h-14 object-cover rounded-[6px]" />
+          {p.thumb ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={p.thumb} alt="" className="w-10 h-14 object-cover rounded-[6px]" />
+          ) : (
+            <div className="w-10 h-14 rounded-[6px] bg-[var(--paper-dim)]" />
+          )}
           <div className="flex-1 text-[13px]">
             <div className="font-bold">Screenshot {p.index + 1}</div>
             <div className="text-[var(--text-secondary)]">{p.error}</div>
           </div>
-          <button onClick={() => onRetry(p)} className="p-2 text-[var(--accent)]" aria-label="Retry"><RotateCcw size={18} /></button>
-          <button onClick={() => onRemove(p.index)} className="p-2 text-[var(--text-muted)]" aria-label="Remove"><X size={18} /></button>
+          {p.status === "failed" ? (
+            <>
+              {p.thumb && <button onClick={() => onRetry(p)} className="p-2 text-[var(--accent)]" aria-label="Retry"><RotateCcw size={18} /></button>}
+              <button onClick={() => onRemove(p.index)} className="p-2 text-[var(--text-muted)]" aria-label="Remove"><X size={18} /></button>
+            </>
+          ) : (
+            <Loader2 size={18} className="animate-spin text-[var(--text-muted)] mr-2" />
+          )}
         </div>
       ))}
 

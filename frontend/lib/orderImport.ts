@@ -48,6 +48,8 @@ export interface ExtractFailure {
   status?: number;
   message?: string;
   model?: string;
+  /** Groq's retry-after, when it said it was busy */
+  retryAfterMs?: number;
 }
 
 /** One picked screenshot and its extraction. `index` = pick order, used for joining. */

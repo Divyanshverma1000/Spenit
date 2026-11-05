@@ -1,6 +1,9 @@
 /**
  * orderPrompt.ts — what we ask the vision model for ONE order screenshot
- * (BulkOrderSplit_Plan.md §3.1), and the JSON Schema its answer must follow.
+ * (BulkOrderSplit_Plan.md §3.1). Sent in JSON mode; lib/orderExtract validates the answer.
+ *
+ * Strict JSON Schema mode was tried first but Groq answered 400 for qwen3.8-27b, which
+ * doubled every request and hit the free-tier token limit, so the shape is spelled out here.
  *
  * The rules come from real screenshots (Blinkit, Zepto, Instamart): crossed-out MRPs,
  * shipment tabs that repeat items, "Product discount" rows already inside item prices.
@@ -26,75 +29,20 @@ RULES
 13. Ignore app chrome: status bar, ratings, "Order again", "Repeat order", "Get help", addresses, phone numbers, names, payment method, ads.
 14. confidence = "high" if every price was clearly readable, "medium" if some were hard to read, "low" if many were. List anything you were unsure of in uncertain (short phrases, e.g. "price of Ginger").
 
+OUTPUT — JSON only, exactly these keys:
+{
+  "platform": "blinkit"|"zepto"|"instamart"|"bigbasket"|"swiggy"|"zomato"|"amazon"|"flipkart"|"jiomart"|"dmart"|"other",
+  "orderId": string|null,
+  "orderDate": "YYYY-MM-DD"|null,
+  "itemCount": integer|null,
+  "items": [{ "name": string, "variant": string|null, "qty": number, "lineTotal": number, "mrp": number|null }],
+  "fees": [{ "kind": "delivery"|"handling"|"platform"|"small_cart"|"packaging"|"tip"|"late_night"|"surge"|"tax"|"other", "label": string, "amount": number }],
+  "discounts": [{ "label": string, "amount": number }],
+  "itemTotal": number|null,
+  "grandTotal": number|null,
+  "page": { "hasHeader": boolean, "hasTotal": boolean },
+  "confidence": "high"|"medium"|"low",
+  "uncertain": [string]
+}
+
 Platform hints: Blinkit = green "Repeat Order", "Bill details", order id starts "ORD". Zepto = pink "Order Again", "Bill Summary", shipments. Instamart = "ORDER #", "TOTAL ORDER BILL DETAILS", "Item Bill".`;
-
-const nullable = (type: string) => ({ type: [type, "null"] });
-
-/** Strict schema: every key required, no extras (Groq strict mode rules). */
-export const ORDER_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "platform", "orderId", "orderDate", "itemCount", "items", "fees", "discounts",
-    "itemTotal", "grandTotal", "page", "confidence", "uncertain",
-  ],
-  properties: {
-    platform: {
-      type: "string",
-      enum: ["blinkit", "zepto", "instamart", "bigbasket", "swiggy", "zomato", "amazon", "flipkart", "jiomart", "dmart", "other"],
-    },
-    orderId: nullable("string"),
-    orderDate: nullable("string"),
-    itemCount: nullable("integer"),
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "variant", "qty", "lineTotal", "mrp"],
-        properties: {
-          name: { type: "string" },
-          variant: nullable("string"),
-          qty: { type: "number" },
-          lineTotal: { type: "number" },
-          mrp: nullable("number"),
-        },
-      },
-    },
-    fees: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["kind", "label", "amount"],
-        properties: {
-          kind: {
-            type: "string",
-            enum: ["delivery", "handling", "platform", "small_cart", "packaging", "tip", "late_night", "surge", "tax", "other"],
-          },
-          label: { type: "string" },
-          amount: { type: "number" },
-        },
-      },
-    },
-    discounts: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["label", "amount"],
-        properties: { label: { type: "string" }, amount: { type: "number" } },
-      },
-    },
-    itemTotal: nullable("number"),
-    grandTotal: nullable("number"),
-    page: {
-      type: "object",
-      additionalProperties: false,
-      required: ["hasHeader", "hasTotal"],
-      properties: { hasHeader: { type: "boolean" }, hasTotal: { type: "boolean" } },
-    },
-    confidence: { type: "string", enum: ["high", "medium", "low"] },
-    uncertain: { type: "array", items: { type: "string" } },
-  },
-} as const;

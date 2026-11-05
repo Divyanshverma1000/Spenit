@@ -160,6 +160,8 @@ export type OrderExtractResult =
       /** Groq's own error message (never contains the key) */
       message?: string;
       model: string;
+      /** how long Groq asked us to wait (429) */
+      retryAfterMs?: number;
       /** raw model text when JSON parsing failed — trimmed, for diagnostics */
       rawText?: string;
     };

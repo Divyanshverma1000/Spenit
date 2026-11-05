@@ -25,7 +25,7 @@ import type {
   OrderExtractResult,
 } from "./AIProvider";
 import { EXPENSE_CATEGORIES } from "./AIProvider";
-import { ORDER_EXTRACT_PROMPT, ORDER_JSON_SCHEMA } from "./orderPrompt";
+import { ORDER_EXTRACT_PROMPT } from "./orderPrompt";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 20_000;
@@ -411,8 +411,9 @@ If there are items, you MUST include them in the "items" array.`;
   // ── extractOrder — one screenshot → vision model → order JSON ───────────────
 
   /**
-   * Strict JSON Schema first; if Groq rejects that request shape (400), retry once in JSON
-   * mode. 429 / 5xx / timeouts are retried once, honouring retry-after. 401 / 404 / 413 never.
+   * JSON mode, one request per screenshot. 429 / 5xx / timeouts are retried once when the
+   * wait is short; a longer retry-after goes back to the phone, which waits and retries.
+   * 401 / 404 / 413 are never retried.
    */
   async extractOrder(input: { imageBase64: string }): Promise<OrderExtractResult> {
     const model = visionModel();
@@ -428,14 +429,9 @@ If there are items, you MUST include them in the "items" array.`;
         ],
       },
     ];
-    const formats = [
-      { type: "json_schema", json_schema: { name: "order_screenshot", strict: true, schema: ORDER_JSON_SCHEMA } },
-      { type: "json_object" },
-    ];
 
     const startMs = Date.now();
     let attempts = 0;
-    let formatIdx = 0;
     let transientRetries = 0;
     for (;;) {
       attempts++;
@@ -444,10 +440,10 @@ If there are items, you MUST include them in the "items" array.`;
         messages,
         temperature: 0,
         max_completion_tokens: 4096,
-        response_format: formats[formatIdx],
+        response_format: { type: "json_object" },
       }, 45_000);
       console.log(
-        `[ai] stage=GROQ_RESPONSE_RECEIVED model=${model} attempt=${attempts} format=${formats[formatIdx].type} status=${call.status} ms=${call.ms}`
+        `[ai] stage=GROQ_RESPONSE_RECEIVED model=${model} attempt=${attempts} status=${call.status} ms=${call.ms}`
       );
 
       if (call.kind === "ok") {
@@ -470,7 +466,6 @@ If there are items, you MUST include them in the "items" array.`;
 
       if (call.kind === "http") {
         const { status, message } = call;
-        if (status === 400 && formatIdx === 0) { formatIdx = 1; continue; } // structured outputs not accepted → JSON mode
         if ((status === 429 || status >= 500) && transientRetries === 0 && call.retryAfterMs <= 10_000) {
           transientRetries++;
           await new Promise((r) => setTimeout(r, Math.max(call.retryAfterMs, 1_000)));
@@ -484,7 +479,7 @@ If there are items, you MUST include them in the "items" array.`;
           : status === 429 ? "rate_limit"
           : status === 400 || status === 422 ? "invalid_request"
           : "network";
-        return { ok: false, reason, stage: "groq_request", status, message, model };
+        return { ok: false, reason, stage: "groq_request", status, message, model, retryAfterMs: call.retryAfterMs || undefined };
       }
 
       // timeout / network error
