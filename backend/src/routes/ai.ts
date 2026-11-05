@@ -20,6 +20,10 @@ import { requireAuth } from "../middleware/auth";
 import { GroqProvider } from "../ai/GroqProvider";
 import type { GroupMember, ParsedExpenseDraft } from "../ai/AIProvider";
 import { normalizeOrder, checkTotals } from "../lib/orderExtract";
+import { buildGroupContext } from "../lib/groupAiContext";
+import { listGroupExpenses } from "./expenses";
+import { listGroupSettlements } from "./settlements";
+import { getGroupBalance } from "./balance";
 
 const router = Router();
 
@@ -355,24 +359,27 @@ function jaccardSimilarity(a: string, b: string): number {
 
 // ─── POST /ai/query ────────────────────────────────────────────────────────────
 /**
- * Stage 6B: Conversational Ledger Intelligence.
- * Fetch all read-only ledger data for a group, then ask the AI to answer the user's question based on it.
+ * Group chat. Answers questions about one group from its full, current ledger:
+ * balances and payments still due, recorded payments and their status, every expense
+ * with payer and shares, imported order items (private ones masked for this viewer),
+ * and totals by category / month / kind of item (lib/groupAiContext.ts).
  *
- * Body: { groupId: string, question: string }
+ * Body: { groupId, question, history?: [{ role: "user"|"assistant", content }] }
+ * 200 → { answer, expenseIds, followUps }
+ * 429 → { error: "rate_limit", retryAfterMs } · 403 → { error: "missing_key" }
  */
 router.post(
   "/query",
   requireAuth,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { groupId, question } = req.body;
+    const { groupId, question, history } = req.body ?? {};
 
-    if (!groupId || !question || question.trim().length === 0) {
+    if (typeof groupId !== "string" || typeof question !== "string" || !question.trim()) {
       res.status(400).json({ error: "groupId and question are required" });
       return;
     }
 
-    // 1. Verify membership
     const memberCheck = await pool.query(
       'SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2',
       [groupId, userId]
@@ -382,61 +389,48 @@ router.post(
       return;
     }
 
-    // 2. Fetch User's API Key
-    const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
-    const apiKey = userRes.rows[0]?.groq_api_key;
-    if (!apiKey) {
+    const { key } = await groqKeyFor(userId);
+    if (!key) {
       res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." });
       return;
     }
 
-    // 3. Fetch all context (Members, Expenses, Settlements, Balances)
-    // We reuse existing balance/expense endpoints logic here by fetching directly
-    const membersRes = await pool.query(
-      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username
-       FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
-       WHERE gm.group_id = $1 ORDER BY (gm.user_id = $2) DESC, COALESCE(gm.nickname, u.name) ASC`,
-      [groupId, userId]
-    );
-    const members = membersRes.rows;
+    const [membersRes, expenses, settlements, balance] = await Promise.all([
+      pool.query(
+        `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.is_placeholder, g.name AS group_name
+         FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id JOIN "Group" g ON g.id = gm.group_id
+         WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`,
+        [groupId]
+      ),
+      listGroupExpenses(groupId, userId),
+      listGroupSettlements(groupId, userId),
+      getGroupBalance(groupId, userId),
+    ]);
 
-    const expensesRes = await pool.query(
-      `SELECT e.id, e.description, e.amount, e.currency, e.category, e.created_at, COALESCE(agm.nickname, u.name) as added_by
-       FROM "Expense" e
-       JOIN "User" u ON u.id = e.created_by
-       LEFT JOIN "GroupMember" agm ON agm.group_id = e.group_id AND agm.user_id = e.created_by
-       WHERE e.group_id = $1 AND e.deleted_at IS NULL
-       ORDER BY e.created_at DESC LIMIT 50`,
-      [groupId]
-    );
-    const expenses = expensesRes.rows;
+    const ctx = buildGroupContext({
+      groupName: membersRes.rows[0]?.group_name ?? "this group",
+      viewerId: userId,
+      members: membersRes.rows.map((m: { id: string; name: string; is_placeholder: boolean }) => ({ id: m.id, name: m.name, isPlaceholder: m.is_placeholder })),
+      expenses,
+      settlements,
+      balance,
+    });
 
-    // Fetch balances via HTTP or require the balance logic? 
-    // It's cleaner to just fetch what we can. For Stage 6B, AI needs raw context.
-    const settlementsRes = await pool.query(
-      `SELECT s.id, s.amount, s.status, s.method, s.created_at,
-              COALESCE(fgm.nickname, f.name) as from_user, COALESCE(tgm.nickname, t.name) as to_user
-       FROM "Settlement" s
-       JOIN "User" f ON f.id = s.from_user
-       JOIN "User" t ON t.id = s.to_user
-       LEFT JOIN "GroupMember" fgm ON fgm.group_id = s.group_id AND fgm.user_id = s.from_user
-       LEFT JOIN "GroupMember" tgm ON tgm.group_id = s.group_id AND tgm.user_id = s.to_user
-       WHERE s.group_id = $1 AND s.deleted_at IS NULL
-       ORDER BY s.created_at DESC`,
-      [groupId]
-    );
-    const settlements = settlementsRes.rows;
+    const turns = (Array.isArray(history) ? history : [])
+      .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+      .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
-    const context = { members, expenses, settlements, balances: [] };
-
-    try {
-      const ai = new GroqProvider(apiKey);
-      const answer = await ai.answerLedgerQuery(question.trim(), context);
-      res.json(answer);
-    } catch (err: any) {
-      console.error("[ai/query] Error:", err.message);
-      res.status(500).json({ error: err.message });
+    const result = await new GroqProvider(key).groupChat(ctx.text, question.trim(), turns);
+    if (!result.ok) {
+      const status = result.reason === "rate_limit" ? 429 : result.reason === "config_error" ? 502 : 503;
+      res.status(status).json({ error: result.reason, message: result.message, retryAfterMs: result.retryAfterMs });
+      return;
     }
+    res.json({
+      answer: result.answer,
+      expenseIds: result.refs.map((r) => ctx.refs[r]).filter(Boolean),
+      followUps: result.followUps,
+    });
   }
 );
 

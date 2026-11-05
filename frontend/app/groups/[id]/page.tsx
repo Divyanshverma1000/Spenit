@@ -43,6 +43,7 @@ import { SectionLabel } from "@/components/ui/SectionLabel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
 import AvatarPicker from "@/components/AvatarPicker";
+import GroupChat from "@/components/GroupChat";
 import MemberAvatar, { AvatarPeople } from "@/components/ui/MemberAvatar";
 import { lookAlikes, initials } from "@/lib/avatar";
 import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
@@ -141,9 +142,9 @@ export default function GroupDetailPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
 
-  const [aiQuery, setAiQuery] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<{ answer: string; filters?: { categories?: string[]; userIds?: string[] } } | null>(null);
+  // Ask Spenit: a chat sheet; "Show N bills" from an answer filters the list below.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [aiFilter, setAiFilter] = useState<string[] | null>(null);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
@@ -258,61 +259,15 @@ export default function GroupDetailPage() {
     finally { setMemberBusy(false); }
   }
 
-  async function askAI(e: React.FormEvent) {
-    e.preventDefault();
-    if (!aiQuery.trim()) return;
-
-    setAiLoading(true);
-    setAiResponse(null);
-    try {
-      const res = await authFetch("/ai/query", {
-        method: "POST",
-        body: JSON.stringify({ groupId: id, question: aiQuery })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === "missing_key") {
-          alert("Please set your Groq API Key in Profile settings first.");
-          router.push("/profile");
-          return;
-        }
-        throw new Error(data.error || "Failed to query AI");
-      }
-      setAiResponse(data);
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message);
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   const feedItems = useMemo(() => {
-    const filteredExp = expenses.filter(exp => {
-      if (!aiResponse?.filters) return true;
-      const { categories, userIds } = aiResponse.filters;
-
-      let match = true;
-      if (categories && categories.length > 0) {
-        match = match && !!exp.category && categories.includes(exp.category);
-      }
-      if (userIds && userIds.length > 0) {
-        const involvedIds = new Set([
-          ...exp.payers.map(p => p.userId),
-          ...exp.splits.map(s => s.userId)
-        ]);
-        const hasUserMatch = userIds.some(uid => involvedIds.has(uid));
-        match = match && hasUserMatch;
-      }
-      return match;
-    }).map(e => ({ type: 'expense' as const, data: e, createdAt: new Date(e.createdAt).getTime() }));
-
-    const filteredSet = aiResponse?.filters 
-      ? [] // hide settlements if AI filtering is active
-      : settlements.map(s => ({ type: 'settlement' as const, data: s, createdAt: new Date(s.createdAt).getTime() }));
-
-    return [...filteredExp, ...filteredSet].sort((a, b) => b.createdAt - a.createdAt);
-  }, [expenses, settlements, aiResponse]);
+    const only = aiFilter ? new Set(aiFilter) : null;
+    const exp = expenses
+      .filter((e) => !only || only.has(e.id))
+      .map((e) => ({ type: 'expense' as const, data: e, createdAt: new Date(e.createdAt).getTime() }));
+    // Settlements are hidden while showing bills from an answer.
+    const set = only ? [] : settlements.map((s) => ({ type: 'settlement' as const, data: s, createdAt: new Date(s.createdAt).getTime() }));
+    return [...exp, ...set].sort((a, b) => b.createdAt - a.createdAt);
+  }, [expenses, settlements, aiFilter]);
 
   if (!authed) return null;
   if (loading && !group) return (
@@ -419,53 +374,24 @@ export default function GroupDetailPage() {
 
         {/* ── Sticky AI Search ────────────────────────────────────────── */}
         <div className="sticky top-[148px] z-10 bg-[var(--ink)]/90 backdrop-blur-md px-5 py-3 mb-2">
-          <form onSubmit={askAI} className="relative">
-            <input
-              type="text"
-              placeholder="Ask Spenit... e.g. Who owes me?"
-              value={aiQuery}
-              onChange={e => setAiQuery(e.target.value)}
-              className="w-full bg-white rounded-[14px] pl-10 pr-12 py-3.5 text-[15px] font-medium text-[var(--text-primary)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] border border-[var(--hairline)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)] transition-shadow placeholder:text-[var(--text-muted)]"
-            />
-            <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]">
-              <Sparkles size={18} strokeWidth={2} />
-            </div>
-            <button
-              type="submit"
-              disabled={aiLoading || !aiQuery.trim()}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-[10px] transition-colors disabled:opacity-40 text-[var(--accent)]"
-              aria-label="Ask AI"
-            >
-              {aiLoading ? <div className="spinner-sm" style={{ borderWidth: "2px" }} /> : <Sparkles size={18} strokeWidth={2.5} />}
-            </button>
-          </form>
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            className="w-full flex items-center gap-2.5 bg-white rounded-[14px] pl-3.5 pr-3 py-3.5 text-left border border-[var(--hairline)] shadow-[0_2px_8px_rgba(0,0,0,0.02)] active:scale-[0.99] transition-transform"
+          >
+            <Sparkles size={18} strokeWidth={2} className="text-[var(--accent)] flex-shrink-0" />
+            <span className="flex-1 text-[15px] font-medium text-[var(--text-muted)] truncate">Ask Spenit… e.g. What&apos;s pending?</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)] px-2 py-1 rounded-[8px] bg-[var(--accent-subtle)]">Chat</span>
+          </button>
 
-          <AnimatePresence>
-            {aiResponse && (
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 overflow-hidden">
-                <div className="bg-[var(--accent-subtle)] p-4 rounded-[16px] relative">
-                  <button onClick={() => { setAiResponse(null); setAiQuery(""); }} className="absolute top-3 right-3 text-[var(--accent)] opacity-70 hover:opacity-100">
-                    <X size={16} strokeWidth={2} />
-                  </button>
-                  <div className="flex gap-2.5 pr-6">
-                    <Sparkles size={16} className="flex-shrink-0 mt-0.5 text-[var(--accent)]" strokeWidth={2} />
-                    <div>
-                      <p className="text-[14px] font-semibold text-[var(--text-primary)] leading-snug">{aiResponse.answer}</p>
-                      {aiResponse.filters && Object.keys(aiResponse.filters).length > 0 && (
-                        <div className="mt-2.5 flex flex-wrap gap-2">
-                          {aiResponse.filters.categories?.map(c => (
-                            <span key={c} className="px-2 py-1 text-[11px] font-bold rounded-[8px] bg-white text-[var(--text-secondary)] shadow-sm uppercase tracking-wider">
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {aiFilter && (
+            <div className="mt-3 flex items-center gap-2 px-3.5 py-2.5 rounded-[14px] bg-[var(--accent-subtle)]">
+              <Sparkles size={15} className="text-[var(--accent)] flex-shrink-0" />
+              <p className="flex-1 text-[13px] font-semibold text-[var(--text-primary)]">Showing {aiFilter.length} {aiFilter.length === 1 ? "bill" : "bills"} from your chat</p>
+              <button onClick={() => setChatOpen(true)} className="text-[12px] font-bold text-[var(--accent)] px-2">Chat</button>
+              <button onClick={() => setAiFilter(null)} className="p-1 text-[var(--accent)]" aria-label="Show all"><X size={16} /></button>
+            </div>
+          )}
         </div>
 
         {/* ── Expenses ────────────────────────────────────────── */}
@@ -715,6 +641,15 @@ export default function GroupDetailPage() {
           </div>
         </div>
       </main>
+
+      {chatOpen && (
+        <GroupChat
+          groupId={id}
+          groupName={group.name}
+          onClose={() => setChatOpen(false)}
+          onShowExpenses={(ids) => { setAiFilter(ids); setChatOpen(false); }}
+        />
+      )}
 
       {avatarFor && user && (
         <AvatarPicker

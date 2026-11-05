@@ -602,6 +602,73 @@ No markdown fences, just the raw JSON.`;
     }
   }
 
+  /**
+   * Group chat: answer a question about one group from its ledger (built by
+   * lib/groupAiContext). Keeps the last few turns so follow-ups work.
+   * Never throws: returns the answer, or why it failed.
+   */
+  async groupChat(
+    ledger: string,
+    question: string,
+    history: { role: "user" | "assistant"; content: string }[]
+  ): Promise<
+    | { ok: true; answer: string; refs: string[]; followUps: string[] }
+    | { ok: false; reason: "rate_limit" | "timeout" | "config_error" | "unavailable"; message: string; retryAfterMs: number }
+  > {
+    const system = `You are Spenit's assistant inside one expense-sharing group. You talk with a member of the group like a friendly, sharp accountant who knows every bill.
+
+Use ONLY the LEDGER below. It is complete and up to date: balances, payments still due, payments waiting for confirmation, every expense with who paid and each person's share, item lists of imported orders, and pre-computed totals. Never invent numbers. Prefer the pre-computed totals over adding things up yourself.
+
+How to answer:
+- Short and direct: the answer first, in 1-3 sentences, then at most a few bullets if they help. Use **bold** for key amounts. Indian rupees like ₹1,141.
+- "You" is the person asking (marked "(you)").
+- Owing and pending: use BALANCES NOW and "payments still due". A payment that is waiting for confirmation is not counted yet — say so when it matters.
+- Items ("how much on milk", "vegetables", "snacks"): use ITEMS BOUGHT. Group kinds sensibly yourself (vegetables = onion, tomato, potato, lady's finger, coriander…; dairy = milk, curd, paneer, butter…). Give the total price and the asker's part, and mention which bills if useful.
+- Private items have no name on purpose. Never guess what they were.
+- If the ledger can't answer, say what is missing and what they could do in the app.
+- Talk naturally; follow on from earlier messages.
+
+Return JSON only:
+{"answer": string, "refs": ["E1", ...] (the expenses your answer is about, max 20, [] if none), "followUps": [up to 3 short questions the user might ask next]}
+
+LEDGER
+${ledger}`;
+
+    const body = {
+      model: GROQ_MODEL,
+      messages: [
+        { role: "system", content: system },
+        ...history.slice(-6).map((m) => ({ role: m.role, content: m.content.slice(0, 800) })),
+        { role: "user", content: question.slice(0, 500) },
+      ],
+      temperature: 0.2,
+      max_completion_tokens: 1200,
+      response_format: { type: "json_object" },
+      ...textModelOptions(),
+    };
+
+    let call = await groqChat(this.apiKey, body, 30_000);
+    if (call.kind === "timeout" || (call.kind === "http" && call.status >= 500)) call = await groqChat(this.apiKey, body, 30_000);
+
+    if (call.kind !== "ok") {
+      const status = call.kind === "http" ? call.status : 0;
+      console.warn(`[ai] groupChat failed kind=${call.kind} status=${status} ms=${call.ms}`);
+      if (call.kind === "http" && status === 429)
+        return { ok: false, reason: "rate_limit", message: call.message, retryAfterMs: call.retryAfterMs || 10_000 };
+      if (call.kind === "timeout") return { ok: false, reason: "timeout", message: "The AI took too long", retryAfterMs: 0 };
+      if (call.kind === "http" && (status === 401 || status === 403))
+        return { ok: false, reason: "config_error", message: call.message, retryAfterMs: 0 };
+      return { ok: false, reason: "unavailable", message: call.kind === "http" ? call.message : "Couldn't reach the AI", retryAfterMs: 0 };
+    }
+
+    const content = (call.json as any)?.choices?.[0]?.message?.content ?? "";
+    const parsed = parseModelJson(content) as { answer?: unknown; refs?: unknown; followUps?: unknown } | undefined;
+    const answer = typeof parsed?.answer === "string" && parsed.answer.trim() ? parsed.answer.trim() : content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+    const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, n) : []);
+    console.log(`[ai] groupChat ok ms=${call.ms} tokens=${(call.json as any)?.usage?.total_tokens ?? "?"}`);
+    return { ok: true, answer: answer || "I couldn't work that out. Try asking another way.", refs: strs(parsed?.refs, 20), followUps: strs(parsed?.followUps, 3) };
+  }
+
   // ── Internal fallback helper ──────────────────────────────────────────────────
 
   private fallback(
