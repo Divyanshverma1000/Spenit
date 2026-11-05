@@ -1,5 +1,6 @@
 import { recordError } from "./lib/telemetry";
 import adminRouter from "./routes/admin";
+import feedbackRouter from "./routes/feedback";
 import { installSafeConsole } from "./lib/safeLog";
 import "express-async-errors"; // makes errors thrown in async route handlers reach the error middleware instead of crashing the process
 import express, { NextFunction, Request, RequestHandler, Response } from "express";
@@ -215,6 +216,7 @@ export function buildApp(options: AppOptions = {}) {
   app.use("/personal_expenses", personalExpensesRouter);
   app.use("/owe", publicTokenLimiter, oweRouter);
   app.use("/admin", adminRouter);
+  app.use("/feedback", feedbackRouter);
 
   // The app reports its own crashes here (no sign-in needed: a crash can happen before it).
   app.post("/telemetry/error", publicTokenLimiter, async (req: Request, res: Response) => {

@@ -164,7 +164,31 @@ With 20–100 people using Spenit this won't happen, because normal use is far a
 | Change a secret | `npx wrangler secret put NAME` |
 | New database migration | add `backend/migrations/0NN_name.sql`, then re-run step B (it is idempotent) |
 
-Backups: Supabase free has none. Occasionally: `pg_dump "<connection string>" > spenit-backup-<date>.sql`.
+### Backups (nightly, encrypted)
+
+Supabase free keeps no backups, so `.github/workflows/backup.yml` makes one every night at 03:00 IST.
+- **What:** a `pg_dump` of the `public` schema, gzipped and encrypted (AES-256) with `BACKUP_PASSPHRASE`.
+- **Where:** kept 14 days under **Actions → Backup → the run → Artifacts**.
+- **If it fails:** you get an email, like any failed workflow.
+
+One-time setup, in **GitHub → Settings → Secrets and variables → Actions**:
+- `DATABASE_URL`: Supabase → Connect → **Session pooler** string (IPv4), with your database password filled in.
+- `BACKUP_PASSPHRASE`: a long random phrase. **Keep a copy in your password manager**: without it a backup can't be opened.
+
+Then **Actions → Backup → Run workflow** once to check it works.
+
+**Restore** into a new or empty database (test this once):
+```bash
+gpg --decrypt spenit-2026-11-06.sql.gz.gpg | gunzip > spenit.sql      # asks for the passphrase
+psql "<target connection string>" -f spenit.sql
+```
+
+### If a deploy breaks
+
+1. **App (Vercel):** Vercel → Deployments → the last good one → ⋯ → **Promote to Production**. Instant, no rebuild.
+2. **API (Worker):** in `backend/`, run `npx wrangler deployments list` to see versions, then `npx wrangler rollback <version-id>`. On its own, `npx wrangler rollback` goes back to the previous version.
+3. **Database:** migrations here only add things (new tables or columns), so rolling the API back is safe with a newer database. A data problem is restored from the nightly backup above.
+4. Check `/health`, the app, and **/admin → Errors**, then fix forward on a branch.
 
 ## 7. Troubleshooting
 

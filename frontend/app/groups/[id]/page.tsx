@@ -447,12 +447,33 @@ export default function GroupDetailPage() {
           </div>
 
           {feedItems.length === 0 ? (
-            <EmptyState 
-              type="no-expenses" 
-              title="No expenses yet" 
-              description="Add the first expense and splits will be calculated automatically"
-              action={{ label: "Add with AI", href: `/groups/${id}/expenses/ai` }}
-            />
+            aiFilter ? (
+              <EmptyState type="no-expenses" title="No matching bills" description="Nothing here matches your chat. Clear the filter to see every bill." />
+            ) : group.members.length < 2 ? (
+              // A group of one: the first useful step is bringing people in.
+              <EmptyState
+                type="no-groups"
+                title="Invite your people first"
+                description="Share the invite link on WhatsApp. You can also add names for people who haven't joined yet and record bills for them."
+                action={
+                  <button onClick={() => { setShowInvite(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="mt-2 px-5 py-3 rounded-[14px] bg-[var(--accent)] text-white font-bold text-[14px]">
+                    Invite friends
+                  </button>
+                }
+              />
+            ) : (
+              <EmptyState
+                type="no-expenses"
+                title="No bills yet"
+                description="Add a bill by hand, or drop order screenshots from Blinkit, Zepto or Instamart and Spenit splits them item by item."
+                action={
+                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+                    <Link href={`/groups/${id}/expenses/new`} className="px-5 py-3 rounded-[14px] bg-[var(--accent)] text-white font-bold text-[14px]">Add a bill</Link>
+                    <Link href={`/groups/${id}/import`} className="px-5 py-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] font-bold text-[14px]">Import orders</Link>
+                  </div>
+                }
+              />
+            )
           ) : (
             <div className="bg-white rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[var(--hairline)] overflow-hidden divide-y divide-[var(--hairline)]">
               {feedItems.map((item) => (

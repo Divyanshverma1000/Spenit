@@ -1,12 +1,16 @@
 "use client"; // Error boundaries must be Client Components
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import FeedbackSheet from "@/components/FeedbackSheet";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { RotateCcw } from "lucide-react";
 import { reportError } from "@/lib/errorReport";
 
 /** A screen crashed: say so kindly, let them retry, and tell us about it. */
 export default function ErrorPage({ error, retry }: { error: unknown; retry: () => void }) {
+  const [tell, setTell] = useState(false);
+  const path = usePathname();
   useEffect(() => {
     reportError(error);
   }, [error]);
@@ -28,7 +32,11 @@ export default function ErrorPage({ error, retry }: { error: unknown; retry: () 
             <RotateCcw size={16} /> Try again
           </button>
         </div>
+        <button onClick={() => setTell(true)} className="mt-4 text-[13px] font-semibold text-[var(--text-secondary)] underline underline-offset-2">
+          Tell us what you were doing
+        </button>
       </div>
+      {tell && <FeedbackSheet from={path ?? undefined} onClose={() => setTell(false)} />}
     </main>
   );
 }

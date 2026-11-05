@@ -95,6 +95,15 @@ router.get("/stats", requireAuth, requireAdmin, async (_req: Request, res: Respo
     order by max(last_at) desc limit 20
   `);
 
+  // What people told us (Profile → Report a problem / Share an idea): newest first.
+  const feedback = await q(`
+    select f.id::int as id, f.kind, f.message, f.page, f.app_version, f.device, f.status, f.created_at,
+           coalesce(u.name, 'Deleted user') as name, u.email
+    from "Feedback" f left join "User" u on u.id = f.user_id
+    order by (f.status = 'new') desc, f.created_at desc limit 30
+  `);
+  const [fbCounts] = await q(`select count(*) filter (where status = 'new')::int as open, count(*)::int as total from "Feedback"`);
+
   const tokensIn = series.reduce((a, d) => a + Number(d.tokens_in), 0);
   const tokensOut = series.reduce((a, d) => a + Number(d.tokens_out), 0);
   res.set("Cache-Control", "no-store");
@@ -113,6 +122,7 @@ router.get("/stats", requireAuth, requireAdmin, async (_req: Request, res: Respo
     },
     series: series.map((d) => ({ ...d, tokens_in: Number(d.tokens_in), tokens_out: Number(d.tokens_out) })),
     errors,
+    feedback: { open: fbCounts?.open ?? 0, total: fbCounts?.total ?? 0, items: feedback },
     revenue: null, // payments aren't set up yet
   });
 });

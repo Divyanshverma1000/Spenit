@@ -15,6 +15,7 @@ export interface Stats {
   ai: { calls30d: number; failures30d: number; chat30d: number; tokensIn30d: number; tokensOut30d: number; costUsd30d: number; pricePerMillion: { in: number; out: number } };
   series: Day[];
   errors: { fingerprint: string; source: string; message: string; path: string | null; count: number; last_at: string; first_at: string }[];
+  feedback?: { open: number; total: number; items: { id: number; kind: string; message: string; page: string | null; app_version: string | null; device: string | null; status: string; created_at: string; name: string; email: string | null }[] };
 }
 
 /** Bars: one colour that passes the palette checks on both the light and dark surface. */
@@ -109,7 +110,7 @@ function Bars({ title, days, pick, unit = "" }: { title: string; days: Day[]; pi
 }
 
 /** Everything on the admin page below the header. */
-export function AdminDashboard({ s }: { s: Stats }) {
+export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone?: (id: number, done: boolean) => void }) {
   return (
             <>
               <section>
@@ -170,6 +171,40 @@ export function AdminDashboard({ s }: { s: Stats }) {
               </section>
   
               <section>
+              <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+                What people told us{s.feedback ? ` · ${s.feedback.open} open of ${s.feedback.total}` : ""}
+              </h2>
+              {!s.feedback || s.feedback.items.length === 0 ? (
+                <div className="p-4 rounded-[18px] bg-[var(--paper)] border border-[var(--hairline)] text-[14px] text-[var(--text-secondary)]">
+                  No reports or ideas yet. They arrive here from Profile → Report a problem.
+                </div>
+              ) : (
+                <ul className="rounded-[18px] bg-[var(--paper)] border border-[var(--hairline)] divide-y divide-[var(--hairline)] overflow-hidden">
+                  {s.feedback.items.map((f) => (
+                    <li key={f.id} className={`p-3.5 ${f.status === "done" ? "opacity-55" : ""}`}>
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--paper-dim)] text-[var(--text-secondary)] flex-shrink-0">
+                          {f.kind === "problem" ? "Problem" : f.kind === "idea" ? "Idea" : "Other"}
+                        </span>
+                        <p className="flex-1 text-[13.5px] text-[var(--text-primary)] whitespace-pre-wrap break-words">{f.message}</p>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-[var(--text-muted)]">
+                        <span className="truncate">
+                          {f.name}{f.email ? ` · ${f.email}` : ""} · {f.page ?? "—"} · {f.device ?? ""} · {f.app_version ?? ""} · {ago(f.created_at)}
+                        </span>
+                        {onFeedbackDone && (
+                          <button onClick={() => onFeedbackDone(f.id, f.status !== "done")} className="ml-auto flex-shrink-0 font-bold text-[var(--accent)]">
+                            {f.status === "done" ? "Reopen" : "Mark done"}
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
                 <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">Errors · last 7 days</h2>
                 {s.errors.length === 0 ? (
                   <div className="p-4 rounded-[18px] bg-[var(--paper)] border border-[var(--hairline)] flex items-center gap-2 text-[14px]">

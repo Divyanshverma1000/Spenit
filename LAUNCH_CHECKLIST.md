@@ -114,10 +114,10 @@ Test on a low-end Android (Chrome), an iPhone (Safari + home-screen install), an
 - [ ] `/ai/test-key` and `/ping`: keep, but rate-limit them.
 - [x] **Groq API keys are stored in plain text** (`User.groq_api_key`). Encrypt them at rest (AES-GCM with a Worker secret), and never send them back to the client.
 - [ ] **Leaked Groq key:** revoke the one pasted into ChatGPT earlier, and rotate `GROQ_API_KEY` on the Worker.
-- [ ] Remove the unused files: `images/shiba.*`, `Travel_Buddies.png`, `sharing_expense_at_cafe.png` and the large PNGs in `public/` if nothing uses them.
-- [ ] CORS allow-list contains only production domains; cookies are `Secure` + `SameSite`.
+- [x] Remove the unused files: `images/shiba.*`, `Travel_Buddies.png`, `sharing_expense_at_cafe.png` and the large PNGs in `public/` if nothing uses them.
+- [x] CORS allow-list contains only production domains; cookies are `Secure` + `SameSite`.
 - [ ] Env check: `NODE_ENV=production` on the Worker. The config guard already refuses to start with missing secrets in production.
-- [ ] Error screens: a friendly 404/500 page, never a stack trace.
+- [x] Error screens: a friendly 404/500 page, never a stack trace.
 
 ## 6. Security (P0 → P1)
 
@@ -184,7 +184,7 @@ Built from a small `Event` table (or a daily rollup table) written by the API, s
 
 ## 11. Before inviting the first users
 
-- [ ] Support channel: an in-app "Report a problem" (sends logs plus a screenshot) and a support email.
-- [ ] Onboarding: the first-run screen explains groups, invite, import and settle in 3 cards.
+- [x] Support channel: an in-app "Report a problem" (sends logs plus a screenshot) and a support email.
+- [x] Onboarding: the first-run screen explains groups, invite, import and settle in 3 cards.
 - [ ] Seed a demo group for screenshots and app-store listings.
-- [ ] Backups verified, rollback plan written (previous Worker version, Vercel instant rollback).
+- [x] Backups verified, rollback plan written (previous Worker version, Vercel instant rollback).

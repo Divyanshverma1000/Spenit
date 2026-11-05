@@ -14,6 +14,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Palette, Camera, Loader2, Download, UserX } from "lucide-react";
 import DeleteAccountSheet from "@/components/DeleteAccountSheet";
+import FeedbackSheet from "@/components/FeedbackSheet";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { fileToSquareAvatar } from "@/lib/image";
 
@@ -36,6 +37,7 @@ export default function ProfilePage() {
   const authed = useRequireAuth();
   const { user, logout, accessToken, authFetch } = useAuth();
   const [showDelete, setShowDelete] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   /** Download everything we hold about you as a JSON file. */
@@ -452,6 +454,7 @@ export default function ProfilePage() {
             {/* ── Settings ───────────────────────────────────────────────── */}
             <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} className="mb-8">
               <SettingsList title="More Options">
+                <SettingsRow icon={<HelpCircle size={18} />} label="Report a problem or share an idea" onClick={() => setShowFeedback(true)} />
                 <SettingsRow icon={<Lock size={18} />} label="Privacy Policy" onClick={() => router.push("/privacy")} />
                 <SettingsRow icon={<FileText size={18} />} label="Terms of Service" onClick={() => router.push("/terms")} />
                 <SettingsRow icon={<Info size={18} />} label="About Spenit" onClick={() => router.push("/about")} />
@@ -482,13 +485,14 @@ export default function ProfilePage() {
             </motion.div>
 
             <div className="text-center pb-6">
-              <p className="text-[12px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Spenit v1.0</p>
+              <p className="text-[12px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Spenit · {process.env.NEXT_PUBLIC_APP_VERSION ?? "dev"}</p>
               <p className="text-[12px] font-medium text-[var(--text-muted)] mt-1">Split fairly, stay friends</p>
             </div>
 
           </motion.div>
         ) : null}
       </main>
+      {showFeedback && <FeedbackSheet from="/profile" onClose={() => setShowFeedback(false)} />}
       {showDelete && (
         <DeleteAccountSheet
           onClose={() => setShowDelete(false)}

@@ -62,6 +62,8 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Lets a production build run alongside `next dev` without clobbering it.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Which build someone is running (sent with problem reports). Vercel sets the commit.
+  env: { NEXT_PUBLIC_APP_VERSION: (process.env.VERCEL_GIT_COMMIT_SHA || "dev").slice(0, 7) },
   images: {
     remotePatterns: [
       {

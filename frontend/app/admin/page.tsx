@@ -53,7 +53,13 @@ export default function AdminPage() {
         ) : !s ? (
           <p className="text-[14px] text-[var(--text-secondary)]">Couldn&apos;t load the numbers. Try refreshing.</p>
         ) : (
-          <AdminDashboard s={s} />
+          <AdminDashboard
+            s={s}
+            onFeedbackDone={async (id, done) => {
+              await authFetch(`/feedback/${id}`, { method: "PATCH", body: JSON.stringify({ status: done ? "done" : "new" }) }).catch(() => {});
+              stats.refetch();
+            }}
+          />
         )}
       </div>
     </main>
