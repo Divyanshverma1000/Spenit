@@ -29,9 +29,9 @@ export interface ExtractedOrder {
   orderDate: string | null;
   /** whole-order count as printed ("13 items in this order") */
   itemCount: number | null;
-  items: { name: string; short?: string | null; variant: string | null; qty: number; lineTotal: number; mrp: number | null }[];
-  fees: { kind: string; label: string; amount: number }[];
-  discounts: { label: string; amount: number }[];
+  items: { name: string; short?: string | null; variant: string | null; qty: number; lineTotal: number; mrp: number | null; seenIn?: number[] }[];
+  fees: { kind: string; label: string; amount: number; seenIn?: number[] }[];
+  discounts: { label: string; amount: number; seenIn?: number[] }[];
   itemTotal: number | null;
   grandTotal: number | null;
   page: { hasHeader: boolean; hasTotal: boolean };
@@ -84,6 +84,8 @@ export interface DraftItem {
   sharedBy: string[];
   /** the model said it was unsure of this row — highlight it */
   doubtful: boolean;
+  /** pick indexes of the screenshots this row was read from (none = added by hand) */
+  seenIn?: number[];
   /** a one-person item its owner chose to show the group (kept when a bill is edited) */
   visible?: boolean;
 }
@@ -92,6 +94,8 @@ export interface DraftLine {
   id: string;
   label: string;
   amount: number;
+  /** pick indexes of the screenshots this line was read from (none = added by hand) */
+  seenIn?: number[];
 }
 
 export interface DraftOrder {
@@ -175,7 +179,7 @@ function unionRows<T>(lists: T[][], key: (t: T) => string): T[] {
   return out;
 }
 
-function mergeGroup(parts: Piece[]): ExtractedOrder {
+export function mergeGroup(parts: Piece[]): ExtractedOrder {
   // top of the order first, the bill summary last, otherwise pick order
   const rank = (p: Piece) => (p.order.page.hasHeader ? 0 : p.order.page.hasTotal ? 2 : 1);
   const sorted = [...parts].sort((a, b) => rank(a) - rank(b) || a.index - b.index);
@@ -184,6 +188,11 @@ function mergeGroup(parts: Piece[]): ExtractedOrder {
     return null;
   };
   const orders = sorted.map((p) => p.order);
+  // Every screenshot a row appears in, so a screenshot can later be moved with its rows.
+  const seen = <T,>(key: (t: T) => string, list: (o: ExtractedOrder) => T[]) => (t: T) => ({
+    ...t,
+    seenIn: sorted.filter((p) => list(p.order).some((x) => key(x) === key(t))).map((p) => p.index).sort((a, b) => a - b),
+  });
   const conf = orders.some((o) => o.confidence === "low") ? "low" : orders.some((o) => o.confidence === "medium") ? "medium" : "high";
   return {
     kind: orders.some((o) => (o.kind ?? "order") === "order") ? "order" : orders.some((o) => o.kind === "receipt") ? "receipt" : "payment",
@@ -195,9 +204,9 @@ function mergeGroup(parts: Piece[]): ExtractedOrder {
     orderId: first((o) => o.orderId),
     orderDate: first((o) => o.orderDate),
     itemCount: first((o) => o.itemCount),
-    items: unionRows(orders.map((o) => o.items), itemKey),
-    fees: unionRows(orders.map((o) => o.fees), lineKey),
-    discounts: unionRows(orders.map((o) => o.discounts), lineKey),
+    items: unionRows(orders.map((o) => o.items), itemKey).map(seen(itemKey, (o) => o.items)),
+    fees: unionRows(orders.map((o) => o.fees), lineKey).map(seen(lineKey, (o) => o.fees)),
+    discounts: unionRows(orders.map((o) => o.discounts), lineKey).map(seen(lineKey, (o) => o.discounts)),
     itemTotal: first((o) => o.itemTotal),
     grandTotal: first((o) => o.grandTotal),
     page: { hasHeader: orders.some((o) => o.page.hasHeader), hasTotal: orders.some((o) => o.page.hasTotal) },
@@ -347,12 +356,13 @@ export function mismatchReasons(o: DraftOrder, canJoin: boolean): string[] {
   if (state === "short") {
     if (printed !== null && found < printed && units < printed)
       out.push(`The order says ${printed} items but ${found} were read. Some may be cut off between screenshots.`);
+    if (o.sources.length > 1 && o.grandTotal !== null) out.push(`The bill total may come from a different order's screenshot. Open See screenshots to check each one.`);
     if (canJoin) out.push("The rest of this order may be on another card. Join them with \"Same order as…\".");
     else out.push("Part of the order may be on a screenshot you didn't add.");
     out.push("A delivery fee, tip, tax or packing charge may not have been read.");
   } else if (state === "over") {
     out.push("A discount, coupon or cashback may not have been read.");
-    if (o.sources.length > 1) out.push("Screenshots may overlap, so an item was counted twice.");
+    if (o.sources.length > 1) out.push(`One of the ${o.sources.length} screenshots may be from a different order. Open See screenshots to move or remove it.`);
     if (printed !== null && found > printed && units > printed)
       out.push(`The order says ${printed} items but ${found} were read. One may be extra.`);
   } else {
@@ -361,6 +371,105 @@ export function mismatchReasons(o: DraftOrder, canJoin: boolean): string[] {
   out.push(doubtful > 0
     ? `${doubtful === 1 ? "A price" : `${doubtful} prices`} the AI wasn't sure of ${doubtful === 1 ? "is" : "are"} marked below. Check ${doubtful === 1 ? "it" : "them"} against the screenshot.`
     : "A price may have been misread. Compare with the screenshot.");
+  return out;
+}
+
+// ── Moving a screenshot to the right bill ─────────────────────────────────────
+
+/** Items, fees and discounts read from screenshot `shot`, and their total. */
+export function shotContent(o: DraftOrder, shot: number) {
+  const items = o.items.filter((i) => i.seenIn?.includes(shot));
+  const only = items.filter((i) => i.seenIn!.length === 1);
+  return { items, onlyHere: only.length, total: round2(items.reduce((a, i) => a + i.lineTotal, 0)) };
+}
+
+/**
+ * Over the bill with several screenshots: is there one screenshot whose rows, taken out,
+ * make the rest add up exactly? Then it most likely belongs to a different bill.
+ */
+export function suspectShot(o: DraftOrder): number | null {
+  if (o.sources.length < 2 || o.grandTotal === null || cardState(o) !== "over") return null;
+  for (const shot of o.sources) {
+    const keep = (r: { seenIn?: number[] }) => !(r.seenIn?.length === 1 && r.seenIn[0] === shot);
+    const t = draftTotals({ items: o.items.filter(keep), fees: o.fees.filter(keep), discounts: o.discounts.filter(keep), grandTotal: o.grandTotal });
+    if (t.status === "ok") return shot;
+  }
+  return null;
+}
+
+/**
+ * Take screenshot `shot` out of bill `fromId` and send it `to` another bill, a new bill,
+ * or nowhere ("drop": it wasn't a bill at all). Its rows go with it, keeping any edits and
+ * who-shares-what. A row seen in this screenshot AND another one stays (that overlap is
+ * how two different orders got joined: the same item at the same price), and a copy goes
+ * along too. The order details (total, date, order id, item count) are worked out again
+ * from the screenshots each bill now has. Rows typed in by hand stay where they are.
+ */
+export function moveShot(
+  drafts: DraftOrder[],
+  fromId: string,
+  shot: number,
+  to: string | "new" | "drop",
+  pieces: Piece[],
+  ctx: { me: string; everyone: string[]; members?: { id: string; name: string }[] }
+): DraftOrder[] {
+  const from = drafts.find((d) => d.id === fromId);
+  if (!from || !from.sources.includes(shot)) return drafts;
+  const pieceOf = (i: number) => pieces.find((p) => p.index === i);
+  const leftSources = from.sources.filter((x) => x !== shot);
+
+  const going = <R extends { seenIn?: number[] }>(rows: R[]) => rows.filter((r) => r.seenIn?.includes(shot)).map((r) => ({ ...r, id: uid(), seenIn: [shot] }));
+  const staying = <R extends { seenIn?: number[] }>(rows: R[]) =>
+    rows.filter((r) => !r.seenIn || r.seenIn.some((x) => x !== shot)).map((r) => (r.seenIn ? { ...r, seenIn: r.seenIn.filter((x) => x !== shot) } : r));
+
+  // What's left of the original bill (gone entirely when this was its only screenshot).
+  let rest: DraftOrder | null = null;
+  if (leftSources.length > 0) {
+    const parts = leftSources.map(pieceOf).filter((p): p is Piece => !!p);
+    const head = parts.length > 0 ? mergeGroup(parts) : null;
+    rest = {
+      ...from,
+      items: staying(from.items),
+      fees: staying(from.fees),
+      discounts: staying(from.discounts),
+      sources: leftSources,
+      acceptItemsTotal: false,
+      ...(head ? { platform: head.platform, orderId: head.orderId, orderDate: head.orderDate, grandTotal: head.grandTotal, itemCount: head.itemCount, merchant: head.merchant ?? null } : {}),
+    };
+  }
+
+  // The screenshot as its own bill.
+  let moved: DraftOrder | null = null;
+  if (to !== "drop") {
+    const piece = pieceOf(shot);
+    const base = piece ? toDraft(piece.order, [shot], ctx.me, ctx.everyone, ctx.members ?? []) : { ...from, id: uid() };
+    moved = {
+      ...base,
+      payerId: from.payerId,
+      feePolicy: from.feePolicy,
+      items: going(from.items),
+      fees: going(from.fees),
+      discounts: going(from.discounts),
+      sources: [shot],
+      skipped: false,
+      acceptItemsTotal: false,
+      alreadyAdded: null,
+    };
+    // Its only screenshot left the bill: rows typed in by hand go with it.
+    if (!rest) moved = { ...moved, items: [...moved.items, ...from.items.filter((i) => !i.seenIn)], fees: [...moved.fees, ...from.fees.filter((f) => !f.seenIn)], discounts: [...moved.discounts, ...from.discounts.filter((f) => !f.seenIn)] };
+  }
+
+  const out: DraftOrder[] = [];
+  for (const d of drafts) {
+    if (d.id === fromId) {
+      if (rest) out.push(rest);
+      if (moved && to === "new") out.push(moved);
+    } else if (moved && d.id === to) {
+      out.push(mergeDrafts(d, moved));
+    } else {
+      out.push(d);
+    }
+  }
   return out;
 }
 
@@ -451,9 +560,10 @@ export function toDraft(
       lineTotal: i.lineTotal,
       sharedBy: [...everyone],
       doubtful: order.uncertain.some((u) => normName(u).includes(normName(i.name).split(" ").slice(0, 2).join(" "))),
+      seenIn: "seenIn" in i && i.seenIn ? i.seenIn : sources.length === 1 ? [...sources] : undefined,
     })),
-    fees: order.fees.map((f) => ({ id: uid(), label: f.label, amount: f.amount })),
-    discounts: order.discounts.map((d) => ({ id: uid(), label: d.label, amount: d.amount })),
+    fees: order.fees.map((f) => ({ id: uid(), label: f.label, amount: f.amount, seenIn: f.seenIn ?? (sources.length === 1 ? [...sources] : undefined) })),
+    discounts: order.discounts.map((d) => ({ id: uid(), label: d.label, amount: d.amount, seenIn: d.seenIn ?? (sources.length === 1 ? [...sources] : undefined) })),
     grandTotal: order.grandTotal,
     payerId: me,
     feePolicy: "proportional",

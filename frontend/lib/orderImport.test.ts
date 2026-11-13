@@ -200,3 +200,57 @@ describe("cardState and mismatchReasons", () => {
     expect(r[r.length - 1]).toMatch(/A price the AI wasn't sure of is marked/);
   });
 });
+
+import { moveShot, suspectShot, draftTotals as totalsOf } from "./orderImport";
+
+describe("moving a wrongly joined screenshot", () => {
+  const order = (over: Partial<import("./orderImport").ExtractedOrder>): import("./orderImport").ExtractedOrder => ({
+    kind: "order", merchant: null, payee: null, payApp: null, category: null, platform: "blinkit", orderId: null, orderDate: null,
+    itemCount: null, items: [], fees: [], discounts: [], itemTotal: null, grandTotal: null,
+    page: { hasHeader: false, hasTotal: false }, confidence: "high", uncertain: [], ...over,
+  });
+  const row = (name: string, lineTotal: number) => ({ name, variant: null, qty: 1, lineTotal, mrp: null });
+  // Two different orders that both had milk at ₹68, so they were joined.
+  const pieces = [
+    { index: 0, order: order({ items: [row("Amul Milk", 68), row("Bread", 45), row("Eggs", 87)], grandTotal: 200, page: { hasHeader: true, hasTotal: true } }) },
+    { index: 1, order: order({ items: [row("Amul Milk", 68), row("Chips", 20)] }) },
+  ];
+  const ctx = { me: "a", everyone: ["a", "b"] };
+  const joined = joinPieces(pieces);
+  const draft = toDraft(joined[0].order, joined[0].sources, "a", ["a", "b"]);
+
+  it("joins them (the mistake) and spots the screenshot that doesn't belong", () => {
+    expect(joined).toHaveLength(1);
+    expect(totalsOf(draft).computed).toBe(220);
+    expect(suspectShot(draft)).toBe(1);
+  });
+
+  it("moves it to a new bill with its rows, and the rest adds up again", () => {
+    const edited = { ...draft, items: draft.items.map((i) => (i.name === "Chips" ? { ...i, sharedBy: ["b"] } : i)) };
+    const out = moveShot([edited], draft.id, 1, "new", pieces, ctx);
+    expect(out).toHaveLength(2);
+    expect(out[0].items.map((i) => i.name)).toEqual(["Amul Milk", "Bread", "Eggs"]);
+    expect(totalsOf(out[0]).status).toBe("ok");
+    expect(out[0].sources).toEqual([0]);
+    // the shared row is copied, the moved row keeps who shares it
+    expect(out[1].items.map((i) => i.name)).toEqual(["Amul Milk", "Chips"]);
+    expect(out[1].items.find((i) => i.name === "Chips")!.sharedBy).toEqual(["b"]);
+    expect(out[1].sources).toEqual([1]);
+    expect(out[1].grandTotal).toBeNull();
+  });
+
+  it("drops a screenshot that isn't a bill at all", () => {
+    const out = moveShot([draft], draft.id, 1, "drop", pieces, ctx);
+    expect(out).toHaveLength(1);
+    expect(out[0].items.map((i) => i.name)).toEqual(["Amul Milk", "Bread", "Eggs"]);
+  });
+
+  it("moves it into another bill", () => {
+    const other = toDraft(order({ items: [row("Coke", 40)], grandTotal: 128 }), [2], "a", ["a", "b"]);
+    const out = moveShot([draft, other], draft.id, 1, other.id, pieces, ctx);
+    expect(out).toHaveLength(2);
+    expect(out[1].items.map((i) => i.name)).toEqual(["Coke", "Amul Milk", "Chips"]);
+    expect(totalsOf(out[1]).status).toBe("ok");
+    expect(out[1].sources).toEqual([1, 2]);
+  });
+});

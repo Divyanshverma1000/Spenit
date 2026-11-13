@@ -15,7 +15,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Camera, ChevronLeft, ChevronRight, Images, ZoomIn, HelpCircle, Percent, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
+  ArrowLeft, Camera, ChevronLeft, ChevronRight, Images, ZoomIn, HelpCircle, Percent, MoveRight, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -26,9 +26,9 @@ import { shortNames } from "@/lib/avatar";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { BackClose } from "@/lib/backClose";
 import {
-  adjustToBillTotal, cardState, mismatchReasons, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
+  adjustToBillTotal, cardState, mismatchReasons, moveShot, shotContent, suspectShot, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody, draftFromExpense,
-  type CardState, type DraftItem, type DraftLine, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
+  type CardState, type Piece, type DraftItem, type DraftLine, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -102,6 +102,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * (nothing is uploaded or kept after the AI has read them).
  */
 const ShotsContext = createContext<Record<number, string>>({});
+/** What the AI read from each screenshot, so a screenshot can be moved to the right bill. */
+const PiecesContext = createContext<Piece[]>([]);
+
+/** Lets a bill's screenshot viewer move a screenshot (and its rows) elsewhere. */
+interface ShotManage {
+  draft: DraftOrder;
+  /** other bills it could belong to */
+  others: { id: string; label: string }[];
+  onMove: (shot: number, to: string | "new" | "drop") => void;
+}
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -308,6 +318,7 @@ export default function ImportOrdersPage() {
 
   /** piece index → its in-memory image, for "See screenshots" on each order */
   const shots = useMemo(() => Object.fromEntries(pieces.filter((p) => p.thumb).map((p) => [p.index, p.thumb])), [pieces]);
+  const readPieces = useMemo(() => pieces.filter((p) => p.resp).map((p) => ({ index: p.index, order: p.resp!.order })), [pieces]);
   // The images are only needed while you review. Let them go when you leave this screen.
   const allThumbs = useRef(new Set<string>());
   useEffect(() => { pieces.forEach((p) => p.thumb && allThumbs.current.add(p.thumb)); }, [pieces]);
@@ -486,6 +497,7 @@ export default function ImportOrdersPage() {
       {step === "drop" && !editId && <DropStep onPick={() => fileRef.current?.click()} onCamera={() => cameraRef.current?.click()} />}
 
       <ShotsContext.Provider value={shots}>
+      <PiecesContext.Provider value={readPieces}>
       {step === "reading" && (
         <ReadingStep
           pieces={pieces}
@@ -505,6 +517,7 @@ export default function ImportOrdersPage() {
       {(step === "check" || step === "saving") && (
         <CheckStep drafts={toSave} members={members} me={me} error={saveError} />
       )}
+      </PiecesContext.Provider>
       </ShotsContext.Provider>
 
       {step === "saved" && (
@@ -818,8 +831,9 @@ function SortStep({
   me: string;
 }) {
   const [brush, setBrush] = useState<string | null>(null);
-  /** drafts as they were before the last "Same order as…", for Undo */
-  const [beforeJoin, setBeforeJoin] = useState<DraftOrder[] | null>(null);
+  /** the cards as they were before the last join / move, for Undo */
+  const [undo, setUndo] = useState<{ text: string; drafts: DraftOrder[] } | null>(null);
+  const pieceList = useContext(PiecesContext);
   const update = useCallback(
     (id: string, fn: (o: DraftOrder) => DraftOrder) => setDrafts((ds) => ds.map((d) => (d.id === id ? fn(d) : d))),
     [setDrafts]
@@ -833,10 +847,47 @@ function SortStep({
       // The part without the bill total is usually the top of the order: its rows go first.
       const [into, from] = b.grandTotal === null && a.grandTotal !== null ? [b, a] : a.grandTotal === null ? [a, b] : [b, a];
       const merged = mergeDrafts(into, from);
-      setBeforeJoin(drafts);
+      setUndo({ text: "Orders joined. Check the items and the bill total.", drafts });
       setDrafts(drafts.filter((d) => d.id !== from.id).map((d) => (d.id === into.id ? merged : d)));
     },
     [drafts, setDrafts]
+  );
+
+  /**
+   * A card that's short of its bill: is there one screenshot on ANOTHER card that, moved
+   * here, makes this one add up exactly? Then it's probably sitting on the wrong card.
+   */
+  const missing = useMemo(() => {
+    const out: Record<string, { fromId: string; shot: number; fromLabel: string }> = {};
+    const ctx = { me, everyone: members.map((m) => m.id), members };
+    for (const d of drafts) {
+      if (cardState(d) !== "short" || d.alreadyAdded) continue;
+      search: for (const other of drafts) {
+        if (other.id === d.id || other.alreadyAdded || other.skipped) continue;
+        for (const shot of other.sources) {
+          const after = moveShot(drafts, other.id, shot, d.id, pieceList, ctx).find((x) => x.id === d.id);
+          if (after && cardState(after) === "ok") {
+            out[d.id] = { fromId: other.id, shot, fromLabel: other.title?.trim() || orderTitle(other) };
+            break search;
+          }
+        }
+      }
+    }
+    return out;
+  }, [drafts, pieceList, me, members]);
+
+  const move = useCallback(
+    (fromId: string, shot: number, to: string | "new" | "drop") => {
+      const target = drafts.find((d) => d.id === to);
+      setUndo({
+        text: to === "drop" ? `Screenshot ${shot + 1} removed, with its items.`
+          : to === "new" ? `Screenshot ${shot + 1} is now a bill of its own.`
+          : `Screenshot ${shot + 1} moved to ${target ? target.title?.trim() || orderTitle(target) : "the other bill"}.`,
+        drafts,
+      });
+      setDrafts(moveShot(drafts, fromId, shot, to, pieceList, { me, everyone: members.map((m) => m.id), members }));
+    },
+    [drafts, setDrafts, pieceList, me, members]
   );
 
   return (
@@ -864,10 +915,10 @@ function SortStep({
       </div>
 
       <div className="px-4 pt-4 space-y-4">
-        {beforeJoin && (
+        {undo && (
           <div className="flex items-center justify-between gap-3 p-3 rounded-[14px] bg-[var(--accent-subtle)] text-[13px]">
-            <span><b>Orders joined.</b> Check the items and the bill total.</span>
-            <button onClick={() => { setDrafts(beforeJoin); setBeforeJoin(null); }} className="font-bold text-[var(--accent)] flex items-center gap-1">
+            <span className="font-semibold">{undo.text}</span>
+            <button onClick={() => { setDrafts(undo.drafts); setUndo(null); }} className="font-bold text-[var(--accent)] flex items-center gap-1 flex-shrink-0">
               <RotateCcw size={14} /> Undo
             </button>
           </div>
@@ -882,6 +933,8 @@ function SortStep({
             brush={brush}
             update={(fn) => update(o.id, fn)}
             onJoin={(otherId) => join(o.id, otherId)}
+            onMoveShot={(shot, to) => move(o.id, shot, to)}
+            missing={missing[o.id] ? { ...missing[o.id], onTake: () => move(missing[o.id].fromId, missing[o.id].shot, o.id) } : undefined}
           />
         ))}
       </div>
@@ -890,7 +943,7 @@ function SortStep({
 }
 
 function OrderCard({
-  o, others, members, me, brush, update, onJoin,
+  o, others, members, me, brush, update, onJoin, onMoveShot, missing,
 }: {
   o: DraftOrder;
   /** other cards this one can be joined with */
@@ -900,7 +953,15 @@ function OrderCard({
   brush: string | null;
   update: (fn: (o: DraftOrder) => DraftOrder) => void;
   onJoin: (otherId: string) => void;
+  onMoveShot: (shot: number, to: string | "new" | "drop") => void;
+  /** a screenshot on another card that would make this one add up */
+  missing?: { shot: number; fromLabel: string; onTake: () => void };
 }) {
+  const manage: ShotManage = {
+    draft: o,
+    others: others.map((d) => ({ id: d.id, label: `${d.title?.trim() || orderTitle(d)} · ${formatINR(d.grandTotal ?? draftTotals(d).computed)}` })),
+    onMove: onMoveShot,
+  };
   const partial = looksPartial(o) && !o.alreadyAdded;
   const [open, setOpen] = useState(!o.skipped && !isReady(o) ? true : !o.skipped);
   const t = draftTotals(o);
@@ -986,7 +1047,7 @@ function OrderCard({
         <div className="font-extrabold tabular-nums">{formatINR(o.grandTotal ?? t.computed)}</div>
         <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      <ShotsStrip sources={o.sources} className="mx-4 mb-3 -mt-1" />
+      <ShotsStrip sources={o.sources} className="mx-4 mb-3 -mt-1" manage={o.alreadyAdded ? undefined : manage} />
 
       {o.kind === "payment" && (
         <div className="mx-4 mb-3 -mt-1 rounded-[14px] bg-[var(--paper-dim)] p-3 text-[13px]">
@@ -1036,6 +1097,8 @@ function OrderCard({
               onAddFee={() => addLine("fees")}
               onAddDiscount={() => addLine("discounts")}
               onSetBill={(n) => update((d) => ({ ...d, grandTotal: n }))}
+              manage={manage}
+              missing={missing}
             />
           )}
           {/* Name of the order, as it shows in the group */}
@@ -1216,7 +1279,7 @@ const CARD_LOOK: Record<CardState, { color: string; border: string; bg: string; 
  * total was read, so type it in (or carry on with the items total).
  */
 function StatusPanel({
-  o, state, canJoin, onUseBill, onKeep, onUndoKeep, onAddItem, onAddFee, onAddDiscount, onSetBill,
+  o, state, canJoin, onUseBill, onKeep, onUndoKeep, onAddItem, onAddFee, onAddDiscount, onSetBill, manage, missing,
 }: {
   o: DraftOrder;
   state: CardState;
@@ -1228,6 +1291,8 @@ function StatusPanel({
   onAddFee: () => void;
   onAddDiscount: () => void;
   onSetBill: (n: number | null) => void;
+  manage: ShotManage;
+  missing?: { shot: number; fromLabel: string; onTake: () => void };
 }) {
   const t = draftTotals(o);
   const [bill, setBill] = useState("");
@@ -1280,8 +1345,34 @@ function StatusPanel({
 
   const diff = Math.abs(t.difference!);
   const reasons = mismatchReasons(o, canJoin);
+  const suspect = suspectShot(o);
   return (
     <div className={box} style={{ background: "color-mix(in srgb, var(--warn) 9%, var(--paper))" }}>
+      {missing && (
+        <div className="-mx-1 -mt-1 mb-3 p-3 rounded-[12px] bg-[var(--paper)] border-2 border-[var(--warn)]">
+          <p className="font-extrabold text-[13.5px]">Screenshot {missing.shot + 1} may belong here</p>
+          <p className="mt-0.5 text-[var(--text-secondary)]">
+            It&rsquo;s on <b>{missing.fromLabel}</b>, and moving it here makes this bill add up exactly.
+          </p>
+          <ShotsStrip sources={[missing.shot]} className="mt-2" />
+          <button onClick={missing.onTake} className={`mt-2.5 w-full ${chip} bg-[var(--warn)] border-transparent text-white`}>
+            <MoveRight size={14} /> Move it here
+          </button>
+        </div>
+      )}
+      {suspect !== null && (
+        <div className="-mx-1 -mt-1 mb-3 p-3 rounded-[12px] bg-[var(--paper)] border-2 border-[var(--warn)]">
+          <p className="font-extrabold text-[13.5px]">Screenshot {suspect + 1} looks like a different order</p>
+          <p className="mt-0.5 text-[var(--text-secondary)]">
+            Without its {shotContent(o, suspect).onlyHere} {shotContent(o, suspect).onlyHere === 1 ? "item" : "items"}, the rest add up exactly to {formatINR(o.grandTotal!)}.
+          </p>
+          <ShotsStrip sources={[suspect]} manage={manage} className="mt-2" />
+          <div className="mt-2.5 grid grid-cols-2 gap-2">
+            <button onClick={() => manage.onMove(suspect, "new")} className={`${chip} bg-[var(--warn)] border-transparent text-white`}><MoveRight size={14} /> Own bill</button>
+            <button onClick={() => manage.onMove(suspect, "drop")} className={`${chip} bg-[var(--paper)] border-[var(--hairline)] text-[var(--negative)]`}><Trash2 size={14} /> Not a bill</button>
+          </div>
+        </div>
+      )}
       <p className="font-extrabold text-[13.5px] text-[var(--warn)]">
         {state === "short" ? `Items are ${formatINR(diff)} short of the bill` : `Items are ${formatINR(diff)} more than the bill`}
       </p>
@@ -1629,7 +1720,7 @@ function SavedStep({ count, paybacks, undone, onUndo, onDone }: { count: number;
  * The screenshots an order was read from, right on its card: tap to check what the bill
  * really was without leaving for the gallery or the shopping app.
  */
-function ShotsStrip({ sources, className = "mt-3" }: { sources: number[]; className?: string }) {
+function ShotsStrip({ sources, className = "mt-3", manage }: { sources: number[]; className?: string; manage?: ShotManage }) {
   const shots = useContext(ShotsContext);
   const urls = sources.map((i) => ({ index: i, url: shots[i] })).filter((s): s is { index: number; url: string } => !!s.url);
   const [openAt, setOpenAt] = useState<number | null>(null);
@@ -1651,13 +1742,13 @@ function ShotsStrip({ sources, className = "mt-3" }: { sources: number[]; classN
           <Images size={13} /> See {urls.length === 1 ? "screenshot" : `${urls.length} screenshots`}
         </span>
       </button>
-      {openAt !== null && <ShotViewer urls={urls} start={openAt} onClose={() => setOpenAt(null)} />}
+      {openAt !== null && <ShotViewer urls={urls} start={openAt} onClose={() => setOpenAt(null)} manage={manage} />}
     </div>
   );
 }
 
 /** Full-screen look at a bill's screenshots: swipe or tap the arrows, tap the picture to zoom. */
-function ShotViewer({ urls, start, onClose }: { urls: { index: number; url: string }[]; start: number; onClose: () => void }) {
+function ShotViewer({ urls, start, onClose, manage }: { urls: { index: number; url: string }[]; start: number; onClose: () => void; manage?: ShotManage }) {
   const [at, setAt] = useState(start);
   const [zoom, setZoom] = useState(false);
   const touchX = useRef<number | null>(null);
@@ -1711,6 +1802,52 @@ function ShotViewer({ urls, start, onClose }: { urls: { index: number; url: stri
       <p className="text-center text-[11.5px] text-white/60 py-3 flex items-center justify-center gap-1.5">
         <ZoomIn size={13} /> {zoom ? "Tap to fit the screen" : "Tap the picture to zoom in"}
       </p>
+      {manage && <ShotActions manage={manage} shot={cur.index} onDone={onClose} />}
+    </div>
+  );
+}
+
+/**
+ * Under a screenshot in the viewer: what was read from it, and what to do when it isn't
+ * part of this bill. Move it (with its items) to another bill or a bill of its own, or
+ * remove it when it isn't a bill at all.
+ */
+function ShotActions({ manage, shot, onDone }: { manage: ShotManage; shot: number; onDone: () => void }) {
+  const { draft, others, onMove } = manage;
+  const read = shotContent(draft, shot);
+  const alone = draft.sources.length === 1;
+  const act = (to: string | "new" | "drop") => { onDone(); onMove(shot, to); };
+  const btn = "h-11 rounded-[12px] text-[13px] font-bold flex items-center justify-center gap-1.5";
+  if (alone && others.length === 0) return null;
+  return (
+    <div className="px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] bg-[#111318] border-t border-white/10 text-white">
+      <p className="text-[12.5px] text-white/70">
+        From this screenshot: <b className="text-white">{read.items.length} {read.items.length === 1 ? "item" : "items"} · {formatINR(read.total)}</b>
+        {read.items.length > read.onlyHere ? ` (${read.items.length - read.onlyHere} also on another screenshot)` : ""}
+      </p>
+      <p className="mt-2 text-[11px] font-bold uppercase tracking-wider text-white/50">Not part of this bill?</p>
+      <div className={`mt-1.5 grid gap-2 ${alone ? "grid-cols-1" : "grid-cols-2"}`}>
+        {others.length > 0 || !alone ? (
+          <label className={`relative ${btn} bg-white/10`}>
+            <MoveRight size={15} /> Move to…
+            <select
+              value=""
+              onChange={(e) => e.target.value && act(e.target.value)}
+              className="absolute inset-0 opacity-0 w-full"
+              aria-label="Move this screenshot to"
+            >
+              <option value="">Move to…</option>
+              {!alone && <option value="new">A bill of its own</option>}
+              {others.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </label>
+        ) : null}
+        {!alone && (
+          <button onClick={() => act("drop")} className={`${btn} bg-[var(--negative)]/20 text-[#FCA5A5]`}>
+            <Trash2 size={15} /> Not a bill
+          </button>
+        )}
+      </div>
     </div>
   );
 }
