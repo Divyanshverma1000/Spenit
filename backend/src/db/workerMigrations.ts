@@ -16,6 +16,7 @@ import m013 from "../../migrations/013_rate_counter.sql";
 import m014 from "../../migrations/014_monitoring.sql";
 import m015 from "../../migrations/015_personal_spending.sql";
 import m016 from "../../migrations/016_feedback.sql";
+import m017 from "../../migrations/017_fix_undone_claims.sql";
 
 const BUNDLED: { filename: string; sql: string }[] = [
   { filename: "010_group_avatars.sql", sql: m010 },
@@ -25,6 +26,7 @@ const BUNDLED: { filename: string; sql: string }[] = [
   { filename: "014_monitoring.sql", sql: m014 },
   { filename: "015_personal_spending.sql", sql: m015 },
   { filename: "016_feedback.sql", sql: m016 },
+  { filename: "017_fix_undone_claims.sql", sql: m017 },
 ];
 
 /** Any stable 64-bit number: serialises migration runs across concurrent isolates. */

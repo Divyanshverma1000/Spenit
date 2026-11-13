@@ -154,6 +154,39 @@ export interface ClaimRow {
   undone_at: string | null;
 }
 
+/** Rows in the group that reference `who` and were added or changed since `since`. */
+export async function movesSince(db: Db, groupId: string, who: string, since: string): Promise<ClaimMoves> {
+  const q = (sql: string) => db.query(sql, [groupId, who, since]).then((r) => ids(r.rows));
+  const changed = `e.group_id = $1 and (e.created_at >= $3 or e.updated_at >= $3)`;
+  const moves: ClaimMoves = {
+    payerExpenses: await q(`select ep.expense_id as id from "ExpensePayer" ep join "Expense" e on e.id = ep.expense_id where ${changed} and ep.user_id = $2`),
+    splitExpenses: await q(`select es.expense_id as id from "ExpenseSplit" es join "Expense" e on e.id = es.expense_id where ${changed} and es.user_id = $2`),
+    createdExpenses: await q(`select e.id from "Expense" e where ${changed} and e.created_by = $2`),
+    receiptExpenses: await q(`select e.id from "Expense" e where ${changed} and e.receipt_data::text like '%' || $2::text || '%'`),
+    settlements: {} as ClaimMoves["settlements"],
+  };
+  for (const c of SETTLEMENT_COLUMNS) {
+    moves.settlements[c] = await q(
+      `select id from "Settlement" where group_id = $1 and ${c} = $2 and (created_at >= $3 or confirmed_at >= $3)`
+    );
+  }
+  return moves;
+}
+
+/** Union of two move lists (no duplicates). */
+export function mergeMoves(a: Partial<ClaimMoves> | null | undefined, b: ClaimMoves): ClaimMoves {
+  const u = (x: string[] | undefined, y: string[]) => [...new Set([...(x ?? []), ...y])];
+  const settlements = {} as ClaimMoves["settlements"];
+  for (const c of SETTLEMENT_COLUMNS) settlements[c] = u(a?.settlements?.[c], b.settlements[c]);
+  return {
+    payerExpenses: u(a?.payerExpenses, b.payerExpenses),
+    splitExpenses: u(a?.splitExpenses, b.splitExpenses),
+    createdExpenses: u(a?.createdExpenses, b.createdExpenses),
+    receiptExpenses: u(a?.receiptExpenses, b.receiptExpenses),
+    settlements,
+  };
+}
+
 /** The person who claimed can undo for this long; the admin can undo any time. */
 export const SELF_UNDO_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -165,7 +198,10 @@ export const SELF_UNDO_MS = 7 * 24 * 60 * 60 * 1000;
 export async function undoClaim(db: Db, claim: ClaimRow, actorId: string): Promise<{ placeholderName: string; claimerName: string }> {
   const { group_id: groupId, placeholder_id: ph, claimed_by: who } = claim;
 
-  await moveHistory(db, claim.moved, who, ph);
+  // Everything recorded at claim time, plus what was added for them *while* they held the
+  // name: bills split with "Suryansh" after the claim belong to Suryansh, not to the account
+  // that wrongly picked the name.
+  await moveHistory(db, mergeMoves(claim.moved, await movesSince(db, groupId, who, claim.created_at)), who, ph);
 
   // Free the name and avatar for the placeholder.
   const me = await db.query('select name from "User" where id = $1', [who]);
