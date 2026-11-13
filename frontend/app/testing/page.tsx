@@ -2,12 +2,14 @@
 
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { readJson } from "@/lib/api";
 import { detectPlatform } from "@/lib/testPlan";
 import { TestingView } from "@/components/testing/TestingView";
 import FeedbackSheet from "@/components/FeedbackSheet";
+import { ask, toast } from "@/lib/dialog";
 
 const noSubscribe = () => () => {};
 
@@ -17,6 +19,7 @@ const noSubscribe = () => () => {};
  */
 export default function TestingPage() {
   const { isAuthenticated, authFetch } = useAuth();
+  const router = useRouter();
   const platform = useSyncExternalStore(noSubscribe, () => detectPlatform(navigator.userAgent), () => null);
   const [problemFor, setProblemFor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -31,7 +34,7 @@ export default function TestingPage() {
       }));
       setSent(true);
     } catch {
-      alert("Couldn't send. Check your connection and try again.");
+      toast("Couldn't send. Check your connection and try again.", "error");
     } finally {
       setSending(false);
     }
@@ -50,7 +53,15 @@ export default function TestingPage() {
           sending={sending}
           sent={sent}
           onSend={send}
-          onProblem={(title) => (isAuthenticated ? setProblemFor(title) : alert("Sign in first, so we can follow up on the problem."))}
+          onProblem={(title) => {
+            if (isAuthenticated) { setProblemFor(title); return; }
+            void ask({
+              title: "Sign in to report it",
+              body: "Then we know who found the problem and can follow up with you.",
+              confirmLabel: "Sign in",
+              cancelLabel: "Not now",
+            }).then((go) => { if (go) router.push("/auth"); });
+          }}
         />
       </div>
       {problemFor && (

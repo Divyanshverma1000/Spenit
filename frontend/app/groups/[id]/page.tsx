@@ -57,6 +57,7 @@ import { lookAlikes, initials } from "@/lib/avatar";
 import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
 import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
+import { ask } from "@/lib/dialog";
 
 
 type Member = GroupMember;
@@ -186,7 +187,13 @@ export default function GroupDetailPage() {
   }, [serverExpenseCount]);
 
   async function deleteExpense(expenseId: string) {
-    if (!confirm("Delete this expense?")) return;
+    const ok = await ask({
+      title: "Delete this expense?",
+      body: "It's removed for everyone in the group and balances update.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
     setDeletingId(expenseId);
     // Remove it from the screen immediately; the refetch below corrects balances.
     queryClient.setQueryData<GroupOverview>(groupKey(id), (old) =>
@@ -282,7 +289,13 @@ export default function GroupDetailPage() {
   }
 
   async function removePerson(memberId: string, name: string) {
-    if (!confirm(`Remove ${name} from the group?`)) return;
+    const ok = await ask({
+      title: `Remove ${name}?`,
+      body: "They leave this group. Bills they're part of stay, so balances still add up.",
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
     setMemberBusy(true); setMemberError(null);
     try {
       const res = await authFetch(`/groups/${id}/members/${memberId}`, { method: "DELETE" });

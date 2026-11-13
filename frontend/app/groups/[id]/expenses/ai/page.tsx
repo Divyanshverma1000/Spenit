@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Mic, Camera, Send, Sparkles } from "lucide-react";
 import type { ParsedExpenseDraft } from "@/hooks/types/ai";
+import { ask } from "@/lib/dialog";
 
 
 interface Member {
@@ -68,8 +69,12 @@ export default function AIExpensePage() {
     if (ai.state === "fallback" && ai.fallbackData) {
       const reason = ai.fallbackData.reason;
       if (reason === "config_error") {
-        alert("Bring your own AI: Groq API Key required. Please set it in your Profile.");
-        router.push("/profile");
+        void ask({
+          title: "Add an AI key first",
+          body: "Typing expenses needs a free Groq key. You can add it in Profile in under a minute.",
+          confirmLabel: "Open Profile",
+          cancelLabel: "Not now",
+        }).then((go) => { if (go) router.push("/profile"); });
         return;
       }
       const amount = ai.fallbackData.partialAmount || "";

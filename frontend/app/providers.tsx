@@ -9,6 +9,7 @@ import { OfflineBanner } from "@/components/OfflineBanner";
 import { idbPersister } from "@/lib/persister";
 import { ReactNode, useEffect, useState } from "react";
 import { installErrorReporting } from "@/lib/errorReport";
+import AppDialogs from "@/components/AppDialogs";
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 // Bump when the shape of cached API data changes, so old caches are discarded.
@@ -48,6 +49,7 @@ export default function Providers({ children }: { children: ReactNode }) {
         <AuthProvider>
           <OutboxProvider>
             <OfflineBanner />
+            <AppDialogs />
             {children}
           </OutboxProvider>
         </AuthProvider>

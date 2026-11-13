@@ -12,11 +12,12 @@ import { SettingsRow } from "@/components/ui/SettingsRow";
 import { LogOut, User, Bell, Cpu, Key, CheckCircle, AlertCircle, Wallet, Edit2, Copy, Check, Lock, HelpCircle, FileText, Info, Trash2, RefreshCw, ShieldCheck } from "lucide-react";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Palette, Camera, Loader2, Download, UserX } from "lucide-react";
+import { Palette, Camera, Loader2, Download, UserX, CheckCircle2, XCircle } from "lucide-react";
 import DeleteAccountSheet from "@/components/DeleteAccountSheet";
 import FeedbackSheet from "@/components/FeedbackSheet";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { fileToSquareAvatar } from "@/lib/image";
+import { notice, toast } from "@/lib/dialog";
 
 
 interface UserProfile {
@@ -54,7 +55,7 @@ export default function ProfilePage() {
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch {
-      alert("Couldn't download your data. Check your connection and try again.");
+      toast("Couldn't download your data. Check your connection and try again.", "error");
     } finally {
       setExporting(false);
     }
@@ -175,14 +176,14 @@ export default function ProfilePage() {
         setProfile((p) => p ? { ...p, hasGroqKey: true, groqKeyMasked: `gsk_***${groqKey.slice(-4)}` } : p);
         setGroqKey("");
         setIsEditingGroq(false);
-        alert("API Key updated");
+        toast("AI key saved");
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to save key");
+        toast(err.error || "Couldn't save the key", "error");
       }
     } catch (err) {
       console.error(err);
-      alert("Error saving key");
+      toast("Couldn't save the key. Check your connection.", "error");
     } finally {
       setIsSavingGroq(false);
     }
@@ -198,16 +199,38 @@ export default function ProfilePage() {
       });
       type Ping = { ok: boolean; model: string; status?: number; message?: string; ms?: number };
       const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; text?: Ping; vision?: Ping } | null;
-      const line = (label: string, p?: Ping) =>
-        !p ? "" : p.ok ? `OK · ${label} (${p.model}) — ${p.ms}ms` : `Failed · ${label} (${p.model}) — ${p.status ? `HTTP ${p.status}: ` : ""}${p.message ?? "failed"}`;
+      const row = (label: string, p?: Ping) =>
+        !p ? null : (
+          <div className="flex items-start gap-3 py-2.5">
+            {p.ok
+              ? <CheckCircle2 size={18} className="text-[var(--positive)] flex-shrink-0 mt-0.5" />
+              : <XCircle size={18} className="text-[var(--negative)] flex-shrink-0 mt-0.5" />}
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-[var(--text-primary)]">{label}</p>
+              <p className="text-[12.5px] text-[var(--text-muted)] break-words">
+                {p.model}{p.ok ? ` · ${p.ms} ms` : ` · ${p.status ? `HTTP ${p.status}: ` : ""}${p.message ?? "failed"}`}
+              </p>
+            </div>
+          </div>
+        );
       if (data?.text || data?.vision) {
-        alert(`${data.ok ? "Connection successful" : "Connection problem"}\n\n${line("Text AI", data.text)}\n${line("Image AI", data.vision)}`);
+        await notice({
+          title: data.ok ? "Your AI key works" : "Connection problem",
+          tone: data.ok ? "success" : "error",
+          body: (
+            <div className="mt-1 divide-y divide-[var(--hairline)]">
+              {row("Text AI", data.text)}
+              {row("Image AI", data.vision)}
+            </div>
+          ),
+          confirmLabel: "Done",
+        });
       } else {
-        alert(data?.error || `Test failed (HTTP ${res.status})`);
+        toast(data?.error || `Test failed (HTTP ${res.status})`, "error");
       }
     } catch (err) {
       console.error(err);
-      alert("Failed to test connection.");
+      toast("Couldn't test the connection. Check your internet.", "error");
     } finally {
       setTestingGroq(false);
     }

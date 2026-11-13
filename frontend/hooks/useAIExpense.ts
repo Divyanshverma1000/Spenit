@@ -4,6 +4,7 @@ import { API_URL } from "@/lib/api";
 import { useState, useCallback, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { ParsedExpenseDraft, AIFallback } from "./types/ai";
+import { toast } from "@/lib/dialog";
 
 
 export type AIExpenseState =
@@ -79,7 +80,7 @@ export function useAIExpense(): AIExpenseResult {
           if (res.status === 403) {
             const errBody = await res.json().catch(() => ({}));
             if (errBody.error && errBody.error.includes("Groq")) {
-              alert("AI Provider (Groq) has blocked access from your network. Please try using a VPN.");
+              toast("The AI service is blocked on this network. Try mobile data or another Wi-Fi.", "error");
             }
           }
           throw new Error(`HTTP ${res.status}`);
@@ -130,7 +131,7 @@ export function useAIExpense(): AIExpenseResult {
           if (res.status === 403) {
             const errBody = await res.json().catch(() => ({}));
             if (errBody.error && errBody.error.includes("Groq")) {
-              alert("AI Provider (Groq) has blocked access from your network. Please try using a VPN.");
+              toast("The AI service is blocked on this network. Try mobile data or another Wi-Fi.", "error");
             }
           }
           throw new Error(`HTTP ${res.status}`);

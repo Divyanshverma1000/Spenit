@@ -50,6 +50,8 @@ export function ExpenseDetailModal({
       if (e.key === "Escape") onClose();
     };
     const onClick = (e: MouseEvent) => {
+      // a confirm on top of this (e.g. "Delete this expense?") isn't an outside click
+      if ((e.target as Element | null)?.closest?.("[data-app-dialog]")) return;
       if (modalRef.current && !modalRef.current.contains(e.target as Node)) onClose();
     };
     document.addEventListener("keydown", onKeyDown);
