@@ -55,7 +55,14 @@ describe("billSummary", () => {
         { name: null, lineTotal: 199, sharedBy: ["b"], masked: true },
       ],
     };
-    expect(billSummary(r)).toBe("Milk, white bread, potato chips +2");
+    // chips and the Gold milk belong to one person each: private, so not named
+    expect(billSummary(r)).toBe("Milk, white bread +3");
+  });
+  it("names a private item only once its owner shows it to the group", () => {
+    const hidden = { items: [{ name: "Shampoo", lineTotal: 300, sharedBy: ["a"] }, { name: "Bread", lineTotal: 40, sharedBy: ["a", "b"] }] };
+    expect(billSummary(hidden)).toBe("Bread +1");
+    const shown = { items: [{ name: "Shampoo", lineTotal: 300, sharedBy: ["a"], visible: true }, { name: "Bread", lineTotal: 40, sharedBy: ["a", "b"] }] };
+    expect(billSummary(shown)).toBe("Shampoo, bread");
   });
   it("never leaks private items", () => {
     expect(billSummary({ items: [{ name: null, lineTotal: 9, sharedBy: ["b"], masked: true }] })).toBe("1 private item");

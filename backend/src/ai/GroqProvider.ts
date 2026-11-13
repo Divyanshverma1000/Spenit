@@ -415,7 +415,7 @@ If there are items, you MUST include them in the "items" array.`;
    * wait is short; a longer retry-after goes back to the phone, which waits and retries.
    * 401 / 404 / 413 are never retried.
    */
-  async extractOrder(input: { imageBase64: string }): Promise<OrderExtractResult> {
+  async extractOrder(input: { imageBase64: string; waitOnBusy?: boolean }): Promise<OrderExtractResult> {
     const model = visionModel();
     if (!this.apiKey) return { ok: false, reason: "config_error", stage: "config", message: "No Groq API key", model };
 
@@ -466,7 +466,9 @@ If there are items, you MUST include them in the "items" array.`;
 
       if (call.kind === "http") {
         const { status, message } = call;
-        if ((status === 429 || status >= 500) && transientRetries === 0 && call.retryAfterMs <= 10_000) {
+        // With several keys, a busy key hands over to the next one at once instead of waiting.
+        const mayWait = status !== 429 || input.waitOnBusy !== false;
+        if ((status === 429 || status >= 500) && mayWait && transientRetries === 0 && call.retryAfterMs <= 10_000) {
           transientRetries++;
           await new Promise((r) => setTimeout(r, Math.max(call.retryAfterMs, 1_000)));
           continue;

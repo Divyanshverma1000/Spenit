@@ -117,7 +117,9 @@ export function shortLabel(item: { name?: string | null; short?: string | null }
 
 /**
  * A few words saying what was on the bill, priciest things first: "Milk, chips, shampoo +9".
- * Built from what this viewer can see, so private items never show up in it.
+ * Private items (one person's, not shown to the group) never show up in it, for anyone:
+ * not even for their owner or whoever added the bill, who can read them in the item list.
+ * The summary is the bill's public face, so it must read the same for the whole group.
  */
 export function billSummary(receiptData: unknown, max = 3): string | null {
   const bill = readBill(receiptData);
@@ -125,7 +127,8 @@ export function billSummary(receiptData: unknown, max = 3): string | null {
   const raw = (receiptData as { items: { short?: string | null }[] }).items;
   const seen = new Set<string>();
   const picked: string[] = [];
-  const visible = bill.items.filter((i) => !i.masked).sort((a, b) => b.lineTotal - a.lineTotal);
+  const isPrivate = (i: BillItem) => i.masked || (!!i.owner && !i.visible);
+  const visible = bill.items.filter((i) => !isPrivate(i)).sort((a, b) => b.lineTotal - a.lineTotal);
   for (const it of visible) {
     const label = shortLabel({ name: it.name, short: raw[it.index]?.short });
     if (!label || seen.has(label)) continue;

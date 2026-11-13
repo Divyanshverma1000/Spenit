@@ -71,6 +71,21 @@ const AI_PER_KEY = 2;
 /** Busy / slow / flaky answers are retried automatically, waiting longer each time. */
 const AUTO_RETRY = new Set(["rate_limit", "timeout", "network"]);
 const AUTO_RETRY_WAITS_MS = [8_000, 20_000, 40_000];
+/** Longer than this (Groq's daily cap, usually) and we stop and say so, instead of a long countdown. */
+const MAX_AUTO_WAIT_MS = 90_000;
+
+/** "about 18 min" / "about 2 h" */
+function roughWait(ms: number): string {
+  const min = Math.ceil(ms / 60_000);
+  return min < 90 ? `about ${min} min` : `about ${Math.round(min / 60)} h`;
+}
+
+/** What to say when every key is out of quota for a while. */
+function longWaitMessage(f: ExtractFailure): string {
+  const many = (f.keys ?? 1) > 1;
+  const what = f.perDay ? "today's Groq limit" : "Groq's limit";
+  return `${many ? "All your keys reached" : "Your key reached"} ${what}. Tap retry in ${roughWait(f.retryAfterMs ?? 0)}${many ? "" : ", or add keys from other Groq accounts in Profile"}.`;
+}
 
 async function hashBytes(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
@@ -191,6 +206,11 @@ export default function ImportOrdersPage() {
       const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64, lane }) });
       const data = (await res.json().catch(() => null)) as ExtractResponse | ExtractFailure | { error?: string } | null;
       if (data && "fallback" in data) return data;
+      // Spenit's own per-minute cap (not Groq's): same handling as a busy AI.
+      if (res.status === 429) {
+        const d = (data ?? {}) as { error?: string; retryAfterMs?: number };
+        return { fallback: true, reason: "rate_limit", stage: "server", status: 429, message: d.error, retryAfterMs: d.retryAfterMs };
+      }
       if (!res.ok || !data || !("order" in data)) {
         return {
           fallback: true, reason: "network", stage: "server", status: res.status,
@@ -211,6 +231,7 @@ export default function ImportOrdersPage() {
         let resp = await withAiSlot(() => extract(imageBase64));
         for (let attempt = 0; "fallback" in resp && AUTO_RETRY.has(resp.reason) && attempt < AUTO_RETRY_WAITS_MS.length; attempt++) {
           const waitMs = Math.max(resp.retryAfterMs ?? 0, AUTO_RETRY_WAITS_MS[attempt]);
+          if (waitMs > MAX_AUTO_WAIT_MS) break; // a long wait: stop and tell them (below)
           patchPiece(p.index, {
             status: "queued",
             error: `${resp.reason === "rate_limit" ? "AI is busy" : "AI didn't answer"} — trying again in ${Math.round(waitMs / 1000)}s`,
@@ -218,6 +239,10 @@ export default function ImportOrdersPage() {
           await sleep(waitMs);
           patchPiece(p.index, { status: "ai", error: undefined });
           resp = await withAiSlot(() => extract(imageBase64));
+        }
+        if ("fallback" in resp && resp.reason === "rate_limit" && (resp.retryAfterMs ?? 0) > MAX_AUTO_WAIT_MS) {
+          patchPiece(p.index, { status: "failed", failure: resp, error: longWaitMessage(resp) });
+          return;
         }
         if ("fallback" in resp) {
           if (resp.reason === "config_error") setNoKey(true);
@@ -1310,6 +1335,7 @@ function CheckStep({ drafts: all, members, me, error }: { drafts: DraftOrder[]; 
                 <span className="block text-[11.5px] text-[var(--text-muted)]">Settle-up · they confirm it</span>
               </span>
               <span className="font-extrabold tabular-nums">{formatINR(p.grandTotal ?? draftTotals(p).computed)}</span>
+              <ShotsStrip sources={p.sources} className="w-auto flex-shrink-0 [&_span:last-child]:hidden" />
             </div>
           ))}
         </div>
@@ -1335,6 +1361,7 @@ function CheckStep({ drafts: all, members, me, error }: { drafts: DraftOrder[]; 
                 <span key={u} className="text-[12px]"><b>{firstName(byId(u), me)}</b> <span className="tabular-nums">{formatINR(v)}</span></span>
               ))}
             </div>
+            <ShotsStrip sources={o.sources} />
           </div>
         );
       })}

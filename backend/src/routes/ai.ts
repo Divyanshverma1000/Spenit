@@ -191,6 +191,21 @@ async function groqLanesFor(userId: string, lane: number): Promise<{ keys: strin
   return { keys: [], source: null };
 }
 
+/**
+ * Keys Groq has just called busy, with when to try them again (this server copy only;
+ * a fresh copy simply asks Groq once and learns the same). Keyed by a short fingerprint.
+ */
+const keyCooldown = new Map<string, number>();
+const fingerprint = (k: string) => `${k.length}:${k.slice(-10)}`;
+function isCoolingDown(k: string): boolean {
+  const until = keyCooldown.get(fingerprint(k));
+  return !!until && until > Date.now();
+}
+function coolDown(k: string, retryAfterMs: number | undefined) {
+  keyCooldown.set(fingerprint(k), Date.now() + Math.max(retryAfterMs ?? 0, 5_000));
+  if (keyCooldown.size > 500) keyCooldown.clear();
+}
+
 async function groqKeyFor(userId: string): Promise<{ key: string | null; source: "user" | "server" | null }> {
   const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
   // Stored encrypted (lib/secretBox); decrypted only here, for the request at hand.
@@ -346,9 +361,18 @@ router.post(
     }
 
     // This lane's key first; if Groq says it's busy, the person's other keys take over.
-    let result = await new GroqProvider(keys[0]).extractOrder({ imageBase64 });
-    for (let i = 1; !result.ok && result.reason === "rate_limit" && i < keys.length; i++) {
-      result = await new GroqProvider(keys[i]).extractOrder({ imageBase64 });
+    // Keys Groq recently called busy are skipped until their wait is over (one daily-limited
+    // key must not hold up the rest). If every key is busy, report the SHORTEST wait.
+    const ready = keys.filter((k) => !isCoolingDown(k));
+    const tryKeys = ready.length > 0 ? ready : keys;
+    const multi = tryKeys.length > 1;
+    let result = await new GroqProvider(tryKeys[0]).extractOrder({ imageBase64, waitOnBusy: !multi });
+    let shortest = result;
+    for (let i = 0; !result.ok && result.reason === "rate_limit"; ) {
+      coolDown(tryKeys[i], result.retryAfterMs);
+      if (!shortest.ok && (result.retryAfterMs ?? 60_000) <= (shortest.retryAfterMs ?? 60_000)) shortest = result;
+      if (++i >= tryKeys.length) { result = shortest; break; }
+      result = await new GroqProvider(tryKeys[i]).extractOrder({ imageBase64, waitOnBusy: false });
     }
     await bump(result.ok
       ? { ai_calls: 1, order_reads: 1, ai_tokens_in: result.usage?.promptTokens ?? 0, ai_tokens_out: result.usage?.completionTokens ?? 0 }
@@ -365,6 +389,9 @@ router.post(
         message: result.message,
         model: result.model,
         retryAfterMs: result.retryAfterMs,
+        /** Groq's daily cap (not the per-minute one): waiting a few seconds won't help */
+        perDay: result.reason === "rate_limit" && /per day/i.test(result.message ?? ""),
+        keys: keys.length,
         rawText: "",
       });
       return;

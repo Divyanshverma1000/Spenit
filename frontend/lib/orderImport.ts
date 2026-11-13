@@ -59,6 +59,10 @@ export interface ExtractFailure {
   model?: string;
   /** Groq's retry-after, when it said it was busy */
   retryAfterMs?: number;
+  /** busy because of Groq's daily cap, not the per-minute one */
+  perDay?: boolean;
+  /** how many of the person's Groq keys were tried */
+  keys?: number;
 }
 
 /** One picked screenshot and its extraction. `index` = pick order, used for joining. */
