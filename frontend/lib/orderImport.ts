@@ -63,6 +63,8 @@ export interface ExtractFailure {
   perDay?: boolean;
   /** how many of the person's Groq keys were tried */
   keys?: number;
+  /** "spenit" = Spenit's own per-account cap, not Groq's */
+  limit?: string;
 }
 
 /** One picked screenshot and its extraction. `index` = pick order, used for joining. */

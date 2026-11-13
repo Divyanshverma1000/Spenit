@@ -43,6 +43,33 @@ export function strictLimit(name: string, windows: { limit: number; seconds: num
   };
 }
 
+type Window = { limit: number; seconds: number; message: string };
+
+/**
+ * Like strictLimit, but the windows depend on who is asking (e.g. people who use their own
+ * AI key get a higher daily ceiling). The 429 body says which limit it was (`limit: "spenit"`),
+ * so the app never mistakes it for the AI provider's own limit.
+ */
+export function strictLimitBy(name: string, pick: (userId: string) => Promise<Window[]>) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user?.userId;
+    if (!user) return next();
+    try {
+      for (const w of await pick(user)) {
+        const r = await hit(`${name}:${w.seconds}:${user}`, w.limit, w.seconds);
+        if (!r.ok) {
+          res.setHeader("Retry-After", String(r.retryAfter));
+          res.status(429).json({ error: w.message, reason: "rate_limit", limit: "spenit", window: w.seconds, retryAfterMs: r.retryAfter * 1000 });
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("[ratelimit] strict limit check failed:", (err as Error).message); // never block on our own failure
+    }
+    next();
+  };
+}
+
 /** Drop finished windows (housekeeping). */
 export async function cleanupRateCounters(): Promise<void> {
   await pool.query(`delete from "RateCounter" where window_start < now() - interval '2 days'`);

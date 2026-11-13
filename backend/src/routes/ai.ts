@@ -22,27 +22,49 @@ import type { GroupMember, ParsedExpenseDraft } from "../ai/AIProvider";
 import { normalizeOrder, checkTotals } from "../lib/orderExtract";
 import { MAX_IMAGE_CHARS, MAX_RECEIPT_IMAGES, IMAGE_DATA_URL } from "../lib/limits";
 import { open as openSecret } from "../lib/secretBox";
-import { strictLimit } from "../lib/strictLimit";
+import { strictLimitBy } from "../lib/strictLimit";
 import { bump } from "../lib/telemetry";
 import { buildPersonalContext } from "../lib/personalAiContext";
 import { maskReceipt, repairSharedBy } from "../lib/receiptPrivacy";
 import { parseAmount } from "../lib/limits";
 import { CATEGORIES as PERSONAL_CATEGORIES } from "./personal_expenses";
 
-/** AI calls cost money and share the Groq quota: an exact limit per account, across every server. */
-const aiLimit = strictLimit("ai", [
-  { limit: 20, seconds: 60, message: "That's a lot of AI requests at once. Wait a minute and try again." },
-  { limit: 400, seconds: 86_400, message: "You've reached today's AI limit. It resets tomorrow." },
-]);
 /**
- * Screenshot reading: one call per screenshot, and people with several Groq keys read
- * several at once, so a per-minute cap of 20 would stall a 25-screenshot import.
- * Same counters as aiLimit (the daily cap is shared), just a higher per-minute ceiling.
+ * Exact per-account AI limits, across every server copy. They protect the SERVER's Groq key
+ * (shared by everyone without a key of their own) and the Worker from runaway clients.
+ * People with their own key pay Groq themselves and Groq limits them per account, so their
+ * daily ceiling is much higher; only the abuse guard remains.
  */
-const orderReadLimit = strictLimit("ai", [
-  { limit: 60, seconds: 60, message: "That's a lot of screenshots at once. Wait a minute and try again." },
-  { limit: 400, seconds: 86_400, message: "You've reached today's AI limit. It resets tomorrow." },
-]);
+const DAY = 86_400;
+const DAILY_MSG = (n: number) => `You've used Spenit's ${n} AI reads for today. It resets at 5:30 am.`;
+async function ownsAiKey(userId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `select (groq_api_key is not null or jsonb_array_length(groq_extra_keys) > 0) as own from "User" where id = $1`,
+    [userId]
+  );
+  return rows[0]?.own === true;
+}
+const SERVER_DAILY = 400;
+const OWN_KEY_DAILY = 5_000;
+const aiLimit = strictLimitBy("ai", async (userId) => {
+  const daily = (await ownsAiKey(userId)) ? OWN_KEY_DAILY : SERVER_DAILY;
+  return [
+    { limit: 20, seconds: 60, message: "That's a lot of AI requests at once. Wait a minute and try again." },
+    { limit: daily, seconds: DAY, message: DAILY_MSG(daily) },
+  ];
+});
+/**
+ * Screenshot reading: one call per screenshot (plus retries), several at once with extra
+ * keys, so the per-minute ceiling is higher. Same counters as aiLimit.
+ */
+const orderReadLimit = strictLimitBy("ai", async (userId) => {
+  const own = await ownsAiKey(userId);
+  const daily = own ? OWN_KEY_DAILY : SERVER_DAILY;
+  return [
+    { limit: own ? 120 : 60, seconds: 60, message: "That's a lot of screenshots at once. Wait a minute and try again." },
+    { limit: daily, seconds: DAY, message: DAILY_MSG(daily) },
+  ];
+});
 import { buildGroupContext } from "../lib/groupAiContext";
 import { userGroqKeys } from "../lib/groqKeys";
 import { listGroupExpenses } from "./expenses";

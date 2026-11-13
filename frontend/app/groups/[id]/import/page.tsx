@@ -82,6 +82,8 @@ function roughWait(ms: number): string {
 
 /** What to say when every key is out of quota for a while. */
 function longWaitMessage(f: ExtractFailure): string {
+  // Spenit's own daily cap: say so, so nobody goes hunting for more Groq keys.
+  if (f.limit === "spenit") return f.message || `You've used today's Spenit AI reads. Tap retry in ${roughWait(f.retryAfterMs ?? 0)}.`;
   const many = (f.keys ?? 1) > 1;
   const what = f.perDay ? "today's Groq limit" : "Groq's limit";
   return `${many ? "All your keys reached" : "Your key reached"} ${what}. Tap retry in ${roughWait(f.retryAfterMs ?? 0)}${many ? "" : ", or add keys from other Groq accounts in Profile"}.`;
@@ -209,7 +211,7 @@ export default function ImportOrdersPage() {
       // Spenit's own per-minute cap (not Groq's): same handling as a busy AI.
       if (res.status === 429) {
         const d = (data ?? {}) as { error?: string; retryAfterMs?: number };
-        return { fallback: true, reason: "rate_limit", stage: "server", status: 429, message: d.error, retryAfterMs: d.retryAfterMs };
+        return { fallback: true, reason: "rate_limit", stage: "server", status: 429, message: d.error, retryAfterMs: d.retryAfterMs, limit: "spenit" };
       }
       if (!res.ok || !data || !("order" in data)) {
         return {
