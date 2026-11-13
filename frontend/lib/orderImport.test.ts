@@ -172,3 +172,31 @@ describe("mergeDrafts (\"Same order as…\")", () => {
     expect(looksPartial(d)).toBe(false);
   });
 });
+
+import { cardState, mismatchReasons } from "./orderImport";
+
+describe("cardState and mismatchReasons", () => {
+  const base = {
+    id: "o", platform: "blinkit", orderId: null, orderDate: null, payerId: "a", feePolicy: "proportional",
+    skipped: false, acceptItemsTotal: false, sources: [0], alreadyAdded: null, fees: [], discounts: [],
+  } as const;
+  const item = (lineTotal: number, extra = {}) => ({ id: String(lineTotal), name: "x", variant: null, qty: 1, lineTotal, sharedBy: ["a"], doubtful: false, ...extra });
+  it("tells the states apart", () => {
+    expect(cardState({ ...base, items: [item(100)], grandTotal: 100 } as never)).toBe("ok");
+    expect(cardState({ ...base, items: [item(80)], grandTotal: 100 } as never)).toBe("short");
+    expect(cardState({ ...base, items: [item(120)], grandTotal: 100 } as never)).toBe("over");
+    expect(cardState({ ...base, items: [item(120)], grandTotal: 100, acceptItemsTotal: true } as never)).toBe("accepted");
+    expect(cardState({ ...base, items: [item(120)], grandTotal: null } as never)).toBe("unknown");
+    expect(cardState({ ...base, items: [item(120)], grandTotal: 100, skipped: true } as never)).toBe("skipped");
+  });
+  it("explains a short card: missing items first, then joining", () => {
+    const r = mismatchReasons({ ...base, items: [item(80)], grandTotal: 100, itemCount: 3 } as never, true);
+    expect(r[0]).toMatch(/says 3 items but 1 were read/);
+    expect(r[1]).toMatch(/Same order as/);
+  });
+  it("explains an over card: discount and doubtful prices", () => {
+    const r = mismatchReasons({ ...base, items: [item(120, { doubtful: true })], grandTotal: 100 } as never, false);
+    expect(r[0]).toMatch(/discount/);
+    expect(r[r.length - 1]).toMatch(/A price the AI wasn't sure of is marked/);
+  });
+});

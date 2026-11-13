@@ -21,6 +21,8 @@
   /* Status */
   --positive: #10B981; /* Emerald Green */
   --negative: #EF4444; /* Red for negative/destructive, used sparingly */
+  --warn: #E11D48; /* Rose: "needs a look" (amber is the brand colour) */
+  --info: #2563EB; /* Blue: "can't be checked" */
 
   /* Interactive */
   --accent: #F59E0B; /* Warm Amber */
@@ -66,6 +68,8 @@
 
   --positive: #34D399;
   --negative: #F87171;
+  --warn: #FB7185;
+  --info: #60A5FA;
 
   --accent: #F59E0B;
   --accent-subtle: rgba(245, 158, 11, 0.16);

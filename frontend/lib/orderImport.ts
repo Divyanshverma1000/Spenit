@@ -119,6 +119,8 @@ export interface DraftOrder {
   acceptItemsTotal: boolean;
   /** pick indexes of the screenshots this order came from */
   sources: number[];
+  /** the "N items" the app printed on the order, if the AI saw it */
+  itemCount?: number | null;
   alreadyAdded: { expenseId: string; createdAt: string } | null;
 }
 
@@ -310,6 +312,56 @@ export function isReady(o: DraftOrder): boolean {
   return t.status === "ok" || t.status === "no_total" || o.acceptItemsTotal;
 }
 
+// ── How a card looks while sorting ─────────────────────────────────────────────
+
+/**
+ * ok        adds up to the bill (green)
+ * accepted  doesn't match, but the person chose the items total (green, says so)
+ * short     items come to less than the bill (needs a look)
+ * over      items come to more than the bill (needs a look)
+ * unknown   no bill total was read, so it can't be checked (blue)
+ * skipped / empty
+ */
+export type CardState = "ok" | "accepted" | "short" | "over" | "unknown" | "skipped" | "empty";
+
+export function cardState(o: DraftOrder): CardState {
+  if (o.skipped) return "skipped";
+  const t = draftTotals(o);
+  if (t.status === "no_items") return "empty";
+  if (t.status === "ok") return "ok";
+  if (t.status === "no_total") return "unknown";
+  if (o.acceptItemsTotal) return "accepted";
+  return (t.difference ?? 0) > 0 ? "short" : "over";
+}
+
+/** The likely reasons a card doesn't add up, most likely first, in plain words. */
+export function mismatchReasons(o: DraftOrder, canJoin: boolean): string[] {
+  const state = cardState(o);
+  const out: string[] = [];
+  const found = o.items.length;
+  const units = Math.round(o.items.reduce((a, i) => a + i.qty, 0));
+  const printed = o.itemCount ?? null;
+  const doubtful = o.items.filter((i) => i.doubtful).length;
+  if (state === "short") {
+    if (printed !== null && found < printed && units < printed)
+      out.push(`The order says ${printed} items but ${found} were read. Some may be cut off between screenshots.`);
+    if (canJoin) out.push("The rest of this order may be on another card. Join them with \"Same order as…\".");
+    else out.push("Part of the order may be on a screenshot you didn't add.");
+    out.push("A delivery fee, tip, tax or packing charge may not have been read.");
+  } else if (state === "over") {
+    out.push("A discount, coupon or cashback may not have been read.");
+    if (o.sources.length > 1) out.push("Screenshots may overlap, so an item was counted twice.");
+    if (printed !== null && found > printed && units > printed)
+      out.push(`The order says ${printed} items but ${found} were read. One may be extra.`);
+  } else {
+    return out;
+  }
+  out.push(doubtful > 0
+    ? `${doubtful === 1 ? "A price" : `${doubtful} prices`} the AI wasn't sure of ${doubtful === 1 ? "is" : "are"} marked below. Check ${doubtful === 1 ? "it" : "them"} against the screenshot.`
+    : "A price may have been misread. Compare with the screenshot.");
+  return out;
+}
+
 // ── Share preview (server is the authority; this mirrors backend lib/itemizedSplit) ──
 
 export function previewShares(o: DraftOrder): Record<string, number> {
@@ -406,6 +458,7 @@ export function toDraft(
     skipped: false,
     acceptItemsTotal: false,
     sources,
+    itemCount: order.itemCount ?? null,
     alreadyAdded: null,
   };
 }
@@ -435,6 +488,7 @@ export function mergeDrafts(into: DraftOrder, from: DraftOrder): DraftOrder {
     skipped: false,
     acceptItemsTotal: false,
     sources: [...into.sources, ...from.sources].sort((a, b) => a - b),
+    itemCount: into.itemCount ?? from.itemCount ?? null,
     alreadyAdded: into.alreadyAdded ?? from.alreadyAdded,
   };
 }

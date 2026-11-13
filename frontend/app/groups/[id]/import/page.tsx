@@ -15,7 +15,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Camera, ChevronLeft, ChevronRight, Images, ZoomIn, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
+  ArrowLeft, Camera, ChevronLeft, ChevronRight, Images, ZoomIn, HelpCircle, Percent, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -26,9 +26,9 @@ import { shortNames } from "@/lib/avatar";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { BackClose } from "@/lib/backClose";
 import {
-  adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
+  adjustToBillTotal, cardState, mismatchReasons, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody, draftFromExpense,
-  type DraftItem, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
+  type CardState, type DraftItem, type DraftLine, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -586,10 +586,14 @@ function TotalsBadge({ o }: { o: DraftOrder }) {
   if (o.skipped) return <span className="text-[11px] font-bold text-[var(--text-muted)]">Skipped</span>;
   if (t.status === "ok") return <span className="text-[11px] font-bold text-[var(--positive)] flex items-center gap-1"><Check size={12} strokeWidth={3} /> Adds up</span>;
   if (t.status === "mismatch" && !o.acceptItemsTotal)
-    return <span className="text-[11px] font-bold text-[var(--accent)] flex items-center gap-1"><AlertTriangle size={12} /> Off by {formatINR(Math.abs(t.difference!))}</span>;
-  if (t.status === "no_total") return <span className="text-[11px] font-bold text-[var(--text-secondary)]">No bill total seen</span>;
+    return (
+      <span className="text-[11px] font-bold text-[var(--warn)] flex items-center gap-1">
+        <AlertTriangle size={12} /> {formatINR(Math.abs(t.difference!))} {t.difference! > 0 ? "short of" : "over"} the bill
+      </span>
+    );
+  if (t.status === "no_total") return <span className="text-[11px] font-bold text-[var(--info)]">No bill total seen</span>;
   if (t.status === "no_items") return <span className="text-[11px] font-bold text-[var(--negative)]">No items</span>;
-  return <span className="text-[11px] font-bold text-[var(--text-secondary)]">Items total used</span>;
+  return <span className="text-[11px] font-bold text-[var(--positive)] flex items-center gap-1"><Check size={12} strokeWidth={3} /> Using items total</span>;
 }
 
 // ── Step 1: Drop ───────────────────────────────────────────────────────────────
@@ -912,9 +916,59 @@ function OrderCard({
       ? "me"
       : "custom";
 
+  const state = cardState(o);
+  const look = CARD_LOOK[o.alreadyAdded ? "skipped" : state];
+
+  // Removed by mistake? Undo for a few seconds.
+  const [removed, setRemoved] = useState<{ label: string; restore: () => void } | null>(null);
+  useEffect(() => {
+    if (!removed) return;
+    const timer = setTimeout(() => setRemoved(null), 6000);
+    return () => clearTimeout(timer);
+  }, [removed]);
+  const removeItem = (it: DraftItem) => {
+    const at = o.items.findIndex((i) => i.id === it.id);
+    update((d) => ({ ...d, items: d.items.filter((i) => i.id !== it.id) }));
+    setRemoved({
+      label: it.name.trim() || "Item",
+      restore: () => update((d) => {
+        const items = [...d.items];
+        items.splice(Math.min(at, items.length), 0, it);
+        return { ...d, items };
+      }),
+    });
+  };
+  const removeLine = (kind: "fees" | "discounts", l: DraftLine) => {
+    const at = o[kind].findIndex((x) => x.id === l.id);
+    update((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== l.id) }));
+    setRemoved({
+      label: l.label.trim() || (kind === "fees" ? "Fee" : "Discount"),
+      restore: () => update((d) => {
+        const list = [...d[kind]];
+        list.splice(Math.min(at, list.length), 0, l);
+        return { ...d, [kind]: list };
+      }),
+    });
+  };
+  const addLine = (kind: "fees" | "discounts") =>
+    update((d) => ({ ...d, acceptItemsTotal: false, [kind]: [...d[kind], { id: Math.random().toString(36).slice(2), label: "", amount: 0 }] }));
+  const addItem = () =>
+    update((d) => ({
+      ...d,
+      items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], doubtful: false }],
+    }));
+
   return (
-    <div className={`rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] overflow-hidden ${o.skipped ? "opacity-60" : ""}`}>
+    <div
+      className={`rounded-[20px] border-2 shadow-[var(--shadow-card)] overflow-hidden transition-colors duration-300 ${o.skipped ? "opacity-60" : ""}`}
+      style={{ borderColor: look.border, background: look.bg }}
+    >
       <button onClick={() => setOpen((v) => !v)} className="w-full p-4 flex items-center gap-3 text-left">
+        {look.Icon && (
+          <span className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white" style={{ background: look.color }} aria-hidden>
+            <look.Icon size={18} strokeWidth={2.6} />
+          </span>
+        )}
         <div className="flex-1 min-w-0">
           <div className="font-bold text-[15px] truncate">{o.title?.trim() || orderTitle(o)}</div>
           <div className="text-[12px] text-[var(--text-secondary)] flex items-center gap-2">
@@ -968,6 +1022,20 @@ function OrderCard({
 
       {open && !o.settleWith && (
         <div className="border-t border-[var(--hairline)]">
+          {!o.skipped && !o.alreadyAdded && (
+            <StatusPanel
+              o={o}
+              state={state}
+              canJoin={others.length > 0}
+              onUseBill={() => update(adjustToBillTotal)}
+              onKeep={() => update((d) => ({ ...d, acceptItemsTotal: true }))}
+              onUndoKeep={() => update((d) => ({ ...d, acceptItemsTotal: false }))}
+              onAddItem={addItem}
+              onAddFee={() => addLine("fees")}
+              onAddDiscount={() => addLine("discounts")}
+              onSetBill={(n) => update((d) => ({ ...d, grandTotal: n }))}
+            />
+          )}
           {/* Name of the order, as it shows in the group */}
           <label className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-[12px] bg-[var(--paper-dim)] focus-within:ring-2 focus-within:ring-[var(--accent-subtle)]">
             <Pencil size={13} className="text-[var(--text-muted)] flex-shrink-0" />
@@ -1007,14 +1075,9 @@ function OrderCard({
 
           {/* Join by hand: e.g. the middle screenshot of a long order is missing, so nothing overlapped. */}
           {others.length > 0 && !o.alreadyAdded && (
-            <div className={`mx-4 mb-3 rounded-[12px] ${partial ? "p-3 bg-[var(--accent-subtle)]" : ""}`}>
-              {partial && (
-                <p className="text-[12px] mb-2">
-                  <b>Looks like part of an order.</b> {draftTotals(o).status === "no_total" ? "No bill total on these screenshots." : "Items fall short of the bill."} If another card is the rest of it, join them.
-                </p>
-              )}
-              <label className={`relative flex items-center gap-2 h-9 px-3 rounded-full border text-[12px] font-bold ${
-                partial ? "bg-[var(--paper)] border-[var(--accent)] text-[var(--accent)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"
+            <div className="mx-4 mb-3">
+              <label className={`relative flex items-center gap-2 h-10 px-3.5 rounded-full border-2 text-[12.5px] font-bold bg-[var(--paper)] ${
+                partial ? "border-[var(--warn)] text-[var(--warn)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"
               }`}>
                 <ShoppingBag size={14} /> Same order as…
                 <ChevronDown size={14} className="ml-auto" />
@@ -1053,53 +1116,32 @@ function OrderCard({
                     onJustMe={() => setItem(it.id, (i) => ({ ...i, sharedBy: [me] }))}
                     onEveryone={() => setItem(it.id, (i) => ({ ...i, sharedBy: [...everyone] }))}
                     onEdit={(patch) => setItem(it.id, (i) => ({ ...i, ...patch, ...(patch.name !== undefined && patch.name !== i.name ? { short: null } : {}) }))}
-                    onDelete={() => update((d) => ({ ...d, items: d.items.filter((i) => i.id !== it.id) }))}
+                    onDelete={() => removeItem(it)}
                   />
                 ))}
               </div>
               <div className="flex border-t border-[var(--hairline)] divide-x divide-[var(--hairline)]">
-                <button
-                  onClick={() =>
-                    update((d) => ({
-                      ...d,
-                      items: [...d.items, { id: Math.random().toString(36).slice(2), name: "", variant: null, qty: 1, lineTotal: 0, sharedBy: [...everyone], doubtful: false }],
-                    }))
-                  }
-                  className="flex-1 py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1"
-                >
+                <button onClick={addItem} className="flex-1 py-3 text-[12.5px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1">
                   <Plus size={14} /> Add item
                 </button>
-                <button
-                  onClick={() => update((d) => ({ ...d, fees: [...d.fees, { id: Math.random().toString(36).slice(2), label: "", amount: 0 }] }))}
-                  className="flex-1 py-2.5 text-[12px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1"
-                >
+                <button onClick={() => addLine("fees")} className="flex-1 py-3 text-[12.5px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1">
                   <Plus size={14} /> Add fee
+                </button>
+                <button onClick={() => addLine("discounts")} className="flex-1 py-3 text-[12.5px] font-bold text-[var(--text-secondary)] flex items-center justify-center gap-1">
+                  <Plus size={14} /> Discount
                 </button>
               </div>
 
-              <BillLines o={o} update={update} />
+              <BillLines o={o} update={update} onRemove={removeLine} />
 
               {/* Totals proof + fix */}
-              <div className="px-4 py-3 bg-[var(--paper-dim)] text-[12px] space-y-2">
+              <div className="px-4 py-3 bg-[color-mix(in_srgb,var(--text-primary)_4%,transparent)] text-[12px] space-y-2">
                 <div className="tabular-nums text-[var(--text-secondary)]">
                   items {formatINR(t.itemsTotal)}
                   {t.feesTotal > 0 && <> + fees {formatINR(t.feesTotal)}</>}
                   {t.discountsTotal > 0 && <> − discounts {formatINR(t.discountsTotal)}</>} = <b className="text-[var(--text-primary)]">{formatINR(t.computed)}</b>
                   {o.grandTotal !== null && <> · bill {formatINR(o.grandTotal)} {t.status === "ok" ? "✓" : ""}</>}
                 </div>
-                {t.status === "mismatch" && !o.acceptItemsTotal && (
-                  <div className="flex gap-2">
-                    <button onClick={() => update(adjustToBillTotal)} className="flex-1 py-2 rounded-[10px] bg-[var(--accent)] text-white font-bold">
-                      Use bill total {formatINR(o.grandTotal!)}
-                    </button>
-                    <button onClick={() => update((d) => ({ ...d, acceptItemsTotal: true }))} className="flex-1 py-2 rounded-[10px] bg-[var(--paper)] border border-[var(--hairline)] font-bold">
-                      Keep {formatINR(t.computed)}
-                    </button>
-                  </div>
-                )}
-                {t.status === "mismatch" && !o.acceptItemsTotal && (
-                  <div className="text-[var(--text-secondary)]">Or fix the highlighted prices above.</div>
-                )}
                 <div className="flex gap-2 items-center">
                   <label className="flex-1 flex items-center gap-1.5">
                     <span className="text-[var(--text-secondary)]">Paid by</span>
@@ -1131,6 +1173,147 @@ function OrderCard({
           )}
         </div>
       )}
+      <AnimatePresence>
+        {removed && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            className="fixed left-4 right-4 bottom-32 z-40 max-w-md mx-auto flex items-center gap-3 pl-4 pr-2 py-2 rounded-[14px] bg-[var(--text-primary)] text-[var(--paper)] shadow-xl"
+            role="status"
+          >
+            <Trash2 size={15} className="flex-shrink-0 opacity-70" />
+            <span className="flex-1 min-w-0 text-[13px] font-semibold truncate">Removed &ldquo;{removed.label}&rdquo;</span>
+            <button
+              onClick={() => { removed.restore(); setRemoved(null); }}
+              className="h-9 px-4 rounded-[10px] bg-[var(--accent)] text-white text-[13px] font-extrabold flex items-center gap-1.5"
+            >
+              <RotateCcw size={14} /> Undo
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** How each card looks: green when it adds up, rose when it needs a look, blue when it can't be checked. */
+const CARD_LOOK: Record<CardState, { color: string; border: string; bg: string; Icon: typeof Check | null }> = {
+  ok:       { color: "var(--positive)", border: "color-mix(in srgb, var(--positive) 55%, transparent)", bg: "color-mix(in srgb, var(--positive) 9%, var(--paper))", Icon: Check },
+  accepted: { color: "var(--positive)", border: "color-mix(in srgb, var(--positive) 40%, transparent)", bg: "color-mix(in srgb, var(--positive) 6%, var(--paper))", Icon: Check },
+  short:    { color: "var(--warn)", border: "color-mix(in srgb, var(--warn) 55%, transparent)", bg: "color-mix(in srgb, var(--warn) 7%, var(--paper))", Icon: AlertTriangle },
+  over:     { color: "var(--warn)", border: "color-mix(in srgb, var(--warn) 55%, transparent)", bg: "color-mix(in srgb, var(--warn) 7%, var(--paper))", Icon: AlertTriangle },
+  unknown:  { color: "var(--info)", border: "color-mix(in srgb, var(--info) 45%, transparent)", bg: "color-mix(in srgb, var(--info) 6%, var(--paper))", Icon: HelpCircle },
+  empty:    { color: "var(--negative)", border: "color-mix(in srgb, var(--negative) 45%, transparent)", bg: "var(--paper)", Icon: AlertTriangle },
+  skipped:  { color: "var(--text-muted)", border: "var(--hairline)", bg: "var(--paper)", Icon: null },
+};
+
+/**
+ * What the card's colour means and what to do about it. Green: nothing to do. Rose: the
+ * items don't come to the bill, with the likely reasons and one-tap fixes. Blue: no bill
+ * total was read, so type it in (or carry on with the items total).
+ */
+function StatusPanel({
+  o, state, canJoin, onUseBill, onKeep, onUndoKeep, onAddItem, onAddFee, onAddDiscount, onSetBill,
+}: {
+  o: DraftOrder;
+  state: CardState;
+  canJoin: boolean;
+  onUseBill: () => void;
+  onKeep: () => void;
+  onUndoKeep: () => void;
+  onAddItem: () => void;
+  onAddFee: () => void;
+  onAddDiscount: () => void;
+  onSetBill: (n: number | null) => void;
+}) {
+  const t = draftTotals(o);
+  const [bill, setBill] = useState("");
+  const box = "mx-4 mb-1 rounded-[14px] p-3 text-[12.5px]";
+  const chip = "h-10 px-3 rounded-[11px] text-[12.5px] font-bold flex items-center justify-center gap-1.5 border-2";
+
+  if (state === "ok") {
+    return (
+      <p className="mx-4 mb-1 text-[12.5px] font-semibold flex items-center gap-1.5 text-[var(--positive)]">
+        <Check size={14} strokeWidth={3} /> Items, fees and discounts come to the bill total of {formatINR(o.grandTotal!)}.
+      </p>
+    );
+  }
+  if (state === "accepted") {
+    return (
+      <div className="mx-4 mb-1 flex items-center justify-between gap-2 text-[12.5px] text-[var(--text-secondary)]">
+        <span>Going with the items total {formatINR(t.computed)} (bill said {formatINR(o.grandTotal!)}).</span>
+        <button onClick={onUndoKeep} className="font-bold text-[var(--accent)] flex-shrink-0">Change</button>
+      </div>
+    );
+  }
+  if (state === "unknown") {
+    const n = parseFloat(bill);
+    return (
+      <div className={box} style={{ background: "color-mix(in srgb, var(--info) 10%, var(--paper))" }}>
+        <p className="font-bold text-[var(--info)]">No bill total on these screenshots</p>
+        <p className="mt-0.5 text-[var(--text-secondary)]">So we can&rsquo;t check the items add up. Type the total from the bill, or carry on with {formatINR(t.computed)}.</p>
+        <form
+          className="mt-2.5 flex gap-2"
+          onSubmit={(e) => { e.preventDefault(); if (n > 0) onSetBill(Math.round(n * 100) / 100); }}
+        >
+          <label className="flex-1 h-11 flex items-center gap-1 px-3 rounded-[11px] bg-[var(--paper)] border-2 border-[var(--hairline)] focus-within:border-[var(--info)]">
+            <span className="text-[var(--text-muted)] font-bold">₹</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={bill}
+              onChange={(e) => setBill(e.target.value)}
+              placeholder="Bill total"
+              className="flex-1 min-w-0 bg-transparent text-[16px] font-bold tabular-nums outline-none"
+              aria-label="Bill total"
+            />
+          </label>
+          <button type="submit" disabled={!(n > 0)} className="h-11 px-4 rounded-[11px] bg-[var(--info)] text-white font-bold text-[13px] disabled:opacity-40">Check</button>
+        </form>
+      </div>
+    );
+  }
+  if (state !== "short" && state !== "over") return null;
+
+  const diff = Math.abs(t.difference!);
+  const reasons = mismatchReasons(o, canJoin);
+  return (
+    <div className={box} style={{ background: "color-mix(in srgb, var(--warn) 9%, var(--paper))" }}>
+      <p className="font-extrabold text-[13.5px] text-[var(--warn)]">
+        {state === "short" ? `Items are ${formatINR(diff)} short of the bill` : `Items are ${formatINR(diff)} more than the bill`}
+      </p>
+      <p className="mt-0.5 text-[var(--text-secondary)] tabular-nums">
+        Read {formatINR(t.computed)} · bill says {formatINR(o.grandTotal!)}
+      </p>
+      <p className="mt-2.5 text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Usually one of these</p>
+      <ul className="mt-1 space-y-1.5">
+        {reasons.map((r) => (
+          <li key={r} className="flex gap-2 leading-snug">
+            <span className="mt-[7px] w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "var(--warn)" }} aria-hidden />
+            <span>{r}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {state === "short" ? (
+          <>
+            <button onClick={onAddItem} className={`${chip} bg-[var(--paper)] border-[var(--hairline)]`}><Plus size={14} /> Missing item</button>
+            <button onClick={onAddFee} className={`${chip} bg-[var(--paper)] border-[var(--hairline)]`}><Plus size={14} /> Fee or tip</button>
+          </>
+        ) : (
+          <>
+            <button onClick={onAddDiscount} className={`${chip} bg-[var(--paper)] border-[var(--hairline)]`}><Percent size={14} /> Add discount</button>
+            <button onClick={onAddItem} className={`${chip} bg-[var(--paper)] border-[var(--hairline)]`}><Plus size={14} /> Add item</button>
+          </>
+        )}
+      </div>
+      <p className="mt-3 text-[11.5px] text-[var(--text-secondary)]">Checked and it&rsquo;s fine?</p>
+      <div className="mt-1.5 grid grid-cols-2 gap-2">
+        <button onClick={onUseBill} className={`${chip} bg-[var(--warn)] border-transparent text-white`}>Use bill {formatINR(o.grandTotal!)}</button>
+        <button onClick={onKeep} className={`${chip} bg-[var(--paper)] border-[var(--hairline)]`}>Keep {formatINR(t.computed)}</button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">&ldquo;Use bill&rdquo; adds a visible adjustment line for the difference, split like the fees.</p>
     </div>
   );
 }
@@ -1196,29 +1379,54 @@ function ItemRow({
   return (
     <div
       onClick={onTap}
-      className={`px-4 py-3 ${onTap ? "cursor-pointer active:bg-[var(--paper-dim)]" : ""} ${nobody ? "bg-[var(--accent-subtle)]" : "bg-[var(--paper)]"}`}
+      className={`px-4 py-3 ${onTap ? "cursor-pointer active:bg-[var(--paper-dim)]" : ""} ${nobody ? "bg-[var(--accent-subtle)]" : ""}`}
     >
       <div className="flex items-start gap-2">
         {editing ? (
-          <div className="flex-1 flex gap-2" onClick={(e) => e.stopPropagation()}>
+          <form
+            className="flex-1 min-w-0 space-y-2"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => { e.preventDefault(); if (it.name.trim()) setEditing(false); }}
+          >
             <input
               autoFocus={it.name === ""}
               value={it.name}
               onChange={(e) => onEdit({ name: e.target.value })}
               placeholder="Item name"
-              className="flex-1 min-w-0 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-semibold outline-none"
+              aria-label="Item name"
+              className="w-full h-11 bg-[var(--paper-dim)] rounded-[12px] px-3 text-[16px] font-semibold outline-none border-2 border-transparent focus:border-[var(--accent)]"
             />
-            <input
-              type="number"
-              inputMode="decimal"
-              value={it.lineTotal || ""}
-              onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), doubtful: false })}
-              placeholder="₹"
-              className="w-20 bg-[var(--paper-dim)] rounded-[8px] px-2 py-1 text-[14px] font-bold text-right tabular-nums outline-none"
-            />
-            <button onClick={() => setEditing(false)} disabled={!it.name.trim()} className="p-1 text-[var(--positive)] disabled:opacity-30" aria-label="Done"><Check size={18} /></button>
-            <button onClick={onDelete} className="p-1 text-[var(--text-muted)]" aria-label="Delete item"><Trash2 size={16} /></button>
-          </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onDelete}
+                className="h-11 px-3 rounded-[12px] bg-[var(--negative)]/10 text-[var(--negative)] text-[13px] font-bold flex items-center gap-1.5 flex-shrink-0"
+              >
+                <Trash2 size={16} /> Remove
+              </button>
+              <label className="flex-1 min-w-0 h-11 flex items-center gap-1 px-3 rounded-[12px] bg-[var(--paper-dim)] border-2 border-transparent focus-within:border-[var(--accent)]">
+                <span className="text-[var(--text-muted)] font-bold">₹</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  autoFocus={it.name !== ""}
+                  onFocus={(e) => e.currentTarget.select()}
+                  value={it.lineTotal || ""}
+                  onChange={(e) => onEdit({ lineTotal: Math.max(0, parseFloat(e.target.value) || 0), doubtful: false })}
+                  placeholder="0"
+                  aria-label="Price"
+                  className="flex-1 min-w-0 bg-transparent text-[17px] font-extrabold text-right tabular-nums outline-none"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={!it.name.trim()}
+                className="h-11 px-4 rounded-[12px] bg-[var(--positive)] text-white text-[13px] font-extrabold flex items-center gap-1.5 flex-shrink-0 disabled:opacity-40"
+              >
+                <Check size={17} strokeWidth={3} /> Done
+              </button>
+            </div>
+          </form>
         ) : (
           <>
             <div className="flex-1 min-w-0">
@@ -1229,10 +1437,14 @@ function ItemRow({
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-              className={`text-[14px] font-bold tabular-nums px-1 rounded ${it.doubtful ? "text-[var(--accent)] underline decoration-dotted" : ""}`}
-              title={it.doubtful ? "The AI was unsure of this row — please check it against the screenshot" : "Edit"}
+              className={`min-h-10 -my-1 px-2.5 rounded-[11px] flex items-center gap-1.5 text-[14.5px] font-extrabold tabular-nums border-2 flex-shrink-0 ${
+                it.doubtful ? "border-[var(--warn)] text-[var(--warn)] bg-[var(--paper)]" : "border-transparent bg-[var(--paper-dim)]"
+              }`}
+              aria-label={`${it.doubtful ? "Check the price of" : "Edit"} ${it.name || "item"}, ${formatINR(it.lineTotal)}`}
             >
+              {it.doubtful && <AlertTriangle size={13} />}
               {formatINR(it.lineTotal)}
+              {!it.doubtful && <Pencil size={12} className="text-[var(--text-muted)]" />}
             </button>
           </>
         )}
@@ -1254,34 +1466,45 @@ function ItemRow({
   );
 }
 
-function BillLines({ o, update }: { o: DraftOrder; update: (fn: (o: DraftOrder) => DraftOrder) => void }) {
+function BillLines({ o, update, onRemove }: {
+  o: DraftOrder;
+  update: (fn: (o: DraftOrder) => DraftOrder) => void;
+  onRemove: (kind: "fees" | "discounts", l: DraftLine) => void;
+}) {
   if (o.fees.length === 0 && o.discounts.length === 0) return null;
-  const row = (kind: "fees" | "discounts", l: { id: string; label: string; amount: number }) => (
-    <div key={l.id} className="flex items-center gap-2 text-[12px]">
+  const row = (kind: "fees" | "discounts", l: DraftLine) => (
+    <div key={l.id} className="flex items-center gap-2 text-[13px]">
       <input
         value={l.label}
+        autoFocus={l.label === "" && l.amount === 0}
         onChange={(e) => update((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === l.id ? { ...x, label: e.target.value } : x)) }))}
-        placeholder={kind === "fees" ? "Fee name (e.g. Handling charge)" : "Discount name"}
-        className="flex-1 min-w-0 bg-transparent text-[var(--text-secondary)] outline-none"
+        placeholder={kind === "fees" ? "Fee name (e.g. Delivery)" : "Discount name"}
+        aria-label={kind === "fees" ? "Fee name" : "Discount name"}
+        className="flex-1 min-w-0 h-10 px-3 rounded-[11px] bg-[var(--paper-dim)] text-[15px] text-[var(--text-secondary)] outline-none border-2 border-transparent focus:border-[var(--accent)]"
       />
-      <span className="text-[var(--text-muted)]">{kind === "discounts" ? "−₹" : "₹"}</span>
-      <input
-        type="number"
-        inputMode="decimal"
-        value={l.amount || ""}
-        onChange={(e) => {
-          const amount = Math.max(0, parseFloat(e.target.value) || 0);
-          update((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === l.id ? { ...x, amount } : x)) }));
-        }}
-        className="w-16 bg-transparent text-right font-bold tabular-nums outline-none"
-      />
-      <button onClick={() => update((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== l.id) }))} className="p-1 text-[var(--text-muted)]" aria-label="Remove">
-        <X size={14} />
+      <label className="w-[104px] h-10 flex items-center gap-1 px-2.5 rounded-[11px] bg-[var(--paper-dim)] border-2 border-transparent focus-within:border-[var(--accent)] flex-shrink-0">
+        <span className="text-[var(--text-muted)] font-bold">{kind === "discounts" ? "−₹" : "₹"}</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={l.amount || ""}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => {
+            const amount = Math.max(0, parseFloat(e.target.value) || 0);
+            update((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === l.id ? { ...x, amount } : x)) }));
+          }}
+          placeholder="0"
+          aria-label="Amount"
+          className="flex-1 min-w-0 bg-transparent text-right text-[16px] font-bold tabular-nums outline-none"
+        />
+      </label>
+      <button onClick={() => onRemove(kind, l)} className="w-10 h-10 rounded-[11px] flex items-center justify-center text-[var(--negative)] bg-[var(--negative)]/10 flex-shrink-0" aria-label={`Remove ${l.label || (kind === "fees" ? "fee" : "discount")}`}>
+        <Trash2 size={15} />
       </button>
     </div>
   );
   return (
-    <div className="px-4 py-2 space-y-1 border-t border-[var(--hairline)]">
+    <div className="px-4 py-3 space-y-2 border-t border-[var(--hairline)]">
       {o.fees.map((l) => row("fees", l))}
       {o.discounts.map((l) => row("discounts", l))}
     </div>
