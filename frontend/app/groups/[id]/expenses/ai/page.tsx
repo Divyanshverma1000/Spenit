@@ -1,8 +1,7 @@
 "use client";
 
 import { API_URL } from "@/lib/api";
-import { fileToCompressedDataUrl } from "@/lib/image";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -40,10 +39,8 @@ export default function AIExpensePage() {
   const [groupName, setGroupName] = useState("");
   const [text, setText] = useState("");
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptToast, setReceiptToast] = useState(false);
   const [successToast, setSuccessToast] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const ai = useAIExpense();
 
@@ -88,21 +85,6 @@ export default function AIExpensePage() {
       setTimeout(() => router.push(`/groups/${groupId}`), 1500);
     }
   }, [ai.state, groupId, router]);
-
-  function handleReceiptChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    // Shrink the photo in the browser first: faster on weak networks, under the upload limit.
-    fileToCompressedDataUrl(file).then(async (base64) => {
-      if (base64 && groupId) {
-        setReceiptFile(file);
-        setReceiptToast(true);
-        setTimeout(() => setReceiptToast(false), 2500);
-        await ai.parseReceipt([base64], groupId);
-      }
-    });
-  }
 
   async function handleParse() {
     if (!text.trim() || ai.state === "parsing") return;
@@ -198,15 +180,15 @@ export default function AIExpensePage() {
                     </button>
                   )}
 
+                  {/* Pictures go to the scanner: items, taxes and fees read properly, split item by item. */}
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => router.push(`/groups/${groupId}/import`)}
                     className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-sm)]"
                   >
                     <Camera className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    Receipt
+                    Scan a bill
                   </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReceiptChange} />
 
                   <button
                     type="button"

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, ChevronLeft, ChevronRight, CornerDownLeft, Loader2, Plus, Sparkles, Target, Users } from "lucide-react";
+import { ArrowRight, Camera, ChevronLeft, ChevronRight, CornerDownLeft, Loader2, Plus, Sparkles, Target, Users } from "lucide-react";
 import { parseQuickAdd, type QuickEntry } from "@/lib/quickAdd";
 import { budgetPace, dayOf, dayTitle, inr, metaFor, monthLabel, shiftMonth, type SpendEntry, type SpendingOverview } from "@/lib/spending";
 
@@ -28,8 +28,11 @@ const whenLabel = (daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 
  * of group bills appears next to what you logged yourself.
  */
 export function SpendingView({
-  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, onAsk, quickBusy,
+  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, onAsk, onScan, scanning = false, quickBusy,
 }: {
+  /** read a bill or payment picture into a prefilled entry */
+  onScan?: () => void;
+  scanning?: boolean;
   onAsk: () => void;
   o: SpendingOverview | undefined;
   month: string;
@@ -147,6 +150,17 @@ export function SpendingView({
             enterKeyHint="done"
             className="flex-1 min-w-0 bg-transparent py-2 text-[15px] font-medium text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
           />
+          {onScan && !text.trim() && (
+            <button
+              type="button"
+              onClick={onScan}
+              disabled={scanning}
+              className="h-10 w-10 rounded-[14px] bg-[var(--paper-dim)] text-[var(--text-secondary)] flex items-center justify-center"
+              aria-label="Scan a bill or payment"
+            >
+              {scanning ? <Loader2 size={17} className="animate-spin" /> : <Camera size={18} />}
+            </button>
+          )}
           <button
             type="submit"
             disabled={!parsed || quickBusy}

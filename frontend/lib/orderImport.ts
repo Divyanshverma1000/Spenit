@@ -14,7 +14,16 @@ export type Platform =
 export type FeePolicy = "proportional" | "equal" | "payer";
 
 /** What /ai/extract-order returns for one screenshot (mirrors backend lib/orderExtract). */
+export type SpendKind = "order" | "receipt" | "payment";
+
 export interface ExtractedOrder {
+  /** an app order, a photo of a printed bill, or one payment / booking with no items */
+  kind?: SpendKind;
+  merchant?: string | null;
+  /** payments: who the money went to */
+  payee?: string | null;
+  payApp?: string | null;
+  category?: string | null;
   platform: Platform;
   orderId: string | null;
   orderDate: string | null;
@@ -81,6 +90,15 @@ export interface DraftLine {
 
 export interface DraftOrder {
   id: string;
+  kind?: SpendKind;
+  merchant?: string | null;
+  payee?: string | null;
+  payApp?: string | null;
+  category?: string | null;
+  /** a payment to someone in the group: save it as a settle-up to them, not as a bill */
+  settleWith?: string | null;
+  /** the group member the payee looks like, if any (offered as "paying them back") */
+  payeeMember?: string | null;
   /** a name the user typed for this order; empty = "Blinkit · 5 Nov order" */
   title?: string;
   platform: Platform;
@@ -160,6 +178,11 @@ function mergeGroup(parts: Piece[]): ExtractedOrder {
   const orders = sorted.map((p) => p.order);
   const conf = orders.some((o) => o.confidence === "low") ? "low" : orders.some((o) => o.confidence === "medium") ? "medium" : "high";
   return {
+    kind: orders.some((o) => (o.kind ?? "order") === "order") ? "order" : orders.some((o) => o.kind === "receipt") ? "receipt" : "payment",
+    merchant: first((o) => o.merchant ?? null),
+    payee: first((o) => o.payee ?? null),
+    payApp: first((o) => o.payApp ?? null),
+    category: first((o) => o.category ?? null),
     platform: orders.find((o) => o.platform !== "other")?.platform ?? "other",
     orderId: first((o) => o.orderId),
     orderDate: first((o) => o.orderDate),
@@ -275,6 +298,7 @@ export function itemCountCheck(o: Pick<ExtractedOrder, "itemCount" | "items">): 
 /** An order can be saved once its totals add up, or the user accepted the items total. */
 export function isReady(o: DraftOrder): boolean {
   if (o.skipped) return true;
+  if (o.settleWith) return (o.grandTotal ?? draftTotals(o).computed) > 0;
   const t = draftTotals(o);
   if (t.status === "no_items") return false;
   if (t.computed <= 0) return false;
@@ -328,13 +352,39 @@ export function netForMe(orders: DraftOrder[], me: string) {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-export function toDraft(order: ExtractedOrder, sources: number[], me: string, everyone: string[]): DraftOrder {
+/** The group member a payee name points to ("Suryansh Kumar" → Suryansh), never yourself. */
+export function matchMember(payee: string | null | undefined, members: { id: string; name: string }[], me: string): string | null {
+  if (!payee) return null;
+  const words = (x: string) => normName(x).split(" ").filter((w) => w.length >= 3);
+  const p = words(payee);
+  if (p.length === 0) return null;
+  const hits = members.filter((m) => m.id !== me && words(m.name).some((w) => p.includes(w)));
+  return hits.length === 1 ? hits[0].id : null;
+}
+
+export function toDraft(
+  order: ExtractedOrder, sources: number[], me: string, everyone: string[], members: { id: string; name: string }[] = []
+): DraftOrder {
+  const kind: SpendKind = order.kind ?? (order.items.length === 0 && order.grandTotal !== null ? "payment" : "order");
+  // A payment has no item list: it becomes one line, shared by everyone until changed.
+  const items = kind === "payment" && order.items.length === 0 && order.grandTotal
+    ? [{ name: order.payee || order.merchant || "Payment", short: null, variant: null, qty: 1, lineTotal: order.grandTotal, mrp: null }]
+    : order.items;
+  const payeeMember = kind === "payment" ? matchMember(order.payee, members, me) : null;
   return {
     id: uid(),
+    kind,
+    merchant: order.merchant ?? null,
+    payee: order.payee ?? null,
+    payApp: order.payApp ?? null,
+    category: order.category ?? null,
+    payeeMember,
+    // Money sent to someone in the group is most likely paying them back.
+    settleWith: payeeMember,
     platform: order.platform,
     orderId: order.orderId,
     orderDate: order.orderDate,
-    items: order.items.map((i) => ({
+    items: items.map((i) => ({
       id: uid(),
       name: i.name,
       short: i.short ?? null,
@@ -411,6 +461,7 @@ export function adjustToBillTotal(o: DraftOrder): DraftOrder {
  */
 export function draftFromExpense(e: {
   description?: string;
+  category?: string | null;
   amount: string | number;
   receiptData?: unknown;
   payers: { userId: string }[];
@@ -424,9 +475,16 @@ export function draftFromExpense(e: {
     (Array.isArray(v) ? (v as Record<string, unknown>[]) : []).map((x) => ({ id: uid(), label: String(x.label ?? ""), amount: n(x.amount) }));
   const platform = typeof r.platform === "string" && r.platform in PLATFORM_LABEL ? (r.platform as Platform) : "other";
   const billTotal = r.billTotal === null || r.billTotal === undefined ? null : n(r.billTotal);
+  const kind = r.kind === "receipt" || r.kind === "payment" ? r.kind : "order";
+  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
   return {
     id: uid(),
     title: e.description ?? "",
+    kind,
+    merchant: text(r.merchant),
+    payee: text(r.payee),
+    payApp: text(r.payApp),
+    category: e.category ?? null, // editing keeps the bill's category
     platform,
     orderId: typeof r.orderId === "string" ? r.orderId : null,
     orderDate: typeof r.orderDate === "string" ? r.orderDate : null,
@@ -453,28 +511,36 @@ export function draftFromExpense(e: {
   };
 }
 
-export function orderTitle(o: Pick<DraftOrder, "platform" | "orderDate">): string {
+export function orderTitle(o: Pick<DraftOrder, "platform" | "orderDate"> & { kind?: SpendKind; merchant?: string | null; payee?: string | null }): string {
   const date = o.orderDate
     ? new Date(o.orderDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })
     : null;
-  return date ? `${PLATFORM_LABEL[o.platform]} · ${date}` : PLATFORM_LABEL[o.platform];
+  const name =
+    o.platform !== "other" ? PLATFORM_LABEL[o.platform]
+    : o.merchant || o.payee || (o.kind === "payment" ? "Payment" : o.kind === "receipt" ? "Bill" : PLATFORM_LABEL.other);
+  return date ? `${name} · ${date}` : name;
 }
 
 export function toExpenseBody(o: DraftOrder) {
   const t = draftTotals(o);
   return {
-    description: o.title?.trim() || `${orderTitle(o)} order`,
+    description: o.title?.trim() || ((o.kind ?? "order") === "order" ? `${orderTitle(o)} order` : orderTitle(o)),
     amount: t.computed,
     currency: "INR",
     splitType: "itemized" as const,
     category:
       o.platform === "swiggy" || o.platform === "zomato" ? "Food"
       : o.platform === "amazon" || o.platform === "flipkart" ? "Shopping"
-      : "Groceries", // Blinkit, Zepto, Instamart, BigBasket, JioMart, DMart
+      : o.platform !== "other" ? "Groceries" // Blinkit, Zepto, Instamart, BigBasket, JioMart, DMart
+      : o.category || "Misc", // printed bills and payments: what the reader saw
     payers: [{ userId: o.payerId, amountPaid: t.computed }],
     participants: [],
     receiptData: {
       source: "order_import",
+      kind: o.kind ?? "order",
+      ...(o.merchant ? { merchant: o.merchant } : {}),
+      ...(o.payee ? { payee: o.payee } : {}),
+      ...(o.payApp ? { payApp: o.payApp } : {}),
       platform: o.platform,
       orderId: o.orderId,
       orderKey: orderKey(o),

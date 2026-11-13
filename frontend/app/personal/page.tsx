@@ -13,6 +13,12 @@ import GroupChat from "@/components/GroupChat";
 import { useQueryClient } from "@tanstack/react-query";
 import { dayStart, type QuickEntry } from "@/lib/quickAdd";
 import { inr, useSpending, useSpendingActions, type SpendEntry } from "@/lib/spending";
+import { useAuth } from "@/context/AuthContext";
+import { readJson } from "@/lib/api";
+import { fileToCompressedDataUrl } from "@/lib/image";
+import { guessCategory, CATEGORIES, type Category } from "@/lib/quickAdd";
+import { PLATFORM_LABEL, type ExtractResponse } from "@/lib/orderImport";
+import { Camera, ImagePlus, X } from "lucide-react";
 
 const thisMonth = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
 
@@ -46,6 +52,40 @@ function SpendingPage() {
   const [askOpen, setAskOpen] = useState(false);
   const queryClient = useQueryClient();
   const [quickBusy, setQuickBusy] = useState(false);
+  const { authFetch } = useAuth();
+  const [scanning, setScanning] = useState(false);
+  // Home → Scan bill → "Just me" lands here: ask how (opening the camera needs a tap).
+  const [scanAsk, setScanAsk] = useState(() => !!params?.get("scan"));
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+
+  /** Read a bill / receipt / payment picture and open the add sheet filled in. */
+  async function scan(file: File | undefined) {
+    if (!file) return;
+    setScanAsk(false);
+    setScanning(true);
+    show({ text: "Reading the bill…" });
+    try {
+      const imageBase64 = await fileToCompressedDataUrl(file, 2000, 0.85);
+      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64 }) });
+      const data = await readJson<ExtractResponse & { fallback?: boolean; message?: string }>(res);
+      if (data.fallback || !data.order) throw new Error(data.message || "Couldn't read that picture");
+      const o = data.order;
+      const amount = o.grandTotal ?? o.itemTotal ?? o.items.reduce((a, i) => a + i.lineTotal, 0);
+      const name = o.merchant || o.payee || (o.platform !== "other" ? `${PLATFORM_LABEL[o.platform]} order` : o.items[0]?.name) || "";
+      const cat = (CATEGORIES as readonly string[]).includes(o.category ?? "") ? (o.category as Category) : guessCategory(name);
+      setToast(null);
+      setSheet({
+        mode: "add",
+        prefill: { description: name, amount: amount ? String(amount) : "", category: cat, ...(o.orderDate ? { day: o.orderDate } : {}) },
+      });
+    } catch (err) {
+      show({ text: (err as Error).message || "Couldn't read that picture. Try a clearer one or add it by hand." });
+    } finally {
+      setScanning(false);
+      if (params?.get("scan")) router.replace("/personal");
+    }
+  }
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -94,6 +134,8 @@ function SpendingPage() {
             onEdit={(entry) => setSheet({ mode: "edit", entry })}
             onBudget={() => setBudgetOpen(true)}
             onAsk={() => setAskOpen(true)}
+            onScan={() => setScanAsk(true)}
+            scanning={scanning}
             quickBusy={quickBusy}
           />
         </div>
@@ -124,6 +166,26 @@ function SpendingPage() {
               : undefined
           }
         />
+      )}
+
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { void scan(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void scan(e.target.files?.[0]); e.target.value = ""; }} />
+      {scanAsk && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40" onClick={() => { setScanAsk(false); if (params?.get("scan")) router.replace("/personal"); }}>
+          <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Scan a bill" className="w-full max-w-md bg-[var(--paper)] rounded-t-[28px] p-5 pb-[max(20px,env(safe-area-inset-bottom))]">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-bold text-[17px]">Scan a bill</p>
+                <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">A receipt, order, UPI payment, ride or ticket. You check it before it&apos;s saved.</p>
+              </div>
+              <button onClick={() => setScanAsk(false)} className="p-1.5 -mr-1.5 text-[var(--text-muted)]" aria-label="Close"><X size={20} /></button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2.5">
+              <button onClick={() => cameraRef.current?.click()} className="py-4 rounded-[16px] bg-[var(--accent)] text-white font-bold text-[15px] flex items-center justify-center gap-2"><Camera size={19} /> Take photo</button>
+              <button onClick={() => galleryRef.current?.click()} className="py-4 rounded-[16px] bg-[var(--paper-dim)] font-bold text-[15px] flex items-center justify-center gap-2"><ImagePlus size={19} /> From gallery</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {askOpen && (

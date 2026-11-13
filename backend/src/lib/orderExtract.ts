@@ -22,7 +22,7 @@ export const ORDER_PLATFORMS = [
 export type OrderPlatform = (typeof ORDER_PLATFORMS)[number];
 
 export const FEE_KINDS = [
-  "delivery", "handling", "platform", "small_cart", "packaging", "tip", "late_night", "surge", "tax", "other",
+  "delivery", "handling", "platform", "small_cart", "packaging", "tip", "late_night", "surge", "tax", "service", "round_off", "other",
 ] as const;
 export type FeeKind = (typeof FEE_KINDS)[number];
 
@@ -62,7 +62,20 @@ export interface TotalsCheck {
   itemsMatchPrinted: boolean | null;
 }
 
+export const SPEND_KINDS = ["order", "receipt", "payment"] as const;
+export type SpendKind = (typeof SPEND_KINDS)[number];
+export const SPEND_CATEGORIES = ["Food", "Groceries", "Travel", "Shopping", "Stay", "Fuel", "Medical", "Utilities", "Entertainment", "Misc"] as const;
+
 export interface ExtractedOrder {
+  /** an app order, a printed bill, or a single payment / booking with no items */
+  kind: SpendKind;
+  /** shop, restaurant or service name */
+  merchant: string | null;
+  /** payments: who the money went to */
+  payee: string | null;
+  /** payments: Google Pay, PhonePe… */
+  payApp: string | null;
+  category: (typeof SPEND_CATEGORIES)[number] | null;
   platform: OrderPlatform;
   orderId: string | null;
   orderDate: string | null; // YYYY-MM-DD
@@ -130,14 +143,18 @@ export function normalizeOrder(raw: any): ExtractedOrder {
   }
 
   const fees: ExtractedFee[] = [];
+  const discounts: ExtractedDiscount[] = [];
   for (const f of Array.isArray(raw?.fees) ? raw.fees : []) {
     const amount = toMoney(f?.amount);
     if (amount === null || amount === 0) continue; // "Free delivery ₹0" changes nothing
     const kind = String(f?.kind || "").toLowerCase() as FeeKind;
-    fees.push({ kind: (FEE_KINDS as readonly string[]).includes(kind) ? kind : "other", label: str(f?.label) || "Fee", amount });
+    const label = str(f?.label) || "Fee";
+    // A round-off that lowers the bill is a discount (toMoney drops the sign, so read it here).
+    const negative = typeof f?.amount === "number" ? f.amount < 0 : /^s*-/.test(String(f?.amount ?? ""));
+    if (negative) { discounts.push({ label, amount }); continue; }
+    fees.push({ kind: (FEE_KINDS as readonly string[]).includes(kind) ? kind : "other", label, amount });
   }
 
-  const discounts: ExtractedDiscount[] = [];
   for (const d of Array.isArray(raw?.discounts) ? raw.discounts : []) {
     const amount = toMoney(d?.amount);
     if (amount === null || amount === 0) continue;
@@ -151,7 +168,19 @@ export function normalizeOrder(raw: any): ExtractedOrder {
   const confidence = ["high", "medium", "low"].includes(raw?.confidence) ? raw.confidence : "medium";
   const grandTotal = toMoney(raw?.grandTotal);
 
+  const rawKind = String(raw?.kind || "").toLowerCase();
+  // No items but a total: a payment, whatever the model called it.
+  const kind: SpendKind = (SPEND_KINDS as readonly string[]).includes(rawKind)
+    ? (rawKind as SpendKind)
+    : items.length === 0 && grandTotal !== null ? "payment" : "order";
+  const cat = (SPEND_CATEGORIES as readonly string[]).find((c) => c.toLowerCase() === String(raw?.category || "").toLowerCase()) ?? null;
+
   return {
+    kind: kind === "payment" && items.length > 0 ? "receipt" : kind,
+    merchant: str(raw?.merchant, 60),
+    payee: str(raw?.payee, 60),
+    payApp: str(raw?.payApp, 30),
+    category: cat as ExtractedOrder["category"],
     platform: (ORDER_PLATFORMS as readonly string[]).includes(platform) ? platform : "other",
     orderId: cleanOrderId(raw?.orderId),
     orderDate: isoDate(raw?.orderDate),

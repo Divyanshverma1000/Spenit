@@ -31,6 +31,8 @@ import {
   History,
   LogOut,
   Undo2,
+  Camera,
+  Plus,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
@@ -48,6 +50,7 @@ import { ExpenseDetailModal } from "@/components/ExpenseDetailModal";
 import AvatarPicker from "@/components/AvatarPicker";
 import GroupChat from "@/components/GroupChat";
 import ClaimFixSheet from "@/components/ClaimFixSheet";
+import AddSheet from "@/components/AddSheet";
 import LeaveGroupSheet from "@/components/LeaveGroupSheet";
 import MemberAvatar, { AvatarPeople } from "@/components/ui/MemberAvatar";
 import { lookAlikes, initials } from "@/lib/avatar";
@@ -262,6 +265,7 @@ export default function GroupDetailPage() {
   }
 
   const [showLeave, setShowLeave] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   /** Leave the group; returns an error to show in the sheet, or null once left. */
   async function leaveGroup(): Promise<string | null> {
     try {
@@ -433,16 +437,13 @@ export default function GroupDetailPage() {
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>EXPENSES</SectionLabel>
             <div className="flex items-center gap-2">
-              <Link href={`/groups/${id}/expenses/new`} className="text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
-                Manual
+              <Link href={`/groups/${id}/import`} className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
+                <Camera size={14} strokeWidth={2.4} /> Scan
               </Link>
-              <Link href={`/groups/${id}/import`} className="text-[13px] font-bold text-[var(--text-secondary)] px-3 py-1.5 active:scale-95 transition-transform">
-                Import orders
-              </Link>
-              <Link href={`/groups/${id}/expenses/ai`} className="bg-[var(--accent)] text-white flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-bold rounded-[12px] shadow-[0_4px_14px_rgba(245,158,11,0.3)] active:scale-95 transition-transform">
-                <Sparkles size={14} strokeWidth={2.5} />
+              <button onClick={() => setAddOpen(true)} className="bg-[var(--accent)] text-white flex items-center gap-1.5 px-3.5 py-1.5 text-[13px] font-bold rounded-[12px] shadow-[0_4px_14px_rgba(245,158,11,0.3)] active:scale-95 transition-transform">
+                <Plus size={15} strokeWidth={2.8} />
                 Add
-              </Link>
+              </button>
             </div>
           </div>
 
@@ -465,11 +466,11 @@ export default function GroupDetailPage() {
               <EmptyState
                 type="no-expenses"
                 title="No bills yet"
-                description="Add a bill by hand, or drop order screenshots from Blinkit, Zepto or Instamart and Spenit splits them item by item."
+                description="Snap a restaurant bill, upload order screenshots or a UPI payment, and Spenit splits it item by item. Or add one by hand."
                 action={
                   <div className="mt-2 flex flex-wrap justify-center gap-2">
-                    <Link href={`/groups/${id}/expenses/new`} className="px-5 py-3 rounded-[14px] bg-[var(--accent)] text-white font-bold text-[14px]">Add a bill</Link>
-                    <Link href={`/groups/${id}/import`} className="px-5 py-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] font-bold text-[14px]">Import orders</Link>
+                    <Link href={`/groups/${id}/import`} className="px-5 py-3 rounded-[14px] bg-[var(--accent)] text-white font-bold text-[14px]">Scan or upload</Link>
+                    <button onClick={() => setAddOpen(true)} className="px-5 py-3 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] font-bold text-[14px]">Other ways</button>
                   </div>
                 }
               />
@@ -726,6 +727,8 @@ export default function GroupDetailPage() {
           )}
         </div>
       </main>
+
+      {addOpen && <AddSheet groupId={id} onClose={() => setAddOpen(false)} />}
 
       {showLeave && user && (
         <LeaveGroupSheet

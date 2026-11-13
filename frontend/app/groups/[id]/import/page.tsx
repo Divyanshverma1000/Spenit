@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Import orders — bulk quick-commerce order split (BulkOrderSplit_Plan.md §2).
+ * Scan & upload — orders, printed bills and payments, split item by item
+ * (BulkOrderSplit_Plan.md §2, CAPTURE_PLAN.md).
  *
  *   Drop → Reading (each screenshot → vision model, live cards) → Sort it out → Check → Saved
  *
@@ -14,7 +15,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Check, AlertTriangle, ChevronDown, ImagePlus, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
+  ArrowLeft, Camera, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -101,9 +102,11 @@ export default function ImportOrdersPage() {
   const [blocked, setBlocked] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [savedPaybacks, setSavedPaybacks] = useState(0);
   const [undone, setUndone] = useState(false);
   const [debug, setDebug] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const hashes = useRef(new Set<string>());
   const nextIndex = useRef(0);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
@@ -119,6 +122,8 @@ export default function ImportOrdersPage() {
     const d = editing ? draftFromExpense(editing) : null;
     // Not an imported order (or has items hidden from you): use the normal edit form.
     if (!d) { router.replace(`/groups/${groupId}/expenses/new?edit=${encodeURIComponent(editId)}`); return; }
+    // Loaded once, when the group's data arrives (not derivable during render: it becomes editable state).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDrafts([d]);
     setStep("sort");
   }, [editId, editing, overview, groupId, router]);
@@ -247,7 +252,7 @@ export default function ImportOrdersPage() {
 
   const startSorting = useCallback(async () => {
     const everyone = members.map((m) => m.id);
-    const next = liveOrders.map(({ order, sources }) => toDraft(order, sources, me, everyone));
+    const next = liveOrders.map(({ order, sources }) => toDraft(order, sources, me, everyone, members));
     const keys = next.map((d) => orderKey(d)).filter((k): k is string => !!k);
     if (keys.length > 0) {
       try {
@@ -286,13 +291,33 @@ export default function ImportOrdersPage() {
       return;
     }
     try {
-      const res = await authFetch("/expenses/batch", {
-        method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey.current },
-        body: JSON.stringify({ groupId, expenses: toSave.map(toExpenseBody) }),
-      });
-      const data = await readJson<{ expenses: { id: string }[] }>(res);
-      setSavedIds(data.expenses.map((e) => e.id));
+      // "This was me paying Suryansh back": a settle-up for them to confirm, not a bill.
+      const paybacks = toSave.filter((d) => d.settleWith);
+      for (const d of paybacks) {
+        await readJson(await authFetch("/settlements", {
+          method: "POST",
+          body: JSON.stringify({
+            groupId,
+            toUserId: d.settleWith,
+            amount: d.grandTotal ?? draftTotals(d).computed,
+            method: "upi",
+            ...(d.payerId !== me ? { fromUserId: d.payerId } : {}),
+          }),
+        }));
+      }
+      const bills = toSave.filter((d) => !d.settleWith);
+      let ids: string[] = [];
+      if (bills.length > 0) {
+        const res = await authFetch("/expenses/batch", {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey.current },
+          body: JSON.stringify({ groupId, expenses: bills.map(toExpenseBody) }),
+        });
+        const data = await readJson<{ expenses: { id: string }[] }>(res);
+        ids = data.expenses.map((e) => e.id);
+      }
+      setSavedIds(ids);
+      setSavedPaybacks(paybacks.length);
       queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
       queryClient.invalidateQueries({ queryKey: ["balance"] });
       setStep("saved");
@@ -303,7 +328,7 @@ export default function ImportOrdersPage() {
       setSaveError(msg);
       setStep("check");
     }
-  }, [authFetch, groupId, queryClient, toSave, editId, editing, router]);
+  }, [authFetch, groupId, queryClient, toSave, editId, router, me]);
 
   const undo = useCallback(async () => {
     await Promise.all(savedIds.map((id) => authFetch(`/expenses/${id}`, { method: "DELETE" }).catch(() => null)));
@@ -323,7 +348,7 @@ export default function ImportOrdersPage() {
 
   const title = editId
     ? step === "check" || step === "saving" ? "Check changes" : "Edit order"
-    : { drop: "Import orders", reading: "Reading orders", sort: "Sort it out", check: "Check", saving: "Saving", saved: "Done" }[step];
+    : { drop: "Scan & upload", reading: "Reading", sort: "Sort it out", check: "Check", saving: "Saving", saved: "Done" }[step];
 
   return (
     <div className="min-h-screen bg-[var(--ink)] text-[var(--text-primary)] pb-36">
@@ -352,11 +377,20 @@ export default function ImportOrdersPage() {
         className="hidden"
         onChange={(e) => { void addFiles(e.target.files); e.target.value = ""; }}
       />
+      {/* Opens the camera straight away (paper bills at the table) */}
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => { void addFiles(e.target.files); e.target.value = ""; }}
+      />
 
       {noKey && (
         <div className="mx-4 mt-4 p-4 rounded-[16px] bg-[var(--accent-subtle)] text-[13px]">
           <b>AI key needed.</b> Add your Groq API key in{" "}
-          <button className="underline font-bold" onClick={() => router.push("/profile")}>Profile</button> to read orders.
+          <button className="underline font-bold" onClick={() => router.push("/profile")}>Profile</button> to read bills.
         </div>
       )}
 
@@ -370,7 +404,7 @@ export default function ImportOrdersPage() {
       {step === "drop" && editId && (
         <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[var(--text-muted)]" /></div>
       )}
-      {step === "drop" && !editId && <DropStep onPick={() => fileRef.current?.click()} />}
+      {step === "drop" && !editId && <DropStep onPick={() => fileRef.current?.click()} onCamera={() => cameraRef.current?.click()} />}
 
       {step === "reading" && (
         <ReadingStep
@@ -380,6 +414,7 @@ export default function ImportOrdersPage() {
           onRetry={(p) => { setBlocked(false); void processPiece(p); }}
           onRemove={(index) => setPieces((ps) => ps.filter((p) => p.index !== index))}
           onAddMore={() => fileRef.current?.click()}
+          onCamera={() => cameraRef.current?.click()}
         />
       )}
 
@@ -394,6 +429,7 @@ export default function ImportOrdersPage() {
       {step === "saved" && (
         <SavedStep
           count={savedIds.length}
+          paybacks={savedPaybacks}
           undone={undone}
           onUndo={undo}
           onDone={() => router.push(`/groups/${groupId}`)}
@@ -423,7 +459,7 @@ export default function ImportOrdersPage() {
             onClick={() => setStep("check")}
             className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] disabled:opacity-40"
           >
-            {editId ? "Check changes" : <>Check {toSave.length} order{toSave.length === 1 ? "" : "s"}</>}
+            {editId ? "Check changes" : `Check ${toSave.length === 1 ? "it" : `all ${toSave.length}`}`}
           </button>
         </BottomBar>
       )}
@@ -434,7 +470,7 @@ export default function ImportOrdersPage() {
             onClick={() => void save()}
             className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] flex items-center justify-center gap-2 disabled:opacity-60"
           >
-            {step === "saving" ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : editId ? "Save changes" : `Add ${toSave.length} expense${toSave.length === 1 ? "" : "s"}`}
+            {step === "saving" ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : editId ? "Save changes" : `Save ${toSave.length === 1 ? "it" : `all ${toSave.length}`}`}
           </button>
         </BottomBar>
       )}
@@ -473,25 +509,40 @@ function TotalsBadge({ o }: { o: DraftOrder }) {
 
 // ── Step 1: Drop ───────────────────────────────────────────────────────────────
 
-function DropStep({ onPick }: { onPick: () => void }) {
+function DropStep({ onPick, onCamera }: { onPick: () => void; onCamera: () => void }) {
+  const kinds: [string, string][] = [
+    ["🧾", "Bills & receipts: restaurants, cafés, supermarkets"],
+    ["🛒", "Order screenshots: Blinkit, Zepto, Swiggy, Amazon…"],
+    ["💸", "UPI payments: GPay, PhonePe, Paytm"],
+    ["🚕", "Rides, tickets & bills: Uber, IRCTC, electricity…"],
+  ];
   return (
-    <main className="px-6 pt-10 flex flex-col items-center text-center max-w-md mx-auto">
-      <div className="w-24 h-24 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center mb-6">
-        <ShoppingBag size={40} />
+    <main className="px-6 pt-8 flex flex-col items-center text-center max-w-md mx-auto">
+      <div className="w-20 h-20 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center mb-5">
+        <ShoppingBag size={36} />
       </div>
-      <h2 className="text-[22px] font-extrabold mb-2">Drop in your order screenshots</h2>
-      <p className="text-[14px] text-[var(--text-secondary)] mb-8">
-        Blinkit, Zepto, Instamart, BigBasket, Swiggy… Pick as many as you like, in any order.
-        Long orders can be several screenshots — we join them.
+      <h2 className="text-[22px] font-extrabold mb-2">Scan or upload what you spent</h2>
+      <p className="text-[14px] text-[var(--text-secondary)] mb-6">
+        Any mix, as many as you like. Spenit reads each one, joins screenshots of the same order, and you tap who had what.
       </p>
-      <button onClick={onPick} className="w-full bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] flex items-center justify-center gap-2 shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform">
-        <ImagePlus size={20} /> Choose screenshots
-      </button>
-      <ul className="mt-8 text-left text-[13px] text-[var(--text-secondary)] space-y-2 w-full">
-        <li>• Open the order in the app → screenshot the item list and the bill details.</li>
-        <li>• Text is read on your phone; only the text is sent to AI.</li>
-        <li>• You&apos;ll just tap to fix who shares what.</li>
+      <div className="w-full grid grid-cols-2 gap-2.5">
+        <button onClick={onCamera} className="bg-[var(--accent)] text-white font-bold text-[15px] py-4 rounded-[16px] flex items-center justify-center gap-2 shadow-[0_8px_20px_rgba(245,158,11,0.25)] active:scale-95 transition-transform">
+          <Camera size={20} /> Take photo
+        </button>
+        <button onClick={onPick} className="bg-[var(--paper)] border border-[var(--hairline)] font-bold text-[15px] py-4 rounded-[16px] flex items-center justify-center gap-2 active:scale-95 transition-transform">
+          <ImagePlus size={20} /> From gallery
+        </button>
+      </div>
+      <ul className="mt-6 w-full space-y-2 text-left">
+        {kinds.map(([icon, text]) => (
+          <li key={text} className="flex items-center gap-3 px-3.5 py-2.5 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] text-[13px] text-[var(--text-secondary)]">
+            <span className="text-[18px]" aria-hidden>{icon}</span> {text}
+          </li>
+        ))}
       </ul>
+      <p className="mt-5 text-[12px] text-[var(--text-muted)]">
+        Pictures are sent to our AI to read them and aren&apos;t kept. A payment to someone in this group can be saved as paying them back.
+      </p>
     </main>
   );
 }
@@ -503,8 +554,9 @@ const STATUS_LABEL: Record<PieceStatus, string> = {
 };
 
 function ReadingStep({
-  pieces, liveOrders, debug, onRetry, onRemove, onAddMore,
+  pieces, liveOrders, debug, onRetry, onRemove, onAddMore, onCamera,
 }: {
+  onCamera: () => void;
   pieces: PieceState[];
   liveOrders: ReturnType<typeof joinPieces>;
   debug: boolean;
@@ -529,8 +581,11 @@ function ReadingStep({
             )}
           </div>
         ))}
-        <button onClick={onAddMore} className="w-16 h-24 flex-shrink-0 rounded-[10px] border-2 border-dashed border-[var(--border-dark)] flex items-center justify-center text-[var(--text-muted)]" aria-label="Add screenshots">
+        <button onClick={onAddMore} className="w-16 h-24 flex-shrink-0 rounded-[10px] border-2 border-dashed border-[var(--border-dark)] flex items-center justify-center text-[var(--text-muted)]" aria-label="Add from gallery">
           <Plus size={20} />
+        </button>
+        <button onClick={onCamera} className="w-16 h-24 flex-shrink-0 rounded-[10px] border-2 border-dashed border-[var(--border-dark)] flex items-center justify-center text-[var(--text-muted)]" aria-label="Take a photo">
+          <Camera size={20} />
         </button>
       </div>
 
@@ -654,7 +709,7 @@ function SortProgress({ drafts }: { drafts: DraftOrder[] }) {
   const needLook = active.filter((d) => !isReady(d)).length;
   return (
     <div className="text-[12px] text-[var(--text-secondary)] mb-2 text-center">
-      {ready} of {active.length} orders ready{needLook > 0 ? ` · ${needLook} need a look` : ""}
+      {ready} of {active.length} ready{needLook > 0 ? ` · ${needLook} need a look` : ""}
     </div>
   );
 }
@@ -787,7 +842,41 @@ function OrderCard({
         <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
+      {o.kind === "payment" && (
+        <div className="mx-4 mb-3 -mt-1 rounded-[14px] bg-[var(--paper-dim)] p-3 text-[13px]">
+          <p className="text-[var(--text-secondary)]">
+            💸 Payment{o.payApp ? ` · ${o.payApp}` : ""}{o.payee ? <> to <b className="text-[var(--text-primary)]">{o.payee}</b></> : null}
+          </p>
+          {o.payeeMember && (
+            <div className="mt-2.5 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="What was this payment?">
+              <button
+                role="radio"
+                aria-checked={!!o.settleWith}
+                onClick={() => update((d) => ({ ...d, settleWith: d.payeeMember ?? null }))}
+                className={`px-2.5 py-2 rounded-[10px] text-[12.5px] font-bold border-2 flex items-center justify-center gap-1.5 ${o.settleWith ? "border-[var(--accent)] bg-[var(--accent-subtle)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"}`}
+              >
+                <ArrowRightLeft size={13} /> Paying {firstName(members.find((m) => m.id === o.payeeMember), me)} back
+              </button>
+              <button
+                role="radio"
+                aria-checked={!o.settleWith}
+                onClick={() => update((d) => ({ ...d, settleWith: null }))}
+                className={`px-2.5 py-2 rounded-[10px] text-[12.5px] font-bold border-2 ${!o.settleWith ? "border-[var(--accent)] bg-[var(--accent-subtle)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"}`}
+              >
+                A shared bill
+              </button>
+            </div>
+          )}
+          {o.settleWith && (
+            <p className="mt-2 text-[12.5px] text-[var(--text-secondary)]">
+              Saves a <b>{formatINR(o.grandTotal ?? t.computed)}</b> payment from {firstName(members.find((m) => m.id === o.payerId), me)} to{" "}
+              {firstName(members.find((m) => m.id === o.settleWith), me)}. They confirm it in Settle Up, then balances update.
+            </p>
+          )}
+        </div>
+      )}
+
+      {open && !o.settleWith && (
         <div className="border-t border-[var(--hairline)]">
           {/* Name of the order, as it shows in the group */}
           <label className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-[12px] bg-[var(--paper-dim)] focus-within:ring-2 focus-within:ring-[var(--accent-subtle)]">
@@ -1111,7 +1200,10 @@ function BillLines({ o, update }: { o: DraftOrder; update: (fn: (o: DraftOrder) 
 
 // ── Step 4: Check ──────────────────────────────────────────────────────────────
 
-function CheckStep({ drafts, members, me, error }: { drafts: DraftOrder[]; members: GroupMember[]; me: string; error: string | null }) {
+function CheckStep({ drafts: all, members, me, error }: { drafts: DraftOrder[]; members: GroupMember[]; me: string; error: string | null }) {
+  // Payments back to someone are settle-ups, not bills: listed apart, not in the shares.
+  const drafts = all.filter((d) => !d.settleWith);
+  const paybacks = all.filter((d) => d.settleWith);
   const { net, mine } = netForMe(drafts, me);
   const byId = (id: string) => members.find((m) => m.id === id);
   const total = drafts.reduce((a, d) => a + draftTotals(d).computed, 0);
@@ -1138,10 +1230,25 @@ function CheckStep({ drafts, members, me, error }: { drafts: DraftOrder[]; membe
           <span className="font-bold tabular-nums">{formatINR(mine)}</span>
         </div>
         <div className="px-4 py-3 flex items-center justify-between text-[13px]">
-          <span className="font-bold">{drafts.length} orders</span>
+          <span className="font-bold">{drafts.length} {drafts.length === 1 ? "bill" : "bills"}</span>
           <span className="font-extrabold tabular-nums">{formatINR(Math.round(total * 100) / 100)}</span>
         </div>
       </div>
+
+      {paybacks.length > 0 && (
+        <div className="rounded-[16px] bg-[var(--paper)] border border-[var(--hairline)] divide-y divide-[var(--hairline)]">
+          {paybacks.map((p) => (
+            <div key={p.id} className="px-4 py-3 flex items-center gap-3 text-[13.5px]">
+              <ArrowRightLeft size={16} className="text-[var(--accent)] flex-shrink-0" />
+              <span className="flex-1">
+                {firstName(byId(p.payerId), me)} paid <b>{firstName(byId(p.settleWith!), me)}</b> back
+                <span className="block text-[11.5px] text-[var(--text-muted)]">Settle-up · they confirm it</span>
+              </span>
+              <span className="font-extrabold tabular-nums">{formatINR(p.grandTotal ?? draftTotals(p).computed)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {drafts.map((o) => {
         const t = draftTotals(o);
@@ -1172,20 +1279,25 @@ function CheckStep({ drafts, members, me, error }: { drafts: DraftOrder[]; membe
 
 // ── Step 5: Saved ──────────────────────────────────────────────────────────────
 
-function SavedStep({ count, undone, onUndo, onDone }: { count: number; undone: boolean; onUndo: () => void; onDone: () => void }) {
+function SavedStep({ count, paybacks, undone, onUndo, onDone }: { count: number; paybacks: number; undone: boolean; onUndo: () => void; onDone: () => void }) {
   return (
     <main className="px-6 pt-16 flex flex-col items-center text-center max-w-md mx-auto">
       <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 ${undone ? "bg-[var(--paper-dim)]" : "bg-[var(--positive)]"}`}>
         {undone ? <RotateCcw size={28} /> : <Check size={30} className="text-white" strokeWidth={3} />}
       </div>
       <h2 className="text-[20px] font-extrabold mb-2">
-        {undone ? "Import undone" : `${count} expense${count === 1 ? "" : "s"} added`}
+        {undone ? "Import undone" : count > 0 ? `${count} bill${count === 1 ? "" : "s"} added` : `${paybacks} payment${paybacks === 1 ? "" : "s"} recorded`}
       </h2>
       <p className="text-[14px] text-[var(--text-secondary)] mb-8">
-        {undone ? "Nothing was kept." : "Everyone in the group got one notification for the whole import."}
+        {undone
+          ? "The bills were removed."
+          : [
+              count > 0 ? "Everyone in the group got one notification for the whole import." : "",
+              paybacks > 0 ? `${count > 0 ? `Also ${paybacks} payment${paybacks === 1 ? "" : "s"} back: ` : ""}they'll show in Settle Up for the other person to confirm.` : "",
+            ].filter(Boolean).join(" ")}
       </p>
       <button onClick={onDone} className="w-full bg-[var(--accent)] text-white font-bold py-4 rounded-[16px] mb-3">Back to group</button>
-      {!undone && (
+      {!undone && count > 0 && (
         <button onClick={onUndo} className="w-full bg-[var(--paper)] border border-[var(--hairline)] font-bold py-4 rounded-[16px] flex items-center justify-center gap-2">
           <RotateCcw size={16} /> Undo
         </button>

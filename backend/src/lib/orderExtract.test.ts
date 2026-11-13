@@ -164,3 +164,38 @@ describe("parseModelJson", () => {
     expect(parseModelJson("sorry, I can't read this")).toBeUndefined();
   });
 });
+
+describe("receipts and payments", () => {
+  it("reads a restaurant bill: taxes, service charge, a round-off that lowers the bill", () => {
+    const o = normalizeOrder({
+      kind: "receipt", merchant: "Café Mocha", category: "Food", platform: "other",
+      items: [
+        { name: "Paneer Butter Masala", short: "paneer curry", qty: 1, lineTotal: 320 },
+        { name: "Butter Naan", qty: 4, lineTotal: 240 },
+        { name: "Cold Coffee", qty: 2, lineTotal: 300 },
+      ],
+      fees: [
+        { kind: "tax", label: "CGST 2.5%", amount: 21.5 },
+        { kind: "tax", label: "SGST 2.5%", amount: 21.5 },
+        { kind: "service", label: "Service Charge 5%", amount: 43 },
+        { kind: "round_off", label: "Round Off", amount: -0.4 },
+      ],
+      itemTotal: 860, grandTotal: 945.6,
+    });
+    expect(o.kind).toBe("receipt");
+    expect(o.merchant).toBe("Café Mocha");
+    expect(o.category).toBe("Food");
+    expect(o.fees.map((f) => f.kind)).toEqual(["tax", "tax", "service"]);
+    expect(o.discounts).toEqual([{ label: "Round Off", amount: 0.4 }]);
+    expect(checkTotals(o).status).toBe("ok");
+  });
+
+  it("reads a UPI payment as one amount with a payee", () => {
+    const o = normalizeOrder({ kind: "payment", payee: "Ramesh Kirana Store", payApp: "Google Pay", orderId: "UPI 4210 9988 7712", grandTotal: "₹540", category: "groceries", items: [] });
+    expect(o).toMatchObject({ kind: "payment", payee: "Ramesh Kirana Store", payApp: "Google Pay", grandTotal: 540, category: "Groceries", items: [] });
+  });
+
+  it("calls an item-less total a payment even if the model didn't", () => {
+    expect(normalizeOrder({ grandTotal: 210, merchant: "Uber" }).kind).toBe("payment");
+  });
+});

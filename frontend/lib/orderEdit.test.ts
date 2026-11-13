@@ -45,3 +45,41 @@ describe("order name", () => {
     expect(toExpenseBody({ ...d, title: "  " }).description).toBe("Blinkit · 5 Nov order");
   });
 });
+
+import { toDraft, matchMember, isReady } from "./orderImport";
+
+describe("receipts and payments in the sorter", () => {
+  const members = [{ id: "me", name: "Divyansh Verma" }, { id: "s", name: "Suryansh" }, { id: "a", name: "Ankit" }];
+  const base = { platform: "other" as const, orderId: null, orderDate: "2026-11-12", itemCount: null, fees: [], discounts: [], itemTotal: null, page: { hasHeader: true, hasTotal: true }, confidence: "high" as const, uncertain: [] };
+
+  it("a UPI payment to a shop becomes one shared line titled by the payee", () => {
+    const d = toDraft({ ...base, kind: "payment", payee: "Ramesh Kirana Store", category: "Groceries", items: [], grandTotal: 540 }, [0], "me", ["me", "s", "a"], members);
+    expect(d.items).toHaveLength(1);
+    expect(d.items[0]).toMatchObject({ name: "Ramesh Kirana Store", lineTotal: 540, sharedBy: ["me", "s", "a"] });
+    expect(d.settleWith).toBeNull();
+    const body = toExpenseBody(d);
+    expect(body.description).toBe("Ramesh Kirana Store · 12 Nov");
+    expect(body.category).toBe("Groceries");
+    expect(body.receiptData.kind).toBe("payment");
+  });
+
+  it("money sent to someone in the group is offered as paying them back", () => {
+    const d = toDraft({ ...base, kind: "payment", payee: "SURYANSH KUMAR", items: [], grandTotal: 500 }, [0], "me", ["me", "s", "a"], members);
+    expect(d.payeeMember).toBe("s");
+    expect(d.settleWith).toBe("s");
+    expect(isReady(d)).toBe(true);
+  });
+
+  it("never matches yourself or an unclear name", () => {
+    expect(matchMember("Divyansh V", members, "me")).toBeNull();
+    expect(matchMember("Kumar Stores", members, "me")).toBeNull();
+  });
+
+  it("a printed bill keeps its shop name and taxes", () => {
+    const d = toDraft({ ...base, kind: "receipt", merchant: "Café Mocha", category: "Food", items: [{ name: "Cold Coffee", variant: null, qty: 2, lineTotal: 300, mrp: null }], fees: [{ kind: "tax", label: "CGST 2.5%", amount: 7.5 }], grandTotal: 307.5 }, [0], "me", ["me", "s"], members);
+    const body = toExpenseBody(d);
+    expect(body.description).toBe("Café Mocha · 12 Nov");
+    expect(body.category).toBe("Food");
+    expect(body.amount).toBe(307.5);
+  });
+});
