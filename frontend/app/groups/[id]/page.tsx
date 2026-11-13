@@ -58,6 +58,7 @@ import { SettlementRow, Settlement } from "@/components/ui/SettlementRow";
 import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 import { ask } from "@/lib/dialog";
+import AddPeopleHelpButton from "@/components/PlaceholderHelp";
 
 
 type Member = GroupMember;
@@ -521,23 +522,21 @@ export default function GroupDetailPage() {
         {/* ── Members List Rows ────────────────────────────────────────── */}
         <div className="px-5 pb-8">
           <div className="flex items-center justify-between mb-3">
-            <SectionLabel>MEMBERS ({group.members.length})</SectionLabel>
+            <div className="flex items-center gap-1.5">
+              <SectionLabel className="whitespace-nowrap">MEMBERS ({group.members.length})</SectionLabel>
+              {/* how "add someone who hasn't joined" works; glows for a first-time admin */}
+              {(isAdmin || notJoinedCount > 0) && <AddPeopleHelpButton highlight={isAdmin} />}
+            </div>
             {isAdmin && (
               <button
                 onClick={() => { setShowAddPerson((v) => !v); setMemberError(null); }}
-                className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--accent)] px-3 py-1.5 active:scale-95 transition-transform"
+                className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--accent)] px-3 py-1.5 whitespace-nowrap active:scale-95 transition-transform"
               >
                 <UserPlus size={15} strokeWidth={2.5} />
                 Add someone
               </button>
             )}
           </div>
-
-          {isAdmin && notJoinedCount > 0 && !showAddPerson && (
-            <p className="text-[13px] text-[var(--text-secondary)] mb-3">
-              {`${notJoinedCount} ${notJoinedCount === 1 ? "person hasn't" : "people haven't"} joined yet. You can still add their expenses. When they open the invite link they'll pick their name and see what they owe.`}
-            </p>
-          )}
 
           <AnimatePresence>
             {showAddPerson && (
