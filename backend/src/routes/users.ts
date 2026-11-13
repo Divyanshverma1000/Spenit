@@ -3,7 +3,8 @@ import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { MAX_PHOTO_BASE64, PHOTO_MIME } from "../lib/avatars";
 import { deleteAccount, exportAccount } from "../lib/account";
-import { open as openSecret, seal } from "../lib/secretBox";
+import { seal } from "../lib/secretBox";
+import { addExtraKey, badKey, maskKey, MAX_EXTRA_GROQ_KEYS, removeExtraKey, userGroqKeys } from "../lib/groqKeys";
 import { adminEmails } from "../lib/telemetry";
 import { getGroupBalance, invalidateGroupBalanceCache } from "./balance";
 
@@ -34,13 +35,8 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
   }
 
   const u = rows[0];
-  let groqKeyMasked = null;
-  if (u.groq_api_key) {
-    const key = (await openSecret(u.groq_api_key as string)) ?? "";
-    groqKeyMasked = key.startsWith("gsk_") && key.length > 8 
-      ? `gsk_***${key.slice(-4)}` 
-      : "***";
-  }
+  const keys = await userGroqKeys(u.id);
+  const groqKeyMasked = u.groq_api_key ? maskKey(keys.main ?? "") : null;
 
   res.json({
     id: u.id,
@@ -53,6 +49,11 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
     hasGroqKey: !!u.groq_api_key,
     isAdmin: !!u.email && adminEmails().includes(String(u.email).toLowerCase()),
     groqKeyMasked,
+    /** extra keys for reading many screenshots at once (masked, in order) */
+    groqExtraKeysMasked: keys.extras.map(maskKey),
+    maxExtraGroqKeys: MAX_EXTRA_GROQ_KEYS,
+    /** how many screenshots can be read side by side: one per key */
+    aiLanes: Math.max(1, (keys.main ? 1 : 0) + keys.extras.length),
   });
 });
 
@@ -62,7 +63,22 @@ router.get("/me", requireAuth, async (req: Request, res: Response): Promise<void
  */
 router.patch("/me", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.userId;
-  const { upiId, username, groqApiKey } = req.body;
+  const { upiId, username, groqApiKey, addGroqKey, removeGroqKey } = req.body;
+
+  // Extra Groq keys are their own small actions (they never mix with other fields).
+  if (addGroqKey !== undefined) {
+    const k = typeof addGroqKey === "string" ? addGroqKey.trim() : "";
+    if (badKey(k)) { res.status(400).json({ error: "That doesn't look like an API key" }); return; }
+    const problem = await addExtraKey(userId, k);
+    if (problem) { res.status(400).json({ error: problem }); return; }
+    res.json({ success: true });
+    return;
+  }
+  if (removeGroqKey !== undefined) {
+    await removeExtraKey(userId, Number(removeGroqKey));
+    res.json({ success: true });
+    return;
+  }
 
   const updates: string[] = [];
   const values: unknown[] = [];

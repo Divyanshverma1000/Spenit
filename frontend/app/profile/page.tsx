@@ -15,6 +15,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Palette, Camera, Loader2, Download, UserX, CheckCircle2, XCircle } from "lucide-react";
 import DeleteAccountSheet from "@/components/DeleteAccountSheet";
 import FeedbackSheet from "@/components/FeedbackSheet";
+import ExtraGroqKeys from "@/components/ExtraGroqKeys";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { fileToSquareAvatar } from "@/lib/image";
 import { notice, toast } from "@/lib/dialog";
@@ -30,6 +31,8 @@ interface UserProfile {
   createdAt: string;
   hasGroqKey?: boolean;
   groqKeyMasked?: string | null;
+  groqExtraKeysMasked?: string[];
+  maxExtraGroqKeys?: number;
   /** owner accounts (ADMIN_EMAILS on the server) see the admin dashboard */
   isAdmin?: boolean;
 }
@@ -470,6 +473,14 @@ export default function ProfilePage() {
                       Get Free Key
                     </a>
                   </div>
+
+                  {profile.hasGroqKey && (
+                    <ExtraGroqKeys
+                      initial={profile.groqExtraKeysMasked ?? []}
+                      max={profile.maxExtraGroqKeys ?? 4}
+                      authFetch={authFetch}
+                    />
+                  )}
                 </div>
               </SettingsList>
             </motion.div>

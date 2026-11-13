@@ -71,7 +71,7 @@ export async function deleteAccount(db: Db, userId: string, openGroups: Set<stri
   await db.query(
     `update "User" set
        name = $2, username = 'deleted_' || replace(id::text, '-', ''), email = null, google_id = null,
-       avatar_url = null, upi_id = null, venmo_handle = null, password_hash = null, groq_api_key = null,
+       avatar_url = null, upi_id = null, venmo_handle = null, password_hash = null, groq_api_key = null, groq_extra_keys = '[]'::jsonb,
        terms_version = null, terms_accepted_at = null, deleted_at = now(), updated_at = now()
      where id = $1`,
     [userId, DELETED_NAME]

@@ -34,7 +34,17 @@ const aiLimit = strictLimit("ai", [
   { limit: 20, seconds: 60, message: "That's a lot of AI requests at once. Wait a minute and try again." },
   { limit: 400, seconds: 86_400, message: "You've reached today's AI limit. It resets tomorrow." },
 ]);
+/**
+ * Screenshot reading: one call per screenshot, and people with several Groq keys read
+ * several at once, so a per-minute cap of 20 would stall a 25-screenshot import.
+ * Same counters as aiLimit (the daily cap is shared), just a higher per-minute ceiling.
+ */
+const orderReadLimit = strictLimit("ai", [
+  { limit: 60, seconds: 60, message: "That's a lot of screenshots at once. Wait a minute and try again." },
+  { limit: 400, seconds: 86_400, message: "You've reached today's AI limit. It resets tomorrow." },
+]);
 import { buildGroupContext } from "../lib/groupAiContext";
+import { userGroqKeys } from "../lib/groqKeys";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
 import { getGroupBalance } from "./balance";
@@ -166,6 +176,21 @@ router.post(
 // ─── Groq key ──────────────────────────────────────────────────────────────────
 
 /** The user's own key wins; otherwise the server's GROQ_API_KEY secret, if one is set. */
+/**
+ * Every key this person can read screenshots with, starting at `lane` (so parallel
+ * screenshots spread over different keys). Falls back to the server key.
+ */
+async function groqLanesFor(userId: string, lane: number): Promise<{ keys: string[]; source: "user" | "server" | null }> {
+  const { main, extras } = await userGroqKeys(userId);
+  const own = [...(main ? [main] : []), ...extras];
+  if (own.length > 0) {
+    const start = ((lane % own.length) + own.length) % own.length;
+    return { keys: [...own.slice(start), ...own.slice(0, start)], source: "user" };
+  }
+  if (process.env.GROQ_API_KEY) return { keys: [process.env.GROQ_API_KEY], source: "server" };
+  return { keys: [], source: null };
+}
+
 async function groqKeyFor(userId: string): Promise<{ key: string | null; source: "user" | "server" | null }> {
   const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
   // Stored encrypted (lib/secretBox); decrypted only here, for the request at hand.
@@ -295,10 +320,10 @@ router.post(
 router.post(
   "/extract-order",
   requireAuth,
-  aiLimit,
+  orderReadLimit,
   async (req: Request, res: Response): Promise<void> => {
     const userId = req.user!.userId;
-    const { imageBase64 } = req.body as { imageBase64?: string };
+    const { imageBase64, lane } = req.body as { imageBase64?: string; lane?: number };
 
     if (typeof imageBase64 !== "string" || imageBase64.length < 100) {
       res.status(400).json({ fallback: true, reason: "invalid_request", stage: "upload", message: "imageBase64 is required" });
@@ -314,19 +339,23 @@ router.post(
     }
     console.log(`[ai] stage=UPLOAD_RECEIVED user=${userId.slice(0, 8)} kb=${Math.round(imageBase64.length / 1024)}`);
 
-    const { key, source } = await groqKeyFor(userId);
-    if (!key) {
+    const { keys, source } = await groqLanesFor(userId, Number.isInteger(lane) ? Number(lane) : 0);
+    if (keys.length === 0) {
       res.json({ fallback: true, reason: "config_error", stage: "config", message: "No Groq API key configured", rawText: "" });
       return;
     }
 
-    const result = await new GroqProvider(key).extractOrder({ imageBase64 });
+    // This lane's key first; if Groq says it's busy, the person's other keys take over.
+    let result = await new GroqProvider(keys[0]).extractOrder({ imageBase64 });
+    for (let i = 1; !result.ok && result.reason === "rate_limit" && i < keys.length; i++) {
+      result = await new GroqProvider(keys[i]).extractOrder({ imageBase64 });
+    }
     await bump(result.ok
       ? { ai_calls: 1, order_reads: 1, ai_tokens_in: result.usage?.promptTokens ?? 0, ai_tokens_out: result.usage?.completionTokens ?? 0 }
       : { ai_calls: 1, ai_failures: 1 });
     if (!result.ok) {
       console.warn(
-        `[ai] stage=EXTRACT_FAILED at=${result.stage} reason=${result.reason} status=${result.status ?? "-"} model=${result.model} keySource=${source} msg=${(result.message ?? "").slice(0, 160)}`
+        `[ai] stage=EXTRACT_FAILED at=${result.stage} reason=${result.reason} status=${result.status ?? "-"} model=${result.model} keySource=${source} keys=${keys.length} msg=${(result.message ?? "").slice(0, 160)}`
       );
       res.json({
         fallback: true,

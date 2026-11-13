@@ -10,12 +10,12 @@
  * order are joined in lib/orderImport. A failed screenshot shows the server's real reason.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Camera, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
+  ArrowLeft, Camera, ChevronLeft, ChevronRight, Images, ZoomIn, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -24,6 +24,7 @@ import { fileToCompressedDataUrl } from "@/lib/image";
 import { groupKey, useGroupOverview, type GroupMember } from "@/lib/queries";
 import { shortNames } from "@/lib/avatar";
 import MemberAvatar from "@/components/ui/MemberAvatar";
+import { BackClose } from "@/lib/backClose";
 import {
   adjustToBillTotal, draftTotals, formatINR, isReady, itemCountCheck, joinPieces, looksPartial, mergeDrafts, netForMe, orderKey, orderTitle,
   previewShares, toDraft, toExpenseBody, draftFromExpense,
@@ -62,8 +63,11 @@ const AI_FAILURE: Record<string, string> = {
 };
 /** These fail the same way for every screenshot — no point sending the rest. */
 const ACCOUNT_FAILURES = new Set(["config_error", "blocked", "model_unavailable"]);
-/** Groq's free tier allows only a few thousand tokens a minute; each screenshot is ~2k. */
-const AI_CONCURRENCY = 2;
+/**
+ * Groq's free tier allows only a few thousand tokens a minute; each screenshot is ~2k.
+ * Two at a time per Groq key; people with extra keys (Profile) read more at once.
+ */
+const AI_PER_KEY = 2;
 /** Busy / slow / flaky answers are retried automatically, waiting longer each time. */
 const AUTO_RETRY = new Set(["rate_limit", "timeout", "network"]);
 const AUTO_RETRY_WAITS_MS = [8_000, 20_000, 40_000];
@@ -74,6 +78,13 @@ async function hashBytes(buf: ArrayBuffer): Promise<string> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The screenshots picked in this import, by piece index, so any order card can show the
+ * ones it came from. They live only in this page's memory and are let go once you leave
+ * (nothing is uploaded or kept after the AI has read them).
+ */
+const ShotsContext = createContext<Record<number, string>>({});
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -134,23 +145,50 @@ export default function ImportOrdersPage() {
 
   // ── Reading: screenshot → vision model ─────────────────────────────────────
 
+  /** one lane per Groq key the person has (Profile → Read screenshots faster) */
+  const lanes = useRef(1);
+  const nextLane = useRef(0);
+  const [laneCount, setLaneCount] = useState(1);
   const aiSlots = useRef(0);
   const aiQueue = useRef<(() => void)[]>([]);
+  /** Start waiting calls while there are free slots (a started call owns its slot). */
+  const pumpAi = useCallback(() => {
+    while (aiQueue.current.length > 0 && aiSlots.current < lanes.current * AI_PER_KEY) {
+      aiSlots.current++;
+      aiQueue.current.shift()!();
+    }
+  }, []);
   const withAiSlot = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
-    if (aiSlots.current >= AI_CONCURRENCY) await new Promise<void>((r) => aiQueue.current.push(r));
-    aiSlots.current++;
+    if (aiSlots.current < lanes.current * AI_PER_KEY) aiSlots.current++;
+    else await new Promise<void>((r) => aiQueue.current.push(r));
     try {
       return await fn();
     } finally {
       aiSlots.current--;
-      aiQueue.current.shift()?.();
+      pumpAi();
     }
-  }, []);
+  }, [pumpAi]);
+
+  useEffect(() => {
+    let live = true;
+    authFetch("/users/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me: { aiLanes?: number } | null) => {
+        if (!live) return;
+        const n = Math.max(1, Math.min(8, Number(me?.aiLanes) || 1));
+        lanes.current = n;
+        setLaneCount(n);
+        pumpAi();
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [authFetch, pumpAi]);
 
   /** The AI's answer, or why there is none (so the screen never blames the screenshot for an AI outage). */
   const extract = useCallback(
     async (imageBase64: string): Promise<ExtractResponse | ExtractFailure> => {
-      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64 }) });
+      const lane = nextLane.current++;
+      const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64, lane }) });
       const data = (await res.json().catch(() => null)) as ExtractResponse | ExtractFailure | { error?: string } | null;
       if (data && "fallback" in data) return data;
       if (!res.ok || !data || !("order" in data)) {
@@ -241,6 +279,16 @@ export default function ImportOrdersPage() {
     [processPiece]
   );
 
+  /** piece index → its in-memory image, for "See screenshots" on each order */
+  const shots = useMemo(() => Object.fromEntries(pieces.filter((p) => p.thumb).map((p) => [p.index, p.thumb])), [pieces]);
+  // The images are only needed while you review. Let them go when you leave this screen.
+  const allThumbs = useRef(new Set<string>());
+  useEffect(() => { pieces.forEach((p) => p.thumb && allThumbs.current.add(p.thumb)); }, [pieces]);
+  useEffect(() => {
+    const urls = allThumbs.current;
+    return () => { urls.forEach((u) => URL.revokeObjectURL(u)); urls.clear(); };
+  }, []);
+
   const doneCount = pieces.filter((p) => p.status === "done").length;
   const busy = pieces.some((p) => ["queued", "ai"].includes(p.status));
 
@@ -318,6 +366,10 @@ export default function ImportOrdersPage() {
       }
       setSavedIds(ids);
       setSavedPaybacks(paybacks.length);
+      // Reviewed and saved: the bills carry everything from here on, so drop the images.
+      allThumbs.current.forEach((u) => URL.revokeObjectURL(u));
+      allThumbs.current.clear();
+      setPieces([]);
       queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
       queryClient.invalidateQueries({ queryKey: ["balance"] });
       setStep("saved");
@@ -406,6 +458,7 @@ export default function ImportOrdersPage() {
       )}
       {step === "drop" && !editId && <DropStep onPick={() => fileRef.current?.click()} onCamera={() => cameraRef.current?.click()} />}
 
+      <ShotsContext.Provider value={shots}>
       {step === "reading" && (
         <ReadingStep
           pieces={pieces}
@@ -425,6 +478,7 @@ export default function ImportOrdersPage() {
       {(step === "check" || step === "saving") && (
         <CheckStep drafts={toSave} members={members} me={me} error={saveError} />
       )}
+      </ShotsContext.Provider>
 
       {step === "saved" && (
         <SavedStep
@@ -441,7 +495,13 @@ export default function ImportOrdersPage() {
         <BottomBar>
           <div className="text-[12px] text-[var(--text-secondary)] mb-2 text-center">
             {busy ? `Reading ${pieces.length - doneCount} of ${pieces.length}…` : `${liveOrders.length} order${liveOrders.length === 1 ? "" : "s"} found`}
+            {busy && laneCount > 1 ? ` · ${laneCount} keys working` : ""}
           </div>
+          {busy && laneCount === 1 && pieces.length >= 8 && (
+            <button onClick={() => router.push("/profile")} className="block mx-auto -mt-1 mb-2 text-[11.5px] font-bold text-[var(--accent)]">
+              Lots of screenshots? Add Groq keys in Profile to read faster
+            </button>
+          )}
           <button
             disabled={liveOrders.length === 0 || members.length === 0}
             onClick={() => void startSorting()}
@@ -657,6 +717,7 @@ function ReadingStep({
                   <span>no total yet</span>
                 )}
               </div>
+              <ShotsStrip sources={sources} />
             </motion.div>
           );
         })}
@@ -844,6 +905,7 @@ function OrderCard({
         <div className="font-extrabold tabular-nums">{formatINR(o.grandTotal ?? t.computed)}</div>
         <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
+      <ShotsStrip sources={o.sources} className="mx-4 mb-3 -mt-1" />
 
       {o.kind === "payment" && (
         <div className="mx-4 mb-3 -mt-1 rounded-[14px] bg-[var(--paper-dim)] p-3 text-[13px]">
@@ -1306,5 +1368,97 @@ function SavedStep({ count, paybacks, undone, onUndo, onDone }: { count: number;
         </button>
       )}
     </main>
+  );
+}
+
+// ── Screenshot lookup ─────────────────────────────────────────────────────────
+
+/**
+ * The screenshots an order was read from, right on its card: tap to check what the bill
+ * really was without leaving for the gallery or the shopping app.
+ */
+function ShotsStrip({ sources, className = "mt-3" }: { sources: number[]; className?: string }) {
+  const shots = useContext(ShotsContext);
+  const urls = sources.map((i) => ({ index: i, url: shots[i] })).filter((s): s is { index: number; url: string } => !!s.url);
+  const [openAt, setOpenAt] = useState<number | null>(null);
+  if (urls.length === 0) return null;
+  return (
+    <div className={className}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpenAt(0); }}
+        className="flex items-center gap-2.5 w-full text-left"
+        aria-label={`See the ${urls.length} screenshot${urls.length === 1 ? "" : "s"} for this bill`}
+      >
+        <span className="flex -space-x-2">
+          {urls.slice(0, 4).map((s, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={s.index} src={s.url} alt="" className="relative w-7 h-10 object-cover rounded-[5px] border-2 border-[var(--paper)] shadow-sm" style={{ zIndex: 4 - i }} />
+          ))}
+        </span>
+        <span className="text-[12px] font-bold text-[var(--accent)] flex items-center gap-1">
+          <Images size={13} /> See {urls.length === 1 ? "screenshot" : `${urls.length} screenshots`}
+        </span>
+      </button>
+      {openAt !== null && <ShotViewer urls={urls} start={openAt} onClose={() => setOpenAt(null)} />}
+    </div>
+  );
+}
+
+/** Full-screen look at a bill's screenshots: swipe or tap the arrows, tap the picture to zoom. */
+function ShotViewer({ urls, start, onClose }: { urls: { index: number; url: string }[]; start: number; onClose: () => void }) {
+  const [at, setAt] = useState(start);
+  const [zoom, setZoom] = useState(false);
+  const touchX = useRef<number | null>(null);
+  const last = urls.length - 1;
+  const go = useCallback((d: number) => { setZoom(false); setAt((a) => Math.min(last, Math.max(0, a + d))); }, [last]);
+  const cur = urls[Math.min(at, last)];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight") go(1);
+      if (e.key === "ArrowLeft") go(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, go]);
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col" role="dialog" aria-modal="true" aria-label="Screenshots for this bill" onClick={(e) => e.stopPropagation()}>
+      <BackClose onClose={onClose} />
+      <div className="flex items-center justify-between px-4 pt-12 pb-3 text-white">
+        <span className="text-[13px] font-bold">
+          Screenshot {cur.index + 1}{urls.length > 1 ? <span className="text-white/60 font-medium"> · {at + 1} of {urls.length}</span> : null}
+        </span>
+        <button onClick={onClose} className="p-2 -mr-2 rounded-full bg-white/10" aria-label="Close"><X size={18} /></button>
+      </div>
+      <div
+        className={`relative flex-1 min-h-0 ${zoom ? "overflow-auto" : "overflow-hidden flex items-center justify-center"}`}
+        onTouchStart={(e) => { if (!zoom) touchX.current = e.touches[0].clientX; }}
+        onTouchEnd={(e) => {
+          if (zoom || touchX.current === null) return;
+          const dx = e.changedTouches[0].clientX - touchX.current;
+          touchX.current = null;
+          if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={cur.url}
+          alt={`Screenshot ${cur.index + 1}`}
+          onClick={() => setZoom((z) => !z)}
+          className={zoom ? "w-[200%] max-w-none" : "max-w-full max-h-full object-contain"}
+        />
+        {urls.length > 1 && !zoom && (
+          <>
+            <button onClick={() => go(-1)} disabled={at === 0} className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 ring-1 ring-white/25 text-white disabled:opacity-0" aria-label="Previous screenshot"><ChevronLeft size={22} /></button>
+            <button onClick={() => go(1)} disabled={at === last} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 ring-1 ring-white/25 text-white disabled:opacity-0" aria-label="Next screenshot"><ChevronRight size={22} /></button>
+          </>
+        )}
+      </div>
+      <p className="text-center text-[11.5px] text-white/60 py-3 flex items-center justify-center gap-1.5">
+        <ZoomIn size={13} /> {zoom ? "Tap to fit the screen" : "Tap the picture to zoom in"}
+      </p>
+    </div>
   );
 }
