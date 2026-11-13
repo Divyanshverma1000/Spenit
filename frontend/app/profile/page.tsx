@@ -199,7 +199,7 @@ export default function ProfilePage() {
       type Ping = { ok: boolean; model: string; status?: number; message?: string; ms?: number };
       const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; text?: Ping; vision?: Ping } | null;
       const line = (label: string, p?: Ping) =>
-        !p ? "" : p.ok ? `✅ ${label} (${p.model}) — ${p.ms}ms` : `❌ ${label} (${p.model}) — ${p.status ? `HTTP ${p.status}: ` : ""}${p.message ?? "failed"}`;
+        !p ? "" : p.ok ? `OK · ${label} (${p.model}) — ${p.ms}ms` : `Failed · ${label} (${p.model}) — ${p.status ? `HTTP ${p.status}: ` : ""}${p.message ?? "failed"}`;
       if (data?.text || data?.vision) {
         alert(`${data.ok ? "Connection successful" : "Connection problem"}\n\n${line("Text AI", data.text)}\n${line("Image AI", data.vision)}`);
       } else {

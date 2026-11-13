@@ -72,6 +72,21 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html: `
+              // iPhone Safari ignores user-scalable=no: stop pinch zoom by hand.
+              // A long press (outside typing fields) opens no copy/share menu.
+              (function(){
+                function stop(e){ e.preventDefault(); }
+                document.addEventListener('gesturestart', stop, { passive: false });
+                document.addEventListener('gesturechange', stop, { passive: false });
+                document.addEventListener('touchmove', function(e){ if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+                if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+                  document.addEventListener('contextmenu', function(e){
+                    var t = e.target;
+                    if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], .selectable')) return;
+                    e.preventDefault();
+                  });
+                }
+              })();
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
                   navigator.serviceWorker.register('${SW_URL}', { scope: '/' });

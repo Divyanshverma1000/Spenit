@@ -148,7 +148,7 @@ export function DashboardView({
               )}
               <p className="mt-2 text-[13px] font-medium text-white/70">
                 {direction === "settled"
-                  ? "All square. Nice and tidy ✨"
+                  ? "All square. Nice and tidy."
                   : `Across ${openGroups} ${openGroups === 1 ? "group" : "groups"}`}
               </p>
             </div>

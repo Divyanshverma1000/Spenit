@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRightLeft, Loader2, LogOut, X } from "lucide-react";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
@@ -25,6 +26,7 @@ export default function LeaveGroupSheet({
   /** resolves to an error message, or null when you've left */
   onLeave: () => Promise<string | null>;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -456,7 +456,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       const memberIds = membersRes.rows.map((r: { user_id: string }) => r.user_id);
       const addedByName = creatorRes.rows[0]?.name || "Someone";
       await sendToUsers(memberIds, {
-        title: "💸 New expense added",
+        title: "New expense added",
         body: `${addedByName} added "${description.trim()}" — ₹${amount.toFixed(2)}`,
         url: `/groups/${body.groupId}`,
         tag: `expense-${body.groupId}`,
@@ -593,7 +593,7 @@ router.post("/batch", requireAuth, async (req: Request, res: Response): Promise<
       const addedByName = creatorRes.rows[0]?.name || "Someone";
       const total = prepared.reduce((a, p) => a.plus(p.amount), new Decimal(0));
       await sendToUsers(memberIds, {
-        title: "🛒 Orders added",
+        title: "Orders added",
         body: `${addedByName} added ${prepared.length} order${prepared.length > 1 ? "s" : ""} — ₹${total.toFixed(2)}`,
         url: `/groups/${groupId}`,
         tag: `expense-${groupId}`,
@@ -854,7 +854,7 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
       await sendToUsers(
         membersRes.rows.map((r: { user_id: string }) => r.user_id),
         {
-          title: "✏️ Expense updated",
+          title: "Expense updated",
           body: `${editorRes.rows[0]?.name || "Someone"} changed "${prepared.description}" to ₹${prepared.amount.toFixed(2)}`,
           url: `/groups/${e.group_id}`,
           tag: `expense-edit-${id}`,

@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { dayStart, type QuickEntry } from "@/lib/quickAdd";
 import { inr, useSpending, useSpendingActions, type SpendEntry } from "@/lib/spending";
 import { useAuth } from "@/context/AuthContext";
+import { BackClose } from "@/lib/backClose";
 import { readJson } from "@/lib/api";
 import { fileToCompressedDataUrl } from "@/lib/image";
 import { guessCategory, CATEGORIES, type Category } from "@/lib/quickAdd";
@@ -172,6 +173,7 @@ function SpendingPage() {
       <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void scan(e.target.files?.[0]); e.target.value = ""; }} />
       {scanAsk && (
         <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40" onClick={() => { setScanAsk(false); if (params?.get("scan")) router.replace("/personal"); }}>
+          <BackClose onClose={() => setScanAsk(false)} />
           <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Scan a bill" className="w-full max-w-md bg-[var(--paper)] rounded-t-[28px] p-5 pb-[max(20px,env(safe-area-inset-bottom))]">
             <div className="flex items-start justify-between">
               <div>

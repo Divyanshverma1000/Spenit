@@ -89,7 +89,7 @@ router.delete("/subscribe", requireAuth, async (req: Request, res: Response): Pr
 router.post("/test", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.userId;
   await sendToUser(userId, {
-    title: "🎉 Push is working!",
+    title: "Push is working",
     body: "Spenit notifications are set up correctly on your device.",
     url: "/dashboard",
     tag: "test",

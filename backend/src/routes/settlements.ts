@@ -158,7 +158,7 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       const fromRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
       const fromName = fromRes.rows[0]?.name || "Someone";
       await sendToUser(toUserId, {
-        title: "💸 Settlement requested",
+        title: "Settlement requested",
         body: `${fromName} sent you ₹${parseFloat(settlement.amount).toFixed(2)}. Confirm you received it.`,
         url: `/groups/${groupId}/settle`,
         tag: `settlement-requested-${settlement.id}`,
@@ -231,7 +231,7 @@ router.post("/:id/confirm", requireAuth, async (req: Request, res: Response): Pr
       const confirmerRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
       const confirmerName = confirmerRes.rows[0]?.name || "Someone";
       await sendToUser(s.from_user, {
-        title: "✅ Payment confirmed!",
+        title: "Payment confirmed",
         body: `${confirmerName} confirmed they received your ₹${parseFloat(s.amount).toFixed(2)} payment. Balance cleared.`,
         url: `/groups/${s.group_id}/settle`,
         tag: `settlement-confirmed-${id}`,

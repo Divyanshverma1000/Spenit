@@ -120,6 +120,39 @@ html, body {
   font-family: var(--font-body);
 }
 
+/* ── Feels like an app, not a web page ───────────────────────────────────── */
+
+html {
+  /* no double-tap zoom, no font inflation on rotate */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+img, svg, video, canvas {
+  -webkit-user-drag: none;
+}
+
+/* Phones and tablets: a long press doesn't select text, open a link preview or
+   "Save image". Typing fields, and anything marked .selectable, still work. */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  input, textarea, select, [contenteditable="true"], .selectable, .selectable * {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+}
+
+/* A tapped button shouldn't keep a focus ring; keyboard users still get one. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 body {
   background-color: var(--ink);
   color: var(--text-primary);

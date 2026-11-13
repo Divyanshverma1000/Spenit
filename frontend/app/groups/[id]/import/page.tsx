@@ -15,7 +15,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Camera, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
+  ArrowLeft, Camera, Car, Receipt, ShoppingCart, Smartphone, Check, AlertTriangle, ChevronDown, ImagePlus, ArrowRightLeft, Loader2, Plus, RotateCcw, ShoppingBag, Trash2, Users, User as UserIcon, X, Bug, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -510,11 +510,11 @@ function TotalsBadge({ o }: { o: DraftOrder }) {
 // ── Step 1: Drop ───────────────────────────────────────────────────────────────
 
 function DropStep({ onPick, onCamera }: { onPick: () => void; onCamera: () => void }) {
-  const kinds: [string, string][] = [
-    ["🧾", "Bills & receipts: restaurants, cafés, supermarkets"],
-    ["🛒", "Order screenshots: Blinkit, Zepto, Swiggy, Amazon…"],
-    ["💸", "UPI payments: GPay, PhonePe, Paytm"],
-    ["🚕", "Rides, tickets & bills: Uber, IRCTC, electricity…"],
+  const kinds: [typeof Receipt, string, string][] = [
+    [Receipt, "#F59E0B", "Bills & receipts: restaurants, cafés, supermarkets"],
+    [ShoppingCart, "#10B981", "Order screenshots: Blinkit, Zepto, Swiggy, Amazon…"],
+    [Smartphone, "#3B82F6", "UPI payments: GPay, PhonePe, Paytm"],
+    [Car, "#8B5CF6", "Rides, tickets & bills: Uber, IRCTC, electricity…"],
   ];
   return (
     <main className="px-6 pt-8 flex flex-col items-center text-center max-w-md mx-auto">
@@ -534,9 +534,12 @@ function DropStep({ onPick, onCamera }: { onPick: () => void; onCamera: () => vo
         </button>
       </div>
       <ul className="mt-6 w-full space-y-2 text-left">
-        {kinds.map(([icon, text]) => (
+        {kinds.map(([Icon, tint, text]) => (
           <li key={text} className="flex items-center gap-3 px-3.5 py-2.5 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] text-[13px] text-[var(--text-secondary)]">
-            <span className="text-[18px]" aria-hidden>{icon}</span> {text}
+            <span className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${tint}1F`, color: tint }} aria-hidden>
+              <Icon size={16} strokeWidth={2.3} />
+            </span>
+            {text}
           </li>
         ))}
       </ul>
@@ -844,8 +847,8 @@ function OrderCard({
 
       {o.kind === "payment" && (
         <div className="mx-4 mb-3 -mt-1 rounded-[14px] bg-[var(--paper-dim)] p-3 text-[13px]">
-          <p className="text-[var(--text-secondary)]">
-            💸 Payment{o.payApp ? ` · ${o.payApp}` : ""}{o.payee ? <> to <b className="text-[var(--text-primary)]">{o.payee}</b></> : null}
+          <p className="text-[var(--text-secondary)] flex items-center gap-1.5 flex-wrap">
+            <Smartphone size={14} className="text-[var(--accent)]" aria-hidden /> Payment{o.payApp ? ` · ${o.payApp}` : ""}{o.payee ? <> to <b className="text-[var(--text-primary)]">{o.payee}</b></> : null}
           </p>
           {o.payeeMember && (
             <div className="mt-2.5 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="What was this payment?">

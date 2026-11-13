@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { readJson } from "@/lib/api";
 import type { GroupMember } from "@/lib/queries";
 import MemberAvatar from "@/components/ui/MemberAvatar";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 
@@ -26,6 +27,7 @@ export default function ClaimFixSheet({
   onClose: () => void;
   onDone: () => void;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
   const [choice, setChoice] = useState<string | "none" | null>(null);

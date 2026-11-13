@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { ArrowUp, ListFilter, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useBackClose } from "@/lib/backClose";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -86,6 +87,7 @@ export default function GroupChat({
   onClose: () => void;
   onShowExpenses?: (ids: string[]) => void;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => (typeof window === "undefined" ? [] : load(groupId)));

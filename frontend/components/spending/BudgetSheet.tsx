@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Loader2, Target, X } from "lucide-react";
 import { inr } from "@/lib/spending";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 
@@ -17,6 +18,7 @@ export default function BudgetSheet({
   onClose: () => void;
   onSave: (amount: number | null) => Promise<void>;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const [value, setValue] = useState(current ? String(current) : "");
   const [busy, setBusy] = useState(false);

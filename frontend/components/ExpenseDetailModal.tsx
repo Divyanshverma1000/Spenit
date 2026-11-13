@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { readJson } from "@/lib/api";
 import { groupKey } from "@/lib/queries";
 import { FEE_POLICY_TEXT, myPart, readBill, type Bill, type BillItem } from "@/lib/billDetails";
+import { useBackClose } from "@/lib/backClose";
 
 interface ExpenseDetailModalProps {
   expense: any;
@@ -39,6 +40,7 @@ const PLATFORM: Record<string, string> = {
 export function ExpenseDetailModal({
   expense, groupId, currentUserId, isAdmin, onClose, onDelete, onRepeat, onEdit, isDeleting,
 }: ExpenseDetailModalProps) {
+  useBackClose(onClose);
   const modalRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<"summary" | "items">("summary");
 

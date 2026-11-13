@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Calendar, Loader2, Trash2, X } from "lucide-react";
 import { CATEGORIES, dayStart, guessCategory, type Category } from "@/lib/quickAdd";
 import { CATEGORY_META, dayOf } from "@/lib/spending";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 
@@ -32,6 +33,7 @@ export default function EntrySheet({
   onSave: (d: { description: string; amount: number; category: Category; spentAt: string }) => Promise<void>;
   onDelete?: () => Promise<void>;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const today = isoDay(new Date());
   const yesterday = isoDay(dayStart(1));

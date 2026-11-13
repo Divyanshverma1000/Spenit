@@ -6,11 +6,13 @@ import { motion } from "framer-motion";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { readJson } from "@/lib/api";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 
 /** Delete my account: says exactly what happens, then asks to type DELETE. */
 export default function DeleteAccountSheet({ onClose, onDeleted }: { onClose: () => void; onDeleted: () => void }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
   const [typed, setTyped] = useState("");

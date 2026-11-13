@@ -373,7 +373,7 @@ export default function GroupDetailPage() {
               <div className="bg-white p-5 rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-[var(--hairline)]">
                 <h3 className="text-[14px] font-bold text-[var(--text-primary)] mb-3">Invite link</h3>
                 <div className="flex gap-2 mb-4">
-                  <code className="flex-1 truncate px-3 py-3 text-[13px] font-mono rounded-[12px] bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]">
+                  <code className="selectable flex-1 truncate px-3 py-3 text-[13px] font-mono rounded-[12px] bg-[var(--paper-dim)] text-[var(--text-secondary)] border border-[var(--border)]">
                     {inviteUrl}
                   </code>
                   <button onClick={async () => { await navigator.clipboard.writeText(inviteUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="bg-[var(--accent)] text-white flex-shrink-0 px-4 rounded-[12px] font-bold text-[14px] shadow-[0_4px_14px_rgba(245,158,11,0.3)]">

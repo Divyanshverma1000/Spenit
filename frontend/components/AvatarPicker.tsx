@@ -12,6 +12,7 @@ import { readJson } from "@/lib/api";
 import { groupKey, type GroupMember } from "@/lib/queries";
 import { AVATAR_KEYS, AVATAR_LABEL, avatarImage, colorFor, initials, photoSrc, shortNames, suggestAvatar } from "@/lib/avatar";
 import MemberAvatar from "@/components/ui/MemberAvatar";
+import { useBackClose } from "@/lib/backClose";
 
 /**
  * Pick how someone looks in THIS group. Each illustrated avatar belongs to one person per
@@ -27,6 +28,7 @@ export default function AvatarPicker({
   me: string;
   onClose: () => void;
 }) {
+  useBackClose(onClose);
   const { authFetch } = useAuth();
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const queryClient = useQueryClient();

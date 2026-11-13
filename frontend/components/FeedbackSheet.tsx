@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Bug, CheckCircle2, Lightbulb, Loader2, MessageSquare, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { readJson } from "@/lib/api";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 const KINDS = [
@@ -28,6 +29,7 @@ export default function FeedbackSheet({
   /** shown under the title, e.g. which test this is about */
   label?: string;
 }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   const { authFetch } = useAuth();
   const [kind, setKind] = useState<(typeof KINDS)[number]["key"]>("problem");

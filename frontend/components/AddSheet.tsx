@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRightLeft, Camera, ChevronRight, PencilLine, Sparkles, X } from "lucide-react";
+import { useBackClose } from "@/lib/backClose";
 
 const noSubscribe = () => () => {};
 
@@ -14,6 +15,7 @@ const noSubscribe = () => () => {};
  * payment back to someone.
  */
 export default function AddSheet({ groupId, onClose }: { groupId: string; onClose: () => void }) {
+  useBackClose(onClose);
   const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
   if (!isClient) return null;
 

@@ -66,7 +66,7 @@ export function TestingView({
       <section className="rounded-[24px] p-5 text-white relative overflow-hidden" style={{ background: "radial-gradient(120% 90% at 100% 0%, #3B2A12 0%, #1C1A17 45%, #121316 100%)" }}>
         <div className="pointer-events-none absolute -top-14 -right-10 w-52 h-52 rounded-full bg-[#F59E0B] opacity-20 blur-3xl" />
         <p className="relative text-[12px] font-bold uppercase tracking-[0.14em] text-white/60">Help test Spenit</p>
-        <h1 className="relative mt-1 text-[24px] font-extrabold leading-tight">Thank you for trying it out 🙏</h1>
+        <h1 className="relative mt-1 text-[24px] font-extrabold leading-tight">Thank you for trying it out</h1>
         <p className="relative mt-2 text-[14px] text-white/75 leading-relaxed">
           Go through the tests below, in any order. Tap <b>Works</b> or <b>Problem</b> for each. Anything odd, slow or confusing counts as a problem.
           Ticks are saved on this phone, so you can stop and come back.

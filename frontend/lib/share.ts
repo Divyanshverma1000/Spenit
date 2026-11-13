@@ -28,7 +28,7 @@ export function groupSummaryMessage(opts: {
 }) {
   const lines =
     opts.transfers.length === 0
-      ? ["Everyone is settled up 🎉"]
+      ? ["Everyone is settled up."]
       : opts.transfers.map((t) => `• ${t.fromName} → ${t.toName}: ${rupees(t.amount)}`);
   return [
     `*${opts.groupName}*: who pays whom`,
