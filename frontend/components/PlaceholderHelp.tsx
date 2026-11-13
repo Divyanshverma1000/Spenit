@@ -72,12 +72,12 @@ export default function AddPeopleHelpButton({ highlight }: { highlight: boolean 
       onClick={() => { setSeenNow(true); showAddPeopleHelp(); }}
       aria-label="How adding people works"
       className={`relative flex items-center gap-1.5 rounded-full transition-colors ${
-        glow ? "pl-1.5 pr-2.5 py-1 bg-[var(--accent-subtle)] text-[var(--accent)]" : "p-1 text-[var(--text-muted)]"
+        glow ? "pl-1.5 pr-2.5 py-1 bg-[var(--accent-subtle)] text-[var(--accent)]" : "p-1.5 -my-1.5 text-[var(--text-muted)]"
       }`}
     >
       <span className="relative flex">
         {glow && <span className="absolute inset-0 rounded-full bg-[var(--accent)] opacity-40 motion-safe:animate-ping" aria-hidden />}
-        <Info size={16} strokeWidth={2.4} className="relative" />
+        <Info size={15} strokeWidth={2.4} className="relative" />
       </span>
       {glow && <span className="text-[12px] font-bold whitespace-nowrap">How it works</span>}
     </button>

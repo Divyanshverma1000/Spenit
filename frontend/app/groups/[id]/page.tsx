@@ -523,7 +523,7 @@ export default function GroupDetailPage() {
         <div className="px-5 pb-8">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5">
-              <SectionLabel className="whitespace-nowrap">MEMBERS ({group.members.length})</SectionLabel>
+              <SectionLabel className="whitespace-nowrap mb-0! leading-none">MEMBERS ({group.members.length})</SectionLabel>
               {/* how "add someone who hasn't joined" works; glows for a first-time admin */}
               {(isAdmin || notJoinedCount > 0) && <AddPeopleHelpButton highlight={isAdmin} />}
             </div>
