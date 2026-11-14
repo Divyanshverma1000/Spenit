@@ -4,7 +4,20 @@ import { API_URL } from "@/lib/api";
 import { useState, useCallback, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { ParsedExpenseDraft, AIFallback } from "./types/ai";
-import { toast } from "@/lib/dialog";
+import { notice, toast } from "@/lib/dialog";
+
+/** The microphone is blocked for this site: say exactly how to allow it. */
+function explainMicBlocked() {
+  const installed = typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches;
+  void notice({
+    title: "Allow the microphone",
+    tone: "error",
+    confirmLabel: "Got it",
+    body: installed
+      ? "Open Chrome, go to Settings → Site settings → Microphone, find Spenit and choose Allow. Then come back and tap the mic again."
+      : "Tap the icon to the left of the web address, then Permissions (or Site settings) → Microphone → Allow. Then tap the mic again.",
+  });
+}
 
 
 export type AIExpenseState =
@@ -28,6 +41,8 @@ export interface AIExpenseResult {
   parseReceipt: (base64Urls: string[], groupId: string) => Promise<void>;
   startVoice: (groupId: string, onHeard?: (text: string) => void) => void;
   stopVoice: () => void;
+  /** stop listening and throw away what was heard */
+  cancelVoice: () => void;
   reset: () => void;
   submitDraft: (draft: ParsedExpenseDraft, groupId: string) => Promise<void>;
 }
@@ -165,6 +180,7 @@ export function useAIExpense(): AIExpenseResult {
   // What was heard is handed to the page (it shows it in the box) and parsed straight away.
 
   const heardRef = useRef("");
+  const cancelledRef = useRef(false);
   const onHeardRef = useRef<((t: string) => void) | null>(null);
 
   const startVoice = useCallback(
@@ -173,6 +189,12 @@ export function useAIExpense(): AIExpenseResult {
         toast("Voice isn't available in this browser. Type it instead.", "error");
         return;
       }
+      cancelledRef.current = false;
+      // Already blocked? Say how to fix it instead of trying (and failing) again.
+      const perms = (navigator as Navigator & { permissions?: Permissions }).permissions;
+      const gate: Promise<string> = perms
+        ? perms.query({ name: "microphone" as PermissionName }).then((p) => p.state, () => "prompt")
+        : Promise.resolve("prompt");
       try { recognitionRef.current?.abort(); } catch { /* not running */ }
 
       const SpeechRecognitionClass =
@@ -219,7 +241,8 @@ export function useAIExpense(): AIExpenseResult {
           "audio-capture": "No microphone found.",
           network: "Voice needs an internet connection.",
         };
-        if (event.error !== "aborted") toast(why[event.error] ?? "Voice stopped. Try again or type it.", "error");
+        if (event.error === "not-allowed") explainMicBlocked();
+        else if (event.error !== "aborted") toast(why[event.error] ?? "Voice stopped. Try again or type it.", "error");
         setIsListening(false);
         setState("idle");
       };
@@ -230,20 +253,32 @@ export function useAIExpense(): AIExpenseResult {
         const heard = (finalTranscriptRef.current || heardRef.current).trim();
         setLiveTranscript("");
         if (failed) return;
+        if (cancelledRef.current) { setState("idle"); return; }
         if (!heard) { setState("idle"); return; }
         onHeardRef.current?.(heard);
         if (pendingGroupId.current !== undefined) void parse(heard, pendingGroupId.current);
       };
 
-      try {
-        rec.start();
-      } catch {
-        toast("Couldn't start the microphone. Try again.", "error");
-        setState("idle");
-      }
+      void gate.then((state) => {
+        if (state === "denied") { explainMicBlocked(); return; }
+        try {
+          rec.start();
+        } catch {
+          toast("Couldn't start the microphone. Try again.", "error");
+          setState("idle");
+        }
+      });
     },
     [voiceSupported, parse]
   );
+
+  const cancelVoice = useCallback(() => {
+    cancelledRef.current = true;
+    try { recognitionRef.current?.abort(); } catch { /* already stopped */ }
+    setIsListening(false);
+    setLiveTranscript("");
+    setState("idle");
+  }, []);
 
   /** Stop listening; whatever was said is parsed when the phone finishes (onend). */
   const stopVoice = useCallback(() => {
@@ -324,6 +359,7 @@ export function useAIExpense(): AIExpenseResult {
     parseReceipt,
     startVoice,
     stopVoice,
+    cancelVoice,
     reset,
     submitDraft,
   };

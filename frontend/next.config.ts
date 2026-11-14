@@ -25,7 +25,7 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   // Camera is used by the QR scanner and receipt capture; everything else stays off.
-  { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(), payment=(self)" },
+  { key: "Permissions-Policy", value: "camera=(self), microphone=(self), geolocation=(), payment=(self)" }, // microphone: Speak on AI Expense
   // Required for the Google sign-in popup to report back to the page (removes the
   // "Cross-Origin-Opener-Policy policy would block the window.postMessage call" warning).
   { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },

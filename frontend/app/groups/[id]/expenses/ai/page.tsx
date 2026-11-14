@@ -7,10 +7,11 @@ import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useAIExpense } from "@/hooks/useAIExpense";
 import ExpenseConfirmCard from "@/components/ExpenseConfirmCard";
+import ListeningSheet from "@/components/ListeningSheet";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Mic, Camera, Sparkles, Square, Loader2, ArrowRight } from "lucide-react";
+import { Mic, Camera, Sparkles, Loader2, ArrowRight } from "lucide-react";
 import type { ParsedExpenseDraft } from "@/hooks/types/ai";
 import { ask } from "@/lib/dialog";
 
@@ -154,25 +155,7 @@ export default function AIExpensePage() {
           {!isReview && (
             <>
               <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] p-4">
-                {isListening ? (
-                  <div className="min-h-[132px] flex flex-col items-center justify-center text-center gap-3 py-2">
-                    <span className="relative flex w-16 h-16">
-                      <span className="absolute inset-0 rounded-full bg-[var(--negative)] opacity-30 motion-safe:animate-ping" />
-                      <button
-                        type="button"
-                        onClick={() => ai.stopVoice()}
-                        className="relative w-16 h-16 rounded-full bg-[var(--negative)] text-white flex items-center justify-center shadow-lg"
-                        aria-label="Stop listening"
-                      >
-                        <Square size={20} fill="currentColor" />
-                      </button>
-                    </span>
-                    <p className="text-[17px] font-semibold leading-snug min-h-[1.5em] px-2">
-                      {ai.liveTranscript || <span className="text-[var(--text-muted)]">Listening… say it like a sentence</span>}
-                    </p>
-                    <p className="text-[12px] text-[var(--text-muted)]">Stops by itself when you pause, or tap to stop.</p>
-                  </div>
-                ) : (
+                {(
                   <textarea
                     rows={3}
                     value={text}
@@ -185,7 +168,7 @@ export default function AIExpensePage() {
                   />
                 )}
 
-                {!isListening && (
+                {(
                   <div className="flex items-center gap-2.5 mt-3 pt-3 border-t border-[var(--hairline)]">
                     {ai.voiceSupported && (
                       <button
@@ -216,6 +199,16 @@ export default function AIExpensePage() {
                   </div>
                 )}
               </section>
+
+              {isListening && (
+                <ListeningSheet
+                  transcript={ai.liveTranscript}
+                  names={members.map((m) => m.name.split(" ")[0])}
+                  example={examples[0]}
+                  onDone={() => ai.stopVoice()}
+                  onCancel={() => ai.cancelVoice()}
+                />
+              )}
 
               {!isParsing && !isListening && text.length === 0 && (
                 <section>
