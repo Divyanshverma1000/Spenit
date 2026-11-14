@@ -101,6 +101,39 @@ function legacyItems(rd: unknown): Item[] {
     }));
 }
 
+// ── Items the question is about ───────────────────────────────────────────────
+
+/** Words people use → what the item names actually say ("ice cream" → Cornetto, cone, kulfi…). */
+const SYNONYMS: Record<string, string[]> = {
+  icecream: ["ice cream", "icecream", "cornetto", "cone", "kulfi", "frozen dessert", "sundae", "gelato", "magnum", "tub", "kwality", "havmor", "baskin", "hocco", "vadilal", "amul ice"],
+  chips: ["chips", "crisps", "kurkure", "lays", "lay s", "bingo", "pringles", "nachos", "doritos", "uncle chips", "wafer"],
+  snack: ["snack", "namkeen", "bhujia", "mixture", "biscuit", "cookie", "chips", "crisps", "kurkure", "nachos", "popcorn", "wafer", "chakli", "makhana", "puffs", "chocolate", "noodles", "maggi"],
+  chocolate: ["chocolate", "dairy milk", "kitkat", "kit kat", "5 star", "snickers", "munch", "perk", "silk", "ferrero", "kinder", "bournville", "cadbury"],
+  drink: ["cola", "coke", "pepsi", "sprite", "thums up", "fanta", "juice", "soda", "red bull", "energy drink", "lassi", "buttermilk", "chaas"],
+  milk: ["milk", "toned", "doodh"],
+  vegetable: ["onion", "tomato", "potato", "lady", "bhindi", "capsicum", "coriander", "chilli", "garlic", "ginger", "cabbage", "cauliflower", "spinach", "palak", "carrot", "cucumber", "beans", "peas", "brinjal", "lemon", "mint", "methi"],
+  fruit: ["banana", "apple", "mango", "grapes", "orange", "papaya", "watermelon", "pomegranate", "kiwi", "guava", "sitaphal", "pear"],
+  print: ["print", "file", "poster", "page"],
+  stationery: ["glue", "fevistik", "scissors", "pen", "pencil", "notebook", "tape", "stapler"],
+};
+const STOP = new Set(["how", "much", "many", "what", "did", "do", "i", "we", "me", "my", "on", "for", "the", "a", "an", "and", "or", "of", "in", "spent", "spend", "spending", "bought", "buy", "items", "item", "like", "other", "all", "total", "is", "are", "was", "were", "have", "has", "you", "your", "this", "that", "month", "week", "breakdown", "each", "type", "want", "by", "give", "show", "list", "with", "from", "to", "it", "its", "also", "packed", "food", "things", "stuff", "cost", "price", "prices", "exact", "bills", "bill", "check", "these", "those"]);
+const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Search phrases from a question: its own words, plus what they usually appear as on bills. */
+export function searchTerms(question: string): string[] {
+  const q = ` ${norm(question)} `;
+  const out = new Set<string>();
+  for (const [key, list] of Object.entries(SYNONYMS)) {
+    const forms = [key, `${key}s`, key === "icecream" ? "ice cream" : key, key === "icecream" ? "ice creams" : key];
+    if (forms.some((f) => q.includes(` ${f} `)) || list.some((w) => q.includes(` ${w} `))) list.forEach((w) => out.add(w));
+  }
+  for (const w of norm(question).split(" ")) {
+    if (w.length < 3 || STOP.has(w) || /^\d+$/.test(w)) continue;
+    out.add(w.replace(/(ies)$/, "y").replace(/(es|s)$/, ""));
+  }
+  return [...out].filter((t) => t.length >= 3);
+}
+
 export function buildGroupContext(input: {
   groupName: string;
   viewerId: string;
@@ -111,6 +144,8 @@ export function buildGroupContext(input: {
   today?: Date;
   /** rough size cap for the expense list (characters) */
   budget?: number;
+  /** the question (and the one before it): every bill is searched for items it mentions */
+  focus?: string;
 }): GroupContext {
   const { viewerId, members, expenses, settlements, balance } = input;
   const budget = input.budget ?? 9000;
@@ -124,6 +159,37 @@ export function buildGroupContext(input: {
   L.push(`GROUP: ${input.groupName}`);
   L.push(`YOU ARE: ${nameOf(viewerId)}`);
   L.push(`MEMBERS: ${members.map((m) => m.name + (m.id === viewerId ? " (you)" : "") + (m.isPlaceholder ? " [hasn't joined the app yet]" : "")).join(", ")}`);
+
+  // ── Items the question asks about, from EVERY bill (nothing left out) ─────
+  const refs: Record<string, string> = {};
+  const terms = input.focus ? searchTerms(input.focus) : [];
+  if (terms.length) {
+    const rows: string[] = [];
+    let price = 0, mine = 0, n = 0;
+    expenses.forEach((e, i) => {
+      const items = readBill(e.receiptData)?.items ?? legacyItems(e.receiptData);
+      for (const it of items) {
+        if (it.masked || !it.name) continue;
+        const hay = ` ${norm(`${it.name} ${it.short ?? ""}`)} `;
+        const squashed = hay.replace(/ /g, "");
+        if (!terms.some((t) => hay.includes(` ${t}`) || (t.length >= 5 && squashed.includes(t.replace(/ /g, ""))))) continue;
+        const ref = `E${i + 1}`;
+        refs[ref] = e.id;
+        const part = it.sharedBy.includes(viewerId) && it.sharedBy.length ? it.lineTotal / it.sharedBy.length : 0;
+        price += it.lineTotal; mine += part; n++;
+        if (rows.length < 60) {
+          rows.push(`- [${ref}] ${day(e.createdAt)} "${clip(e.description, 30)}": ${clip(it.name, 60)}${it.qty && it.qty > 1 ? ` x${it.qty}` : ""} ${inr(it.lineTotal)} [${it.sharedBy.map((u) => nameOf(u).split(" ")[0]).join("+")}] · your part ${inr(part)}`);
+        }
+      }
+    });
+    L.push("", `ITEMS MATCHING THE QUESTION (searched every bill for: ${terms.slice(0, 12).join(", ")}). This list is COMPLETE and exact: answer item questions ONLY from it, never add others or change prices/quantities:`);
+    if (n === 0) L.push("- No matching items on any bill.");
+    else {
+      L.push(...rows);
+      if (n > rows.length) L.push(`- …${n - rows.length} more matching rows (included in the totals below)`);
+      L.push(`MATCHING TOTAL: ${n} items, ${inr(price)} in all, your part ${inr(mine)} (item prices, before fees)`);
+    }
+  }
 
   // ── Balances: what is still open ──────────────────────────────────────────
   L.push("", "BALANCES NOW (every expense minus confirmed payments; this is what is still pending):");
@@ -247,7 +313,6 @@ export function buildGroupContext(input: {
 
   // ── Each expense, newest first, until the budget runs out ─────────────────
   L.push("", "EXPENSES (newest first; ref in brackets):");
-  const refs: Record<string, string> = {};
   let used = 0, shown = 0;
   for (const [i, e] of expenses.entries()) {
     const ref = `E${i + 1}`;

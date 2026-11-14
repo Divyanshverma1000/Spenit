@@ -106,3 +106,42 @@ describe("why shares differ", () => {
     expect(text).toMatch(/Suryansh: share ₹36\.67 = whole group ₹36\.67/);
   });
 });
+
+import { searchTerms } from "./groupAiContext";
+
+describe("items matching the question", () => {
+  const members = [{ id: "a", name: "Divyansh" }, { id: "b", name: "Suryansh" }];
+  const bill = (id: string, items: { name: string; lineTotal: number; sharedBy?: string[] }[]) => ({
+    id, description: "Instamart order", amount: items.reduce((x, i) => x + i.lineTotal, 0), createdAt: "2026-11-10T10:00:00Z",
+    payers: [{ userId: "a", name: "Divyansh", amountPaid: 1 }], splits: [{ userId: "a", name: "Divyansh", shareAmount: 1 }],
+    receiptData: { items: items.map((i) => ({ ...i, sharedBy: i.sharedBy ?? ["a"] })) },
+  });
+  const expenses = [
+    bill("x1", [{ name: "Crystal Microfiber Cloth Roll", lineTotal: 249 }, { name: "Karkure Chilli Chatka Crisps", lineTotal: 20 },
+      { name: "Mother Dairy Probiotic Tadka Salted Buttermilk", lineTotal: 20 }, { name: "Hocco Chillo Dark Chocolate Ice Cream Cone", lineTotal: 50 }]),
+    bill("x2", [{ name: "Kwalitty Wall's Cornetto Double Chocolate Frozen Dessert Cone", lineTotal: 40 },
+      { name: "Kwalitty Wall's Cornetto Butterscotch Frozen Dessert Cone", lineTotal: 40 }, { name: "File 6 - Poster", lineTotal: 3 }]),
+  ];
+
+  it("turns everyday words into what bills say", () => {
+    const t = searchTerms("how much on ice creams, chips and snacks?");
+    expect(t).toEqual(expect.arrayContaining(["cornetto", "frozen dessert", "kurkure", "crisps"]));
+  });
+
+  it("lists every matching item from every bill, with exact totals", () => {
+    const { text, refs } = buildGroupContext({ groupName: "Flat", viewerId: "a", members, expenses, settlements: [], balance: null, budget: 50, focus: "how much on ice creams and chips" });
+    const block = text.slice(text.indexOf("ITEMS MATCHING"), text.indexOf("BALANCES NOW"));
+    expect(block).toContain("Hocco Chillo Dark Chocolate Ice Cream Cone ₹50.00");
+    expect(block).toContain("Cornetto Butterscotch");
+    expect(block).toContain("Karkure Chilli Chatka Crisps ₹20.00");
+    expect(block).not.toContain("Buttermilk");
+    expect(block).not.toContain("Poster");
+    expect(block).toContain("MATCHING TOTAL: 4 items, ₹150.00 in all, your part ₹150.00");
+    expect(Object.values(refs)).toEqual(expect.arrayContaining(["x1", "x2"]));
+  });
+
+  it("says so when nothing matches", () => {
+    const { text } = buildGroupContext({ groupName: "Flat", viewerId: "a", members, expenses, settlements: [], balance: null, focus: "how much on pizza" });
+    expect(text).toContain("No matching items on any bill.");
+  });
+});

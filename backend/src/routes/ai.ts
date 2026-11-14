@@ -566,6 +566,8 @@ router.post(
       settlements,
       balance,
       budget,
+      // search every bill for the items this question (and the one before) is about
+      focus: [question, ...(Array.isArray(history) ? history : []).filter((m: any) => m?.role === "user" && typeof m?.content === "string").slice(-1).map((m: any) => m.content)].join(" \n "),
     });
     let ctx = build(5500);
 
