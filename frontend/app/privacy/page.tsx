@@ -19,6 +19,7 @@ export default function PrivacyPage() {
           <li><b>Screenshots and receipt photos.</b> When you import orders or scan a receipt, the image is sent to our server and to our AI provider to read it. <b>We don&apos;t keep the image</b>; we keep only what you save (items, prices, who shares what).</li>
           <li><b>Questions you ask the assistant.</b> Sent with your group&apos;s data to our AI provider to answer. The chat history stays on your device for the session; we don&apos;t store it on our servers.</li>
           <li><b>Messages you send us.</b> When you report a problem or share an idea, we keep the message with the screen you were on, the app version and your device type, to fix things and reply.</li>
+          <li><b>How you use Spenit.</b> The days you open it, when you were last active, and counts of what you use (bills added, screenshots read, questions asked). We look at this to see whether Spenit is useful and what to improve. It holds no bill contents, isn&apos;t shared with anyone and isn&apos;t used for ads.</li>
           <li><b>Notifications.</b> If you allow them, a push subscription for your device.</li>
           <li><b>Technical data.</b> IP address, device and browser type, and error logs, kept for a short time to run the service and keep it secure.</li>
         </ul>
