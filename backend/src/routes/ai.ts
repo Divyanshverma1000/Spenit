@@ -137,7 +137,7 @@ router.post(
     let result;
     try {
       result = await ai.parseExpenseText(text.trim(), groupContext);
-      await bump({ ai_calls: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) });
+      await bump({ ai_calls: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) }, userId);
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: text.trim() };
     }
@@ -383,7 +383,7 @@ router.post(
     } catch (e) {
       result = { fallback: true, reason: "config_error", rawText: "[receipt image]" };
     }
-    await bump({ ai_calls: 1, receipt_scans: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) });
+    await bump({ ai_calls: 1, receipt_scans: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) }, userId);
 
     res.json(result);
   }
@@ -445,7 +445,7 @@ router.post(
     }
     await bump(result.ok
       ? { ai_calls: 1, order_reads: 1, ai_tokens_in: result.usage?.promptTokens ?? 0, ai_tokens_out: result.usage?.completionTokens ?? 0 }
-      : { ai_calls: 1, ai_failures: 1 });
+      : { ai_calls: 1, ai_failures: 1 }, userId);
     if (!result.ok) {
       console.warn(
         `[ai] stage=EXTRACT_FAILED at=${result.stage} reason=${result.reason} status=${result.status ?? "-"} model=${result.model} keySource=${source} keys=${keys.length} msg=${(result.message ?? "").slice(0, 160)}`
@@ -582,7 +582,7 @@ router.post(
     if (!result) { res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." }); return; }
     await bump(result.ok
       ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
-      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
+      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 }, userId);
     if (!result.ok) {
       const { keys } = await groqLanesFor(userId, 0);
       const e = chatError(result, keys.length);
@@ -688,7 +688,7 @@ router.post(
     if (!result) { res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." }); return; }
     await bump(result.ok
       ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
-      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
+      : { ai_calls: 1, ai_failures: 1, chat_questions: 1 }, userId);
     if (!result.ok) {
       const { keys } = await groqLanesFor(userId, 0);
       const e = chatError(result, keys.length);

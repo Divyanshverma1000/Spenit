@@ -48,8 +48,25 @@ export type Metric =
   | "ai_calls" | "ai_failures" | "ai_tokens_in" | "ai_tokens_out"
   | "order_reads" | "chat_questions" | "receipt_scans";
 
-/** Add to today's counters, e.g. bump({ ai_calls: 1, ai_tokens_in: 812 }). */
-export async function bump(counts: Partial<Record<Metric, number>>): Promise<void> {
+/** Per-person counters kept for the admin People view (what each person uses, not what they wrote). */
+const PER_USER: Metric[] = ["ai_calls", "order_reads", "chat_questions", "receipt_scans"];
+
+/**
+ * Add to today's counters, e.g. bump({ ai_calls: 1, ai_tokens_in: 812 }). With a userId,
+ * the AI-use counts are also kept per person.
+ */
+export async function bump(counts: Partial<Record<Metric, number>>, userId?: string): Promise<void> {
+  if (userId) {
+    const mine = Object.entries(counts).filter(([m, n]) => PER_USER.includes(m as Metric) && typeof n === "number" && n > 0) as [Metric, number][];
+    if (mine.length) {
+      pool.query(
+        `insert into "UserUsageDaily" (user_id, day, metric, count)
+         select $1, ${IST_DAY}, m, n from unnest($2::text[], $3::bigint[]) as t(m, n)
+         on conflict (user_id, day, metric) do update set count = "UserUsageDaily".count + excluded.count`,
+        [userId, mine.map((e) => e[0]), mine.map((e) => Math.round(e[1]))]
+      ).catch(() => {});
+    }
+  }
   const entries = Object.entries(counts).filter(([, n]) => typeof n === "number" && n > 0) as [Metric, number][];
   if (entries.length === 0) return;
   try {

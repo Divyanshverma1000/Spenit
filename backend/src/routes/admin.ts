@@ -9,6 +9,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { adminEmails } from "../lib/telemetry";
+import { stageOf, usefulness } from "../lib/peopleStage";
 
 const router = Router();
 
@@ -125,6 +126,91 @@ router.get("/stats", requireAuth, requireAdmin, async (_req: Request, res: Respo
     feedback: { open: fbCounts?.open ?? 0, total: fbCounts?.total ?? 0, items: feedback },
     revenue: null, // payments aren't set up yet
   });
+});
+
+/**
+ * GET /admin/people — everyone who signed up, for getting to know the first users.
+ * Who they are, how they found Spenit, how often they come back and what they use.
+ * Counts and group names only: never what's on anyone's bills.
+ */
+router.get("/people", requireAuth, requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  const { rows } = await pool.query(`
+    select u.id, u.name, u.email, u.avatar_url, u.created_at, u.last_seen_at,
+      (u.groq_api_key is not null) as own_key,
+      jsonb_array_length(coalesce(u.groq_extra_keys, '[]'::jsonb))::int as extra_keys,
+      exists (select 1 from "PushSubscription" p where p.user_id = u.id) as push,
+      coalesce((select array_agg((${IST}::date - a.day)::int order by a.day desc)
+                from "UserActiveDay" a where a.user_id = u.id and a.day > ${IST}::date - 30), '{}') as active_ago,
+      (select count(*) from "UserActiveDay" a where a.user_id = u.id)::int as active_days_total,
+      (select count(*) from "Expense" e where e.created_by = u.id and e.deleted_at is null)::int as bills,
+      (select count(*) from "Expense" e where e.created_by = u.id and e.deleted_at is null and e.split_type = 'itemized')::int as imports,
+      (select coalesce(sum(e.amount), 0) from "Expense" e where e.created_by = u.id and e.deleted_at is null)::float as money_added,
+      (select max(e.created_at) from "Expense" e where e.created_by = u.id and e.deleted_at is null) as last_bill_at,
+      (select count(*) from "Settlement" s where s.initiated_by = u.id and s.deleted_at is null)::int as payments,
+      (select count(*) from "PersonalExpense" pe where pe.user_id = u.id and pe.deleted_at is null)::int as personal,
+      (select coalesce(jsonb_object_agg(metric, n), '{}'::jsonb) from (
+         select metric, sum(count)::int as n from "UserUsageDaily" x
+         where x.user_id = u.id and x.day > ${IST}::date - 30 group by metric) t) as ai30,
+      (select coalesce(jsonb_agg(jsonb_build_object('name', g.name, 'members', mc.n, 'mine', g.created_by = u.id) order by gm.joined_at), '[]'::jsonb)
+       from "GroupMember" gm join "Group" g on g.id = gm.group_id and g.deleted_at is null
+       cross join lateral (select count(*)::int as n from "GroupMember" m where m.group_id = g.id) mc
+       where gm.user_id = u.id) as groups,
+      (select jsonb_build_object('group', g.name, 'by', coalesce(cu.name, 'someone'), 'claimed',
+                exists (select 1 from "MemberClaim" c where c.claimed_by = u.id and c.group_id = g.id and c.undone_at is null))
+       from "GroupMember" gm join "Group" g on g.id = gm.group_id left join "User" cu on cu.id = g.created_by
+       where gm.user_id = u.id and g.created_by <> u.id and gm.joined_at < u.created_at + interval '1 day'
+       order by gm.joined_at limit 1) as came_via
+    from "User" u
+    where u.is_placeholder = false and u.deleted_at is null
+    order by u.last_seen_at desc nulls last
+    limit 500
+  `);
+
+  const now = new Date();
+  const people = rows.map((r) => {
+    const activeAgo = (r.active_ago as number[]) ?? [];
+    const ai = (r.ai30 ?? {}) as Record<string, number>;
+    const groups = (r.groups ?? []) as { name: string; members: number; mine: boolean }[];
+    return {
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      avatarUrl: r.avatar_url,
+      joinedAt: r.created_at,
+      lastSeenAt: r.last_seen_at,
+      cameVia: r.came_via ?? null,
+      stage: stageOf({ createdAt: new Date(r.created_at), lastSeenAt: r.last_seen_at ? new Date(r.last_seen_at) : null, activeAgo }, now),
+      usefulness: usefulness({
+        activeAgo, bills: r.bills, imports: r.imports, payments: r.payments, groups: groups.length,
+        chats: ai.chat_questions ?? 0, personal: r.personal,
+      }),
+      activeAgo,
+      activeDaysTotal: r.active_days_total,
+      groups,
+      counts: {
+        bills: r.bills, imports: r.imports, payments: r.payments, personal: r.personal,
+        moneyAdded: Math.round(r.money_added), lastBillAt: r.last_bill_at,
+        scans30d: (ai.order_reads ?? 0) + (ai.receipt_scans ?? 0),
+        chats30d: ai.chat_questions ?? 0,
+        aiCalls30d: ai.ai_calls ?? 0,
+      },
+      setup: { push: r.push, ownKey: r.own_key, extraKeys: r.extra_keys },
+    };
+  });
+
+  // Who brought people in: the group creators new people joined through.
+  const brought = new Map<string, { name: string; people: number; active: number }>();
+  for (const p of people) {
+    if (!p.cameVia) continue;
+    const k = p.cameVia.by as string;
+    const b = brought.get(k) ?? { name: k, people: 0, active: 0 };
+    b.people++;
+    if (["hooked", "regular", "new"].includes(p.stage)) b.active++;
+    brought.set(k, b);
+  }
+
+  res.set("Cache-Control", "no-store");
+  res.json({ generatedAt: now.toISOString(), people, inviters: [...brought.values()].sort((a, b) => b.people - a.people).slice(0, 10) });
 });
 
 export default router;

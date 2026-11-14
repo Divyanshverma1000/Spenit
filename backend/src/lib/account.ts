@@ -65,7 +65,7 @@ export async function deleteAccount(db: Db, userId: string, openGroups: Set<stri
   }
 
   // Personal data: gone.
-  for (const table of ["PersonalExpense", "PushSubscription", "UserPhoto", "IdempotencyKey"]) {
+  for (const table of ["PersonalExpense", "PushSubscription", "UserPhoto", "IdempotencyKey", "UserUsageDaily"]) {
     await db.query(`delete from "${table}" where user_id = $1`, [userId]);
   }
   await db.query(
