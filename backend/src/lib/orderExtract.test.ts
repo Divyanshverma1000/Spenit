@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeOrder, checkTotals, toMoney } from "./orderExtract";
+import { normalizeOrder, checkTotals, toMoney, fixDecimalSlips } from "./orderExtract";
 import { parseModelJson } from "../ai/GroqProvider";
 
 // Model answers shaped like real screenshots (numbers copied from the bills).
@@ -197,5 +197,47 @@ describe("receipts and payments", () => {
 
   it("calls an item-less total a payment even if the model didn't", () => {
     expect(normalizeOrder({ grandTotal: 210, merchant: "Uber" }).kind).toBe("payment");
+  });
+});
+
+describe("decimal slips (Instamart '₹29.0' read as 290)", () => {
+  // The real Instamart order: Item Bill ₹444, fees ₹30, offer −₹18, grand total ₹456.
+  const raw = {
+    kind: "order", platform: "instamart", itemTotal: 444, grandTotal: 456,
+    items: [
+      { name: "English Oven Premium White Bread", lineTotal: 35 },
+      { name: "Custard Apple (Sitaphal)", lineTotal: 96 },
+      { name: "Premium Robusta Banana (Kela)", lineTotal: 290 },
+      { name: "Amul Processed Cheese Slices", lineTotal: 82 },
+      { name: "Coriander Leaves", lineTotal: 90 },
+      { name: "Indian Tomato (Tamatar)", lineTotal: 30 },
+      { name: "NOICE Fresh Malai Paneer (Handmade Daily)", lineTotal: 990 },
+      { name: "Everest Tikhalal Hot & Red Chilli Powder", lineTotal: 64 },
+    ],
+    fees: [{ kind: "delivery", label: "Delivery Fee", amount: 18 }, { kind: "handling", label: "Handling Fee", amount: 12 }],
+    discounts: [{ label: "Offer Discount", amount: 18 }],
+  };
+
+  it("fixes exactly the slipped prices so the bill adds up", () => {
+    const o = normalizeOrder(raw);
+    expect(o.items.map((i) => i.lineTotal)).toEqual([35, 96, 29, 82, 9, 30, 99, 64]);
+    expect(checkTotals(o).status).toBe("ok");
+    expect(o.uncertain.some((u) => u.includes("Premium Robusta Banana") && u.includes("fixed to 29"))).toBe(true);
+  });
+
+  it("works from the grand total when no item total was read", () => {
+    const o = normalizeOrder({ ...raw, itemTotal: null });
+    expect(o.items.reduce((a, i) => a + i.lineTotal, 0)).toBe(444);
+  });
+
+  it("leaves prices alone when no single fix makes it add up", () => {
+    const items = [{ name: "A", short: null, variant: null, qty: 1, lineTotal: 200, mrp: null }, { name: "B", short: null, variant: null, qty: 1, lineTotal: 50, mrp: null }];
+    expect(fixDecimalSlips(items, 100)).toEqual([]);
+    expect(items[0].lineTotal).toBe(200);
+  });
+
+  it("leaves a bill that already adds up alone", () => {
+    const items = [{ name: "A", short: null, variant: null, qty: 1, lineTotal: 290, mrp: null }];
+    expect(fixDecimalSlips(items, 290)).toEqual([]);
   });
 });

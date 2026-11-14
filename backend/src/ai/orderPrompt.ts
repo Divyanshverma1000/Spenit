@@ -18,7 +18,7 @@ export const ORDER_EXTRACT_PROMPT = `You read ONE picture of spending in India a
 - "payment": a single amount with no item list: a UPI payment screen (Google Pay, PhonePe, Paytm, BHIM…), a card/bank payment, a cab or auto ride (Uber, Ola, Rapido), a ticket or booking (IRCTC, MakeMyTrip, BookMyShow, flights, hotels), or a utility / phone / wifi bill.
 
 RULES
-1. Copy numbers EXACTLY as printed. Never calculate, round or guess. If a value is not visible, use null.
+1. Copy numbers EXACTLY as printed. Never calculate, round or guess. If a value is not visible, use null. Keep the decimal point: "₹29.0" is 29, "₹99.0" is 99, "₹9.0" is 9 (Instamart prints one decimal; it is never 290, 990 or 90). Check: the item prices should add up to the printed item total.
 2. A product row often shows two prices. The crossed-out (struck-through, usually grey) one is the MRP. lineTotal = the price actually paid for that row (not crossed out). Put the crossed-out one in mrp, else null. On printed bills with columns (Item · Qty · Rate · Amount), lineTotal = the Amount column.
 3. qty = how many units were bought ("2 x Milk", "100 g x 2", "Qty 2", "x2", the Qty column). Default 1. Pack/size text such as "500 g", "1 set (3 pcs)", "270 ml", "Pack of 2" is the variant, NOT qty.
 4. items = products / dishes only, top to bottom as shown. If a row is cut off and its name or price is not visible, leave it out. For "payment" pictures items is [].

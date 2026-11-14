@@ -127,6 +127,36 @@ function cleanOrderId(v: unknown): string | null {
 }
 
 /** Coerce the model's JSON into an ExtractedOrder. Rows without a usable name or price are dropped. */
+/**
+ * Instamart prints prices with one decimal ("₹29.0", "₹99.0") and the vision model sometimes
+ * drops the point, reading 290 and 990. When the items don't come to the printed item total
+ * (or grand total less fees plus discounts), look for the ONE set of prices ending in 0 that,
+ * divided by 10, makes them add up exactly. No match, or more than one, and nothing changes.
+ * Returns the indexes it fixed.
+ */
+export function fixDecimalSlips(items: ExtractedItem[], target: number | null): number[] {
+  if (target === null || items.length === 0) return [];
+  const sum = items.reduce((a, i) => a + i.lineTotal, 0);
+  if (Math.abs(sum - target) <= 0.5 || sum < target) return [];
+  const cand = items.map((it, i) => ({ i, v: it.lineTotal })).filter((c) => c.v >= 10 && Math.abs(c.v % 10) < 0.001);
+  if (cand.length === 0 || cand.length > 18) return [];
+  const need = (sum - target) / 0.9; // what the slipped prices add up to
+  const hits: number[][] = [];
+  for (let mask = 1; mask < 1 << cand.length && hits.length < 2; mask++) {
+    let tot = 0;
+    for (let b = 0; b < cand.length; b++) if (mask & (1 << b)) tot += cand[b].v;
+    if (Math.abs(tot - need) <= 0.5) hits.push(cand.filter((_, b) => mask & (1 << b)).map((c) => c.i));
+  }
+  if (hits.length !== 1) return [];
+  for (const i of hits[0]) {
+    const it = items[i];
+    it.lineTotal = Math.round(it.lineTotal) / 10;
+    if (it.mrp !== null && it.mrp >= 10 * it.lineTotal - 0.001 && Math.abs(it.mrp % 10) < 0.001) it.mrp = it.mrp / 10;
+    if (it.mrp !== null && it.mrp <= it.lineTotal) it.mrp = null;
+  }
+  return hits[0];
+}
+
 export function normalizeOrder(raw: any): ExtractedOrder {
   const platform = String(raw?.platform || "").toLowerCase() as OrderPlatform;
 
@@ -168,6 +198,12 @@ export function normalizeOrder(raw: any): ExtractedOrder {
   const confidence = ["high", "medium", "low"].includes(raw?.confidence) ? raw.confidence : "medium";
   const grandTotal = toMoney(raw?.grandTotal);
 
+  // Decimal slips ("₹29.0" read as 290): fixed only when it makes the bill add up exactly.
+  const itemTotal = toMoney(raw?.itemTotal);
+  const extras = fees.reduce((a, f) => a + f.amount, 0) - discounts.reduce((a, d) => a + d.amount, 0);
+  const fixed = fixDecimalSlips(items, itemTotal ?? (grandTotal !== null ? Math.round((grandTotal - extras) * 100) / 100 : null));
+  const fixedNotes = fixed.map((i) => `price of ${items[i].name} (read as ${Math.round(items[i].lineTotal * 10)}, fixed to ${items[i].lineTotal})`);
+
   const rawKind = String(raw?.kind || "").toLowerCase();
   // No items but a total: a payment, whatever the model called it.
   const kind: SpendKind = (SPEND_KINDS as readonly string[]).includes(rawKind)
@@ -188,7 +224,7 @@ export function normalizeOrder(raw: any): ExtractedOrder {
     items,
     fees,
     discounts,
-    itemTotal: toMoney(raw?.itemTotal),
+    itemTotal,
     grandTotal,
     page: {
       hasHeader: Boolean(raw?.page?.hasHeader),
@@ -198,7 +234,8 @@ export function normalizeOrder(raw: any): ExtractedOrder {
     uncertain: (Array.isArray(raw?.uncertain) ? raw.uncertain : [])
       .map((u: unknown) => str(u, 80))
       .filter((u: string | null): u is string => !!u)
-      .slice(0, 10),
+      .concat(fixedNotes)
+      .slice(0, 12),
   };
 }
 
