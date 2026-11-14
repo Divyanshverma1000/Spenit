@@ -441,8 +441,9 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   );
 
   // ── 8. Push notifications — notify all OTHER group members ─────────────────
-  // Fire-and-forget: push MUST NOT fail the HTTP response.
-  ;(async () => {
+  // Push must never fail the request (errors are caught inside).
+  // Awaited: on Workers, work still running after the reply is cut off.
+  await (async () => {
     try {
       const [membersRes, creatorRes] = await Promise.all([
         pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [body.groupId]),
@@ -578,7 +579,8 @@ router.post("/batch", requireAuth, async (req: Request, res: Response): Promise<
   );
 
   // One push for the whole import, not one per order.
-  ;(async () => {
+  // Awaited: on Workers, work still running after the reply is cut off.
+  await (async () => {
     try {
       const [membersRes, creatorRes] = await Promise.all([
         pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [groupId]),
@@ -837,10 +839,10 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
     console.error("Balance cache invalidation failed:", err)
   );
 
-  res.json({ id, groupId: e.group_id, message: "Expense updated" });
 
   // Tell the others it changed (fire-and-forget; never affects the response).
-  ;(async () => {
+  // Awaited: on Workers, work still running after the reply is cut off.
+  await (async () => {
     try {
       const [membersRes, editorRes] = await Promise.all([
         pool.query('SELECT user_id FROM "GroupMember" WHERE group_id = $1', [e.group_id]),
@@ -865,6 +867,8 @@ router.put("/:id", requireAuth, async (req: Request, res: Response): Promise<voi
       console.error("[push] expense edit notification failed:", err);
     }
   })();
+
+  res.json({ id, groupId: e.group_id, message: "Expense updated" });
 });
 
 // ─── PATCH /expenses/:id/item-visibility ──────────────────────────────────────

@@ -141,19 +141,10 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
     upiDeepLink = `upi://pay?${params.toString()}`;
   }
 
-  res.status(201).json({
-    ...settlement,
-    upiDeepLink,
-    toUser: {
-      id: toUser.id,
-      name: toUser.name,
-      upiId: toUser.upi_id,
-    },
-  });
 
   // ── Push notification: tell to_user they have a settlement request ────────────
-  // Fire-and-forget — never blocks the response already sent above.
-  ;(async () => {
+  // Awaited: on Workers, work still running after the reply is cut off.
+  await (async () => {
     try {
       const fromRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
       const fromName = fromRes.rows[0]?.name || "Someone";
@@ -165,6 +156,16 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
       });
     } catch (err) { console.error("[push] settlement request notification failed:", err); }
   })();
+
+  res.status(201).json({
+    ...settlement,
+    upiDeepLink,
+    toUser: {
+      id: toUser.id,
+      name: toUser.name,
+      upiId: toUser.upi_id,
+    },
+  });
 });
 
 // ─── POST /settlements/:id/confirm ────────────────────────────────────────────
@@ -223,10 +224,9 @@ router.post("/:id/confirm", requireAuth, async (req: Request, res: Response): Pr
     console.error("Balance cache invalidation error after confirm:", err)
   );
 
-  res.json(updated.rows[0]);
-
   // ── Push notification: tell from_user their payment was confirmed received ──────
-  ;(async () => {
+  // Awaited: on Workers, work still running after the reply is cut off.
+  await (async () => {
     try {
       const confirmerRes = await pool.query('SELECT name FROM "User" WHERE id = $1', [userId]);
       const confirmerName = confirmerRes.rows[0]?.name || "Someone";
@@ -238,6 +238,8 @@ router.post("/:id/confirm", requireAuth, async (req: Request, res: Response): Pr
       });
     } catch (err) { console.error("[push] settlement confirm notification failed:", err); }
   })();
+
+  res.json(updated.rows[0]);
 });
 
 // ─── POST /settlements/:id/reject ─────────────────────────────────────────────
