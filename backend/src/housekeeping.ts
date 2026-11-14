@@ -36,6 +36,7 @@ export async function runHousekeeping(): Promise<void> {
   if (await databaseHeartbeat()) {
     await cleanupIdempotencyKeys();
     await cleanupRateCounters().catch(() => {});
+    await pool.query(`delete from "NotificationLog" where created_at < now() - interval '30 days'`).catch(() => {});
     // AI keys saved before encryption existed: encrypt them.
     const n = await upgradePlainKeys(pool).catch((err) => { console.warn("[housekeeping] key upgrade skipped:", (err as Error).message); return 0; });
     if (n) console.log(`[housekeeping] encrypted ${n} stored AI keys`);

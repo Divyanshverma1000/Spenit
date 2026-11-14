@@ -15,6 +15,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Palette, Camera, Loader2, Download, UserX, CheckCircle2, XCircle } from "lucide-react";
 import DeleteAccountSheet from "@/components/DeleteAccountSheet";
 import FeedbackSheet from "@/components/FeedbackSheet";
+import { lastScreen } from "@/lib/trail";
 import ExtraGroqKeys from "@/components/ExtraGroqKeys";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { fileToSquareAvatar } from "@/lib/image";
@@ -527,7 +528,7 @@ export default function ProfilePage() {
           </motion.div>
         ) : null}
       </main>
-      {showFeedback && <FeedbackSheet from="/profile" onClose={() => setShowFeedback(false)} />}
+      {showFeedback && <FeedbackSheet from={lastScreen() ?? "/profile"} onClose={() => setShowFeedback(false)} />}
       {showDelete && (
         <DeleteAccountSheet
           onClose={() => setShowDelete(false)}

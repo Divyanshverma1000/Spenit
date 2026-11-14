@@ -19,6 +19,7 @@ import m016 from "../../migrations/016_feedback.sql";
 import m017 from "../../migrations/017_fix_undone_claims.sql";
 import m018 from "../../migrations/018_groq_extra_keys.sql";
 import m019 from "../../migrations/019_user_usage.sql";
+import m020 from "../../migrations/020_notification_log.sql";
 
 const BUNDLED: { filename: string; sql: string }[] = [
   { filename: "010_group_avatars.sql", sql: m010 },
@@ -31,6 +32,7 @@ const BUNDLED: { filename: string; sql: string }[] = [
   { filename: "017_fix_undone_claims.sql", sql: m017 },
   { filename: "018_groq_extra_keys.sql", sql: m018 },
   { filename: "019_user_usage.sql", sql: m019 },
+  { filename: "020_notification_log.sql", sql: m020 },
 ];
 
 /** Any stable 64-bit number: serialises migration runs across concurrent isolates. */

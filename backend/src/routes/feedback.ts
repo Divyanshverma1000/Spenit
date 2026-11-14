@@ -52,7 +52,8 @@ router.post("/", requireAuth, async (req: Request, res: Response): Promise<void>
   const admins = adminEmails();
   if (admins.length) {
     const ids = await pool.query('select id from "User" where lower(email) = any($1::text[]) and deleted_at is null', [admins]);
-    sendToUsers(ids.rows.map((a: { id: string }) => a.id), {
+    // awaited: on Workers anything still running after the reply is cut off
+    await sendToUsers(ids.rows.map((a: { id: string }) => a.id), {
       title: k === "problem" ? "New problem report" : k === "idea" ? "New idea" : k === "test" ? "Test results in" : "New feedback",
       body: scrub(text).slice(0, 100),
       url: "/admin",

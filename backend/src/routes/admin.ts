@@ -9,6 +9,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { adminEmails } from "../lib/telemetry";
+import { sendToUser } from "../push";
 import { stageOf, usefulness } from "../lib/peopleStage";
 
 const router = Router();
@@ -212,5 +213,48 @@ router.get("/people", requireAuth, requireAdmin, async (_req: Request, res: Resp
   res.set("Cache-Control", "no-store");
   res.json({ generatedAt: now.toISOString(), people, inviters: [...brought.values()].sort((a, b) => b.people - a.people).slice(0, 10) });
 });
+
+/**
+ * GET /admin/notifications — did notifications go out? The devices that can receive them
+ * (yours and everyone's count), and the last 40 sends with what happened to each.
+ */
+router.get("/notifications", requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const me = req.user!.userId;
+  const [mine, totals, log] = await Promise.all([
+    pool.query(
+      `select id, user_agent, endpoint, created_at, updated_at from "PushSubscription" where user_id = $1 order by updated_at desc nulls last`,
+      [me]
+    ),
+    pool.query(`select count(*)::int as devices, count(distinct user_id)::int as people from "PushSubscription"`),
+    pool.query(
+      `select l.id::int as id, l.created_at, l.title, l.tag, l.devices, l.delivered, l.failed, l.removed, l.error, coalesce(u.name, 'Deleted user') as name
+       from "NotificationLog" l left join "User" u on u.id = l.user_id
+       order by l.created_at desc limit 40`
+    ),
+  ]);
+  const service = (endpoint: string) => {
+    const h = (() => { try { return new URL(endpoint).hostname; } catch { return ""; } })();
+    return h.includes("google") ? "Chrome / Android" : h.includes("mozilla") ? "Firefox" : h.includes("windows") || h.includes("notify") ? "Edge / Windows" : h.includes("apple") ? "Safari / iPhone" : h || "Unknown";
+  };
+  res.set("Cache-Control", "no-store");
+  res.json({
+    myDevices: mine.rows.map((d) => ({ id: d.id, service: service(d.endpoint), device: d.user_agent ? deviceName(d.user_agent) : null, added: d.created_at, seen: d.updated_at })),
+    everyone: totals.rows[0],
+    log: log.rows,
+  });
+});
+
+/** POST /admin/notifications/test — send yourself one now and say exactly what happened. */
+router.post("/notifications/test", requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const r = await sendToUser(req.user!.userId, { title: "Test from Admin", body: "If you can read this, notifications reach this account.", url: "/admin", tag: "admin-test" });
+  res.json(r);
+});
+
+/** "Chrome on Android", "Edge on Windows"… from a user agent. */
+function deviceName(ua: string): string {
+  const os = /android/i.test(ua) ? "Android" : /iphone|ipad/i.test(ua) ? "iPhone" : /windows/i.test(ua) ? "Windows" : /mac os/i.test(ua) ? "Mac" : /linux/i.test(ua) ? "Linux" : "";
+  const br = /edg\//i.test(ua) ? "Edge" : /chrome|crios/i.test(ua) ? "Chrome" : /firefox|fxios/i.test(ua) ? "Firefox" : /safari/i.test(ua) ? "Safari" : "";
+  return [br, os].filter(Boolean).join(" on ") || "Unknown device";
+}
 
 export default router;

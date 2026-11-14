@@ -56,8 +56,28 @@ export interface PushPayload {
  * Stale (410/404) subscriptions are automatically purged from the DB.
  * This function NEVER throws — all errors are caught and logged.
  */
-export async function sendToUser(userId: string, payload: PushPayload): Promise<void> {
-  if (!ensureVapid()) return; // Push disabled
+export interface SendResult { devices: number; delivered: number; failed: number; removed: number; errors: string[] }
+
+/** Write down what happened, so "was that notification ever sent?" has an answer. */
+async function logSend(userId: string, payload: PushPayload, r: SendResult): Promise<void> {
+  try {
+    await pool.query(
+      `insert into "NotificationLog" (user_id, title, tag, devices, delivered, failed, removed, error)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [userId, payload.title.slice(0, 120), payload.tag ?? null, r.devices, r.delivered, r.failed, r.removed, r.errors.join("; ").slice(0, 300) || null]
+    );
+  } catch {
+    // the log is best effort
+  }
+}
+
+export async function sendToUser(userId: string, payload: PushPayload): Promise<SendResult> {
+  const result: SendResult = { devices: 0, delivered: 0, failed: 0, removed: 0, errors: [] };
+  if (!ensureVapid()) {
+    result.errors.push("Push isn't set up on the server (VAPID keys missing)");
+    await logSend(userId, payload, result);
+    return result;
+  }
 
   let subscriptions: { id: string; endpoint: string; p256dh: string; auth: string }[];
   try {
@@ -68,10 +88,17 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
     subscriptions = result.rows;
   } catch (err) {
     console.error("[push] DB lookup failed:", err);
-    return;
+    result.errors.push("Couldn't read this person's devices");
+    await logSend(userId, payload, result);
+    return result;
   }
 
-  if (subscriptions.length === 0) return;
+  result.devices = subscriptions.length;
+  if (subscriptions.length === 0) {
+    result.errors.push("Notifications aren't switched on in Spenit on any device for this account");
+    await logSend(userId, payload, result);
+    return result;
+  }
 
   const body = JSON.stringify({
     title: payload.title,
@@ -103,21 +130,30 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
         if (res.status === 410 || res.status === 404) {
           // Subscription is gone — schedule for removal
           staleIds.push(sub.id);
+          result.removed++;
         } else if (!res.ok) {
+          result.failed++;
+          result.errors.push(`push service answered ${res.status}`);
           console.warn(`[push] push service answered ${res.status} for sub ${sub.id}`);
+        } else {
+          result.delivered++;
         }
       } catch (err: unknown) {
+        result.failed++;
+        result.errors.push((err as Error).message.slice(0, 80));
         console.warn(`[push] sending failed for sub ${sub.id}:`, (err as Error).message);
       }
     })
   );
 
-  // Purge stale subscriptions asynchronously
+  // Purge stale subscriptions (awaited: on Workers, work left running after the reply is cut off)
   if (staleIds.length > 0) {
-    pool.query('DELETE FROM "PushSubscription" WHERE id = ANY($1)', [staleIds]).catch((err) =>
+    await pool.query('DELETE FROM "PushSubscription" WHERE id = ANY($1)', [staleIds]).catch((err) =>
       console.error("[push] Failed to purge stale subscriptions:", err)
     );
   }
+  await logSend(userId, payload, result);
+  return result;
 }
 
 /**

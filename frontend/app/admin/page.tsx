@@ -9,6 +9,7 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { readJson } from "@/lib/api";
 import { AdminDashboard, ago, type Stats } from "@/components/admin/AdminDashboard";
 import { AdminPeople, type PeopleData } from "@/components/admin/AdminPeople";
+import { AdminNotifications } from "@/components/admin/AdminNotifications";
 
 /**
  * Owner's dashboard: how many people use Spenit (now, today, this week, this month),
@@ -88,13 +89,16 @@ export default function AdminPage() {
             <p className="text-[14px] text-[var(--text-secondary)]">Couldn&apos;t load people. Try refreshing.</p>
           )
         ) : (
-          <AdminDashboard
-            s={s}
-            onFeedbackDone={async (id, done) => {
-              await authFetch(`/feedback/${id}`, { method: "PATCH", body: JSON.stringify({ status: done ? "done" : "new" }) }).catch(() => {});
-              stats.refetch();
-            }}
-          />
+          <>
+            <AdminDashboard
+              s={s}
+              onFeedbackDone={async (id, done) => {
+                await authFetch(`/feedback/${id}`, { method: "PATCH", body: JSON.stringify({ status: done ? "done" : "new" }) }).catch(() => {});
+                stats.refetch();
+              }}
+            />
+            <AdminNotifications />
+          </>
         )}
       </div>
     </main>

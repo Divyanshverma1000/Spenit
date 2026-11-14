@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, Bot, CheckCircle2 } from "lucide-react";
+import { screenName } from "@/lib/trail";
 
 export interface Day {
   day: string;
@@ -188,10 +189,13 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
                         </span>
                         <p className="flex-1 text-[13.5px] text-[var(--text-primary)] whitespace-pre-wrap break-words">{f.message}</p>
                       </div>
-                      <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-[var(--text-muted)]">
-                        <span className="truncate">
-                          {f.name}{f.email ? ` · ${f.email}` : ""} · {f.page ?? "—"} · {f.device ?? ""} · {f.app_version ?? ""} · {ago(f.created_at)}
-                        </span>
+                      <p className="mt-1.5 text-[11.5px] text-[var(--text-muted)] break-words">
+                        <b className="font-semibold text-[var(--text-secondary)]">{f.name}</b>{f.email ? <span className="selectable"> · {f.email}</span> : null} · {ago(f.created_at)}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="px-2 py-0.5 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] font-bold" title={f.page ?? ""}>On: {screenName(f.page)}</span>
+                        {f.device && <span className="px-2 py-0.5 rounded-full bg-[var(--paper-dim)] text-[var(--text-secondary)] font-semibold">{f.device}</span>}
+                        {f.app_version && <span className="px-2 py-0.5 rounded-full bg-[var(--paper-dim)] text-[var(--text-muted)] font-semibold">v {f.app_version}</span>}
                         {onFeedbackDone && (
                           <button onClick={() => onFeedbackDone(f.id, f.status !== "done")} className="ml-auto flex-shrink-0 font-bold text-[var(--accent)]">
                             {f.status === "done" ? "Reopen" : "Mark done"}

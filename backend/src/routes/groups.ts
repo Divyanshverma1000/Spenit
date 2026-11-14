@@ -245,7 +245,7 @@ router.post("/preview/:token/not-me", requireAuth, async (req: Request, res: Res
   const placeholderName = ph.rows[0]?.nickname ?? "someone";
   const accountName = who.rows[0]?.name ?? "Someone";
   const admins = await pool.query(`select user_id from "GroupMember" where group_id = $1 and role = 'admin'`, [group.id]);
-  sendToUsers(admins.rows.map((r: { user_id: string }) => r.user_id), {
+  await sendToUsers(admins.rows.map((r: { user_id: string }) => r.user_id), {
     title: group.name,
     body: `${accountName} opened ${placeholderName}'s invite and says it isn't them. Check who you sent it to.`,
     url: `/groups/${group.id}`,
@@ -370,7 +370,7 @@ router.post("/join/:token", requireAuth, async (req: Request, res: Response): Pr
          where gm.group_id = $1 and u.is_placeholder = false and gm.user_id <> $2`,
         [group.id, userId]
       );
-      sendToUsers(watchers.rows.map((r: { user_id: string }) => r.user_id), {
+      await sendToUsers(watchers.rows.map((r: { user_id: string }) => r.user_id), {
         title: group.name,
         body: `${myName} joined as ${joinedAs}. Not right? Open the group to fix it.`,
         url: `/groups/${group.id}`,
@@ -846,7 +846,7 @@ router.post("/:id/claims/:claimId/undo", requireAuth, async (req: Request, res: 
     await client.query("COMMIT");
     await invalidateGroupBalanceCache(id).catch(() => {});
     if (!isClaimer) {
-      sendToUsers([claim.claimed_by], {
+      await sendToUsers([claim.claimed_by], {
         title: "Your name in the group was fixed",
         body: reclaimed ? `You're now ${reclaimed} (not ${undone.placeholderName}).` : `You're no longer ${undone.placeholderName}. Pick your own name if you're on the list.`,
         url: `/groups/${id}`,
