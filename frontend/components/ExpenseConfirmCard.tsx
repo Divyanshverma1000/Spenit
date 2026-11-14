@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ParsedExpenseDraft, ExpenseCategory } from "@/hooks/types/ai";
 import CategoryBadge from "./CategoryBadge";
 import ReceiptItemAssigner from "./ReceiptItemAssigner";
-import { Sparkles, AlertTriangle, Equal, Hash, Target, Check } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Sparkles, User as UserIcon, Users, X } from "lucide-react";
 import MemberAvatar from "@/components/ui/MemberAvatar";
-
-// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Member {
   id: string;
@@ -22,41 +20,27 @@ interface ExpenseConfirmCardProps {
   draft: ParsedExpenseDraft;
   members: Member[];
   groupId: string;
-  /** Called after successful POST /expenses */
+  /** the signed-in person, shown as "You" */
+  meId?: string;
   onConfirmed: () => void;
-  /** Called if user presses "Edit manually" */
   onManual: () => void;
   onCancel: () => void;
   isSubmitting: boolean;
   onSubmit: (updated: ParsedExpenseDraft) => Promise<void>;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+const money = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
 
-function memberName(members: Member[], id: string): string {
-  const m = members.find((m) => m.id === id);
-  return m?.name || id.slice(0, 8);
-}
-
-function formatAmount(n: number | null): string {
-  if (n === null) return "";
-  return n.toFixed(2);
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
+/**
+ * What the AI understood, ready to save: a plain sentence of the split at the top, then
+ * what, how much, category, who paid and who shares it, all as tap-to-change pills.
+ * Splits are "fairshare": personal amounts first (if any), the rest equally.
+ */
 export default function ExpenseConfirmCard({
-  draft,
-  members,
-  onManual,
-  onCancel,
-  isSubmitting,
-  onSubmit,
+  draft, members, meId, onManual, onCancel, isSubmitting, onSubmit,
 }: ExpenseConfirmCardProps) {
-  // ── Editable state — pre-filled from AI draft ─────────────────────────────
   const [description, setDescription] = useState(draft.description);
-  const [amount, setAmount] = useState(formatAmount(draft.amount));
-  const [splitType, setSplitType] = useState<"equal" | "exact" | "fairshare">("fairshare");
+  const [amount, setAmount] = useState(draft.amount ? String(draft.amount) : "");
   const [category, setCategory] = useState<ExpenseCategory | null>(draft.category);
   const [payers, setPayers] = useState(draft.payers);
   const [participants, setParticipants] = useState(draft.participants);
@@ -64,359 +48,261 @@ export default function ExpenseConfirmCard({
 
   useEffect(() => {
     setDescription(draft.description);
-    setAmount(formatAmount(draft.amount));
-    setSplitType("fairshare");
+    setAmount(draft.amount ? String(draft.amount) : "");
     setCategory(draft.category);
     setPayers(draft.payers);
     setParticipants(draft.participants);
     setError(null);
   }, [draft]);
 
-  function toggleParticipant(userId: string) {
-    setParticipants((prev) => {
-      const exists = prev.find((p) => p.userId === userId);
-      if (exists) {
-        return prev.filter((p) => p.userId !== userId);
-      }
-      return [...prev, { userId }];
-    });
-  }
+  // me first, then everyone else as the group names them
+  const people = useMemo(() => [...members].sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0)), [members, meId]);
+  const label = (id: string) => (id === meId ? "You" : people.find((m) => m.id === id)?.name.split(" ")[0] ?? "Someone");
+  const total = parseFloat(amount) || 0;
 
-  function isParticipant(userId: string) {
-    return participants.some((p) => p.userId === userId);
-  }
+  const personal = participants.reduce((s, p) => s + (p.personalAmount || 0), 0);
+  const each = participants.length ? Math.max(0, total - personal) / participants.length : 0;
+  const shareOf = (id: string) => {
+    const p = participants.find((x) => x.userId === id);
+    return p ? (p.personalAmount || 0) + each : 0;
+  };
 
-  function updatePayerAmount(userId: string, val: string) {
-    setPayers((prev) =>
-      prev.map((p) =>
-        p.userId === userId ? { ...p, amountPaid: parseFloat(val) || 0 } : p
-      )
-    );
-  }
-
-  function togglePayer(userId: string) {
+  const toggleSharer = (id: string) =>
+    setParticipants((prev) => (prev.some((p) => p.userId === id) ? prev.filter((p) => p.userId !== id) : [...prev, { userId: id }]));
+  const setSharers = (ids: string[]) => setParticipants(ids.map((id) => participants.find((p) => p.userId === id) ?? { userId: id }));
+  const pickPayer = (id: string) => {
     setPayers((prev) => {
-      const exists = prev.find((p) => p.userId === userId);
-      if (exists) return prev.filter((p) => p.userId !== userId);
-      return [...prev, { userId, amountPaid: 0 }];
+      if (prev.length === 1 && prev[0].userId === id) return prev;
+      if (prev.some((p) => p.userId === id)) return prev.filter((p) => p.userId !== id);
+      // one payer is the usual case: tapping someone else makes them the payer
+      return prev.length <= 1 ? [{ userId: id, amountPaid: total }] : [...prev, { userId: id, amountPaid: 0 }];
     });
-  }
+  };
+  const addPayer = (id: string) => setPayers((prev) => (prev.some((p) => p.userId === id) ? prev : [...prev, { userId: id, amountPaid: 0 }]));
+  const setPaid = (id: string, v: string) => setPayers((prev) => prev.map((p) => (p.userId === id ? { ...p, amountPaid: parseFloat(v) || 0 } : p)));
 
-  function updateShareAmount(userId: string, val: string) {
-    setParticipants((prev) =>
-      prev.map((p) =>
-        p.userId === userId ? { ...p, shareAmount: parseFloat(val) || 0 } : p
-      )
-    );
-  }
+  const everyone = people.map((m) => m.id);
+  const isEveryone = participants.length === everyone.length;
+  const isJustMe = participants.length === 1 && participants[0].userId === meId;
+  const paidSum = payers.reduce((s, p) => s + (p.amountPaid || 0), 0);
+
+  // "You paid ₹128 · split between You and Shan · ₹64 each"
+  const sentence = (() => {
+    if (!total) return "Add the amount to see the split.";
+    const who = payers.length === 1 ? `${label(payers[0].userId)} paid ${money(total)}` : `${payers.length} people paid ${money(total)}`;
+    if (participants.length === 0) return `${who} · pick who shares it`;
+    if (participants.length === 1) return `${who} · all for ${label(participants[0].userId) === "You" ? "you" : label(participants[0].userId)}`;
+    const names = isEveryone ? "everyone" : participants.map((p) => label(p.userId)).join(", ").replace(/, ([^,]*)$/, " and $1");
+    return `${who} · split between ${names} · ${personal > 0 ? "see shares below" : `${money(Math.round(each * 100) / 100)} each`}`;
+  })();
 
   async function handleConfirm() {
     setError(null);
-    const numAmount = parseFloat(amount);
-    if (!description.trim()) { setError("Description is required"); return; }
-    if (!amount || isNaN(numAmount) || numAmount <= 0) { setError("Amount must be a positive number"); return; }
-    if (payers.length === 0) { setError("At least one payer is required"); return; }
-    if (participants.length === 0) { setError("At least one participant is required"); return; }
-
-    const finalPayers = payers.map((p) => ({
-      ...p,
-      amountPaid: payers.length === 1 ? numAmount : p.amountPaid,
-    }));
-
-    const updated: ParsedExpenseDraft = {
-      ...draft,
-      description: description.trim(),
-      amount: numAmount,
-      currency: "INR",
-      splitType,
-      category,
-      payers: finalPayers,
-      participants,
-    };
-
+    if (!description.trim()) return setError("Add what it was for.");
+    if (!total || total <= 0) return setError("Add the amount.");
+    if (payers.length === 0) return setError("Pick who paid.");
+    if (participants.length === 0) return setError("Pick who shares it.");
+    if (payers.length > 1 && Math.abs(paidSum - total) > 0.01) return setError(`What each person paid should add up to ${money(total)}.`);
     try {
-      await onSubmit(updated);
+      await onSubmit({
+        ...draft,
+        description: description.trim(),
+        amount: total,
+        currency: "INR",
+        splitType: "fairshare",
+        category,
+        payers: payers.length === 1 ? [{ ...payers[0], amountPaid: total }] : payers,
+        participants,
+      });
     } catch (err) {
-      setError((err as Error).message || "Failed to save expense");
+      setError((err as Error).message || "Couldn't save it. Try again.");
     }
   }
 
-  const numAmount = parseFloat(amount) || 0;
-  const isLowConfidence = draft.confidence < 0.4;
-
-  const totalPersonal = participants.reduce((sum, p) => sum + (p.personalAmount || 0), 0);
-  const remainingShared = Math.max(0, numAmount - totalPersonal);
-  const equalSharedPortion = participants.length > 0 ? remainingShared / participants.length : 0;
+  const pill = "h-10 pl-1 pr-3 rounded-full flex items-center gap-2 text-[13.5px] font-bold border-2 transition-colors flex-shrink-0";
+  const section = "text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2";
 
   return (
-    <div className="card p-5 space-y-4">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-[var(--accent)] font-semibold mb-0.5 flex items-center gap-1.5">
-            <Sparkles className="h-4 w-4" strokeWidth={1.5} /> AI parsed your expense
-          </p>
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed max-w-xs italic">
-            &ldquo;{draft.rawText}&rdquo;
-          </p>
+    <div className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] overflow-hidden">
+      {/* What the AI understood */}
+      <div className="px-5 pt-4 pb-4 bg-[var(--accent-subtle)]">
+        <div className="flex items-start gap-2">
+          <Sparkles size={16} className="text-[var(--accent)] mt-0.5 flex-shrink-0" />
+          <p className="flex-1 text-[12.5px] text-[var(--text-secondary)] italic leading-snug">&ldquo;{draft.rawText}&rdquo;</p>
+          <button onClick={onCancel} className="p-1 -m-1 text-[var(--text-muted)]" aria-label="Start over"><X size={18} /></button>
         </div>
-        <button
-          onClick={onCancel}
-          className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors p-1"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <p className="mt-2.5 text-[15px] font-bold text-[var(--text-primary)] leading-snug">{sentence}</p>
       </div>
 
-      {/* ── Low-confidence warning ─────────────────────────────────────────── */}
-      {isLowConfidence && (
-        <div className="rounded-[var(--radius-md)] bg-amber-500/10 border border-amber-500/20 p-3 flex gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
-          <p className="text-xs text-amber-600 font-medium">
-            Low confidence — please review carefully before confirming
-          </p>
-        </div>
-      )}
-
-      {/* ── Duplicate warning ─────────────────────────────────────────────── */}
-      {draft.possibleDuplicate && (
-        <div className="rounded-[var(--radius-md)] bg-orange-500/10 border border-orange-500/20 p-3 flex gap-2">
-          <AlertTriangle className="h-4 w-4 text-orange-500 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
-          <p className="text-xs text-orange-600 font-medium">
-            Possible duplicate — a similar expense was added in the last 24h. Continue?
-          </p>
-        </div>
-      )}
-
-      {/* ── Ambiguities ───────────────────────────────────────────────────── */}
-      {draft.ambiguities.length > 0 && (
-        <div className="rounded-[var(--radius-md)] bg-[var(--paper-dim)] border border-[var(--border)] p-3 space-y-2">
-          {draft.ambiguities.map((a, i) => (
-            <div key={i} className="flex gap-2 text-xs text-[var(--text-secondary)]">
-              <AlertTriangle className="h-4 w-4 flex-shrink-0" strokeWidth={1.5} />
-              <p>{a}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── Description ───────────────────────────────────────────────────── */}
-      <div>
-        <label className="section-label mb-1.5 block">Description</label>
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What was this expense for?"
-          className="input-field"
-        />
-      </div>
-
-      {/* ── Amount ────────────────────────────────────────────────────────── */}
-      <div>
-        <label className="section-label mb-1.5 block">Total Amount (₹)</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="0.00"
-          min="0"
-          step="0.01"
-          className="input-field tabular-nums font-medium"
-        />
-      </div>
-
-      {/* ── Category ─────────────────────────────────────────────────────── */}
-      <div>
-        <label className="section-label mb-2 block">Category</label>
-        <CategoryBadge value={category} onChange={setCategory} />
-      </div>
-
-      {/* ── Split type (Forced to Fairshare) ─────────────────────────────── */}
-      <div className="hidden">
-        <label className="section-label mb-1.5 block">Split type</label>
-        {/* We keep splitType in state as 'fairshare' implicitly or explicitly */}
-      </div>
-
-      {/* ── Extracted Receipt Items ────────────────────────────── */}
-      {draft.extractedItems && (
-        <ReceiptItemAssigner 
-          items={draft.extractedItems}
-          members={members}
-          onChange={(newParticipants) => setParticipants(newParticipants)}
-          onItemsChange={(newItems) => {
-            const runningTotal = newItems.reduce((acc, item) => acc + (item.amount || 0), 0);
-            const currentAmount = parseFloat(amount || "0");
-            if (runningTotal > currentAmount) {
-              setAmount(runningTotal.toFixed(2));
-            }
-          }}
-        />
-      )}
-
-      {/* ── Payers ───────────────────────────────────────────────────────── */}
-      <div>
-        <label className="section-label mb-2 block">Who paid?</label>
-        <div className="space-y-2">
-          {members.map((m) => {
-            const payer = payers.find((p) => p.userId === m.id);
-            return (
-              <div key={m.id} className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => togglePayer(m.id)}
-                  aria-pressed={!!payer}
-                  aria-label={`${payer ? "Remove" : "Add"} ${m.name} as payer`}
-                  className={`rounded-full flex-shrink-0 transition-shadow ${payer ? "ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--paper)]" : ""}`}
-                >
-                  <MemberAvatar person={m} size={32} dim={!payer} />
-                </button>
-                <span className="flex-1 text-sm font-medium text-[var(--text-primary)]">{m.name}</span>
-                {payer && payers.length > 1 && (
-                  <input
-                    type="number"
-                    value={payer.amountPaid || ""}
-                    onChange={(e) => updatePayerAmount(m.id, e.target.value)}
-                    placeholder="Amount"
-                    min="0"
-                    step="0.01"
-                    className="input-field w-24 px-2 py-1.5 text-xs text-right tabular-nums"
-                  />
-                )}
-                {payer && payers.length === 1 && (
-                  <span className="text-sm font-medium tabular-nums text-[var(--text-secondary)]">₹{numAmount.toFixed(2)}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Participants ─────────────────────────────────────────────────── */}
-      <div>
-        <label className="section-label mb-2 block">Split between</label>
-        <div className="space-y-2">
-          {members.map((m) => {
-            const included = isParticipant(m.id);
-            const participant = participants.find((p) => p.userId === m.id);
-            const participantShare = splitType === "fairshare" 
-              ? (participant?.personalAmount || 0) + equalSharedPortion
-              : equalSharedPortion;
-
-            return (
-              <div key={m.id} className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => toggleParticipant(m.id)}
-                  aria-pressed={included}
-                  aria-label={`${included ? "Remove" : "Add"} ${m.name}`}
-                  className={`rounded-full flex-shrink-0 transition-shadow ${included ? "ring-2 ring-[var(--positive)] ring-offset-2 ring-offset-[var(--paper)]" : ""}`}
-                >
-                  <MemberAvatar person={m} size={32} dim={!included} />
-                </button>
-                <span className={`flex-1 text-sm font-medium ${included ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"}`}>{m.name}</span>
-                {included && splitType === "exact" && (
-                  <input
-                    type="number"
-                    value={participant?.shareAmount ?? ""}
-                    onChange={(e) => updateShareAmount(m.id, e.target.value)}
-                    placeholder="Share"
-                    min="0"
-                    step="0.01"
-                    className="input-field w-24 px-2 py-1.5 text-xs text-right tabular-nums"
-                  />
-                )}
-                {included && (splitType === "equal" || splitType === "fairshare") && (
-                  <div className="flex flex-col items-end">
-                    <span className="text-sm font-medium text-[var(--positive)] tabular-nums">
-                      ₹{participantShare.toFixed(2)}
-                    </span>
-                    {splitType === "fairshare" && (participant?.personalAmount || 0) > 0 && (
-                      <span className="text-[10px] text-[var(--text-secondary)]">
-                        (₹{(participant?.personalAmount || 0).toFixed(2)} personal)
-                      </span>
-                    )}
-                  </div>
-                )}
-                {included && splitType === "exact" && participant?.shareAmount !== undefined && participant.shareAmount > 0 && (
-                  <Check className="h-4 w-4 text-[var(--accent)] ml-2" strokeWidth={2} />
-                )}
-                {!included && (
-                  <span className="text-xs text-[var(--text-muted)]">excluded</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── Split summary ─────────────────────────────────────────────── */}
-        {participants.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-[var(--border)] flex justify-between text-xs">
-            <span className="text-[var(--text-secondary)] font-medium">
-              {participants.length} {participants.length === 1 ? "person" : "people"}
-              {splitType === "fairshare" ? " sharing" : " splitting equally"}
-            </span>
-            <span className={`font-semibold tabular-nums ${
-              splitType === "exact"
-                ? Math.abs(participants.reduce((s, p) => s + (p.shareAmount || 0), 0) - numAmount) < 0.01
-                  ? "text-[var(--positive)]"
-                  : "text-amber-600"
-                : "text-[var(--text-secondary)]"
-            }`}>
-              {splitType === "exact"
-                ? `₹${participants.reduce((s, p) => s + (p.shareAmount || 0), 0).toFixed(2)} / ₹${numAmount.toFixed(2)}`
-                : `₹${(numAmount / participants.length).toFixed(2)} each`
-              }
-            </span>
+      <div className="px-5 py-4 space-y-5">
+        {(draft.ambiguities.length > 0 || draft.possibleDuplicate || draft.confidence < 0.5) && (
+          <div className="space-y-2">
+            {draft.possibleDuplicate && (
+              <p className="flex gap-2 text-[12.5px] p-3 rounded-[14px] bg-[var(--warn)]/10 text-[var(--text-primary)]">
+                <AlertTriangle size={15} className="text-[var(--warn)] flex-shrink-0 mt-0.5" /> A bill like this was added in the last day. Check it isn&apos;t a repeat.
+              </p>
+            )}
+            {draft.ambiguities.map((a, i) => (
+              <p key={i} className="flex gap-2 text-[12.5px] p-3 rounded-[14px] bg-[var(--paper-dim)] text-[var(--text-secondary)]">
+                <AlertTriangle size={15} className="text-[var(--accent)] flex-shrink-0 mt-0.5" /> {a}. Pick them below.
+              </p>
+            ))}
+            {draft.confidence < 0.5 && draft.ambiguities.length === 0 && (
+              <p className="flex gap-2 text-[12.5px] p-3 rounded-[14px] bg-[var(--paper-dim)] text-[var(--text-secondary)]">
+                <AlertTriangle size={15} className="text-[var(--accent)] flex-shrink-0 mt-0.5" /> Not fully sure about this one. Check the details below.
+              </p>
+            )}
           </div>
         )}
-      </div>
 
-      {/* ── Error ────────────────────────────────────────────────────────── */}
-      {error && (
-        <div className="rounded-[var(--radius-md)] bg-[var(--negative)]/10 border border-[var(--negative)]/20 p-3">
-          <p className="text-xs text-[var(--negative)] font-medium">{error}</p>
-        </div>
-      )}
-
-      {/* ── Small confidence indicator ───────────────────────────────────── */}
-      <div className="flex items-center justify-between text-xs font-medium text-[var(--text-secondary)] pt-2">
-        <span>AI confidence: {Math.round(draft.confidence * 100)}%</span>
-        <div className="w-24 h-1.5 rounded-full bg-[var(--paper-dim)] overflow-hidden">
-          <div
-            className={`h-full rounded-full ${draft.confidence > 0.7 ? "bg-[var(--positive)]" : draft.confidence > 0.4 ? "bg-amber-500" : "bg-[var(--negative)]"}`}
-            style={{ width: `${draft.confidence * 100}%` }}
-          />
-        </div>
-      </div>
-
-      {/* ── Actions ──────────────────────────────────────────────────────── */}
-      <div className="flex gap-3 pt-3">
-        <button
-          type="button"
-          onClick={onManual}
-          className="btn-secondary flex-1 py-3 text-sm font-semibold"
-        >
-          Edit manually
-        </button>
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={isSubmitting}
-          id="ai-confirm-btn"
-          className="btn-primary flex-1 py-3 text-sm font-semibold disabled:opacity-50"
-        >
-          {isSubmitting ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="spinner" />
-              Saving…
+        {/* What and how much */}
+        <div className="flex gap-3">
+          <label className="flex-1 min-w-0">
+            <span className={`${section} block`}>For</span>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What was it?"
+              className="w-full h-12 px-3.5 rounded-[14px] bg-[var(--paper-dim)] text-[16px] font-bold outline-none border-2 border-transparent focus:border-[var(--accent)]"
+            />
+          </label>
+          <label className="w-[38%] flex-shrink-0">
+            <span className={`${section} block`}>Amount</span>
+            <span className="h-12 px-3 rounded-[14px] bg-[var(--paper-dim)] flex items-center gap-1 border-2 border-transparent focus-within:border-[var(--accent)]">
+              <span className="text-[var(--text-muted)] font-bold">₹</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0"
+                className="flex-1 min-w-0 bg-transparent text-[18px] font-black tabular-nums text-right outline-none"
+              />
             </span>
-          ) : (
-            "Confirm"
+          </label>
+        </div>
+
+        <div>
+          <p className={section}>Category</p>
+          <CategoryBadge value={category} onChange={setCategory} />
+        </div>
+
+        {draft.extractedItems && (
+          <ReceiptItemAssigner
+            items={draft.extractedItems}
+            members={members}
+            onChange={(next) => setParticipants(next)}
+            onItemsChange={(items) => {
+              const sum = items.reduce((a, it) => a + (it.amount || 0), 0);
+              if (sum > total) setAmount(sum.toFixed(2));
+            }}
+          />
+        )}
+
+        {/* Who paid */}
+        <div>
+          <p className={section}>Paid by</p>
+          <div className="flex flex-wrap gap-2">
+            {people.map((m) => {
+              const on = payers.some((p) => p.userId === m.id);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => pickPayer(m.id)}
+                  aria-pressed={on}
+                  className={`${pill} ${on ? "border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--text-primary)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"}`}
+                >
+                  <span className="w-8 h-8 flex-shrink-0 flex items-center justify-center"><MemberAvatar person={m} size={32} dim={!on} /></span>
+                  {label(m.id)}
+                  {on && <Check size={14} strokeWidth={3} className="text-[var(--accent)]" />}
+                </button>
+              );
+            })}
+          </div>
+          {payers.length === 1 && people.length > 1 && (
+            <button type="button" onClick={() => addPayer(people.find((m) => m.id !== payers[0].userId)!.id)} className="mt-2 text-[12px] font-bold text-[var(--accent)]">
+              More than one person paid?
+            </button>
           )}
-        </button>
+          {payers.length > 1 && (
+            <div className="mt-3 space-y-2">
+              {payers.map((p) => (
+                <label key={p.userId} className="flex items-center gap-3">
+                  <span className="flex-1 text-[14px] font-semibold">{label(p.userId)} paid</span>
+                  <span className="w-28 h-10 px-2.5 rounded-[12px] bg-[var(--paper-dim)] flex items-center gap-1">
+                    <span className="text-[var(--text-muted)] font-bold">₹</span>
+                    <input type="number" inputMode="decimal" value={p.amountPaid || ""} onChange={(e) => setPaid(p.userId, e.target.value)} placeholder="0" className="flex-1 min-w-0 bg-transparent text-[16px] font-bold text-right tabular-nums outline-none" />
+                  </span>
+                </label>
+              ))}
+              <p className={`text-[12px] text-right font-semibold ${Math.abs(paidSum - total) < 0.01 ? "text-[var(--positive)]" : "text-[var(--warn)]"}`}>
+                {money(paidSum)} of {money(total)}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Who shares it */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className={`${section} mb-0!`}>Split between</p>
+            <div className="flex gap-1.5">
+              <button type="button" onClick={() => setSharers(everyone)} className={`h-8 px-3 rounded-full text-[12px] font-bold flex items-center gap-1 border ${isEveryone ? "border-[var(--positive)] text-[var(--positive)] bg-[var(--positive)]/10" : "border-[var(--hairline)] text-[var(--text-secondary)]"}`}>
+                <Users size={13} /> Everyone
+              </button>
+              {meId && (
+                <button type="button" onClick={() => setSharers([meId])} className={`h-8 px-3 rounded-full text-[12px] font-bold flex items-center gap-1 border ${isJustMe ? "border-[var(--positive)] text-[var(--positive)] bg-[var(--positive)]/10" : "border-[var(--hairline)] text-[var(--text-secondary)]"}`}>
+                  <UserIcon size={13} /> Just me
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="rounded-[16px] border border-[var(--hairline)] divide-y divide-[var(--hairline)] overflow-hidden">
+            {people.map((m) => {
+              const on = participants.some((p) => p.userId === m.id);
+              const mine = participants.find((p) => p.userId === m.id)?.personalAmount || 0;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => toggleSharer(m.id)}
+                  aria-pressed={on}
+                  className={`w-full px-3.5 py-2.5 flex items-center gap-3 text-left transition-colors ${on ? "bg-[var(--positive)]/[0.06]" : ""}`}
+                >
+                  <span className="w-9 h-9 flex-shrink-0 flex items-center justify-center"><MemberAvatar person={m} size={36} dim={!on} /></span>
+                  <span className={`flex-1 min-w-0 text-[14.5px] font-bold truncate ${on ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"}`}>
+                    {label(m.id)}
+                    {mine > 0 && <span className="block text-[11.5px] font-medium text-[var(--text-secondary)]">incl. {money(mine)} of their own</span>}
+                  </span>
+                  <span className={`text-[15px] font-extrabold tabular-nums ${on ? "text-[var(--text-primary)]" : "text-[var(--text-muted)] text-[12.5px] font-semibold"}`}>
+                    {on ? money(Math.round(shareOf(m.id) * 100) / 100) : "not in it"}
+                  </span>
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 border-2 ${on ? "bg-[var(--positive)] border-[var(--positive)] text-white" : "border-[var(--hairline)]"}`}>
+                    {on && <Check size={13} strokeWidth={3.5} />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {error && <p className="text-[13px] font-semibold text-[var(--negative)] p-3 rounded-[14px] bg-[var(--negative)]/10">{error}</p>}
+
+        <div className="space-y-2 pt-1">
+          <button
+            type="button"
+            id="ai-confirm-btn"
+            onClick={handleConfirm}
+            disabled={isSubmitting}
+            className="w-full h-14 rounded-[16px] bg-[var(--accent)] text-white text-[16px] font-extrabold flex items-center justify-center gap-2 disabled:opacity-60 active:scale-[0.99] transition-transform"
+          >
+            {isSubmitting ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : <><Check size={18} strokeWidth={3} /> Save{total ? ` ${money(total)}` : ""}</>}
+          </button>
+          <button type="button" onClick={onManual} className="w-full h-11 rounded-[14px] text-[14px] font-bold text-[var(--text-secondary)]">
+            Open the full form instead
+          </button>
+        </div>
       </div>
     </div>
   );

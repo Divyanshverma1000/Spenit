@@ -18,6 +18,8 @@ export interface GroupMember {
   id: string;       // UUID — the only identifier that matters for writes
   name: string;     // display name, may collide (two "Prashant"s)
   username: string; // unique handle for disambiguation
+  /** their own name when the group calls them something else (nickname "Shan" -> "Suryansh Kumar") */
+  realName?: string | null;
 }
 
 // ── Category system ────────────────────────────────────────────────────────────

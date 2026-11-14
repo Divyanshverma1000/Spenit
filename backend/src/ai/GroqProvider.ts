@@ -99,7 +99,7 @@ export function parseModelJson(content: string): unknown {
 
 function buildSystemPrompt(members: GroupMember[]): string {
   const memberList = members
-    .map((m) => `  - id: "${m.id}", name: "${m.name}", username: "@${m.username}"`)
+    .map((m) => `  - id: "${m.id}", name: "${m.name}"${m.realName && m.realName !== m.name ? `, also called "${m.realName}"` : ""}, username: "@${m.username}"`)
     .join("\n");
 
   const categoryList = EXPENSE_CATEGORIES.join(" | ");
@@ -125,7 +125,9 @@ CRITICAL RULES — READ CAREFULLY:
    - "equally" / default → "equal"
    - Exact amounts per person → "exact"
    - "only I" patterns with single participant → "exact" with that person's shareAmount = total_amount
-6. If a name doesn't match any member, add to ambiguities[]. Never guess an ID.
+6. NAMES: a person may be written by their name, the name they are "also called", their first name, or their username, in any case. Match all of these. Only if a name matches nobody, add it to ambiguities[] in plain words (e.g. "Couldn't find Mohit in this group"). Never guess an ID.
+6b. CATEGORY: cab, auto, Uber, Ola, metro, train, flight, bus -> Travel; petrol, diesel -> Fuel; food, dinner, lunch, coffee, Swiggy, Zomato -> Food; rent, hotel -> Stay; electricity, wifi, recharge, maid, cook -> Utilities; movie, party -> Entertainment; medicine -> Medical; clothes, Amazon -> Shopping. Misc only if nothing fits.
+6c. DESCRIPTION: a short title in Title Case from the sentence ("Cab", "Dinner at Social"), without amounts or names.
 7. Return ONLY valid JSON. No prose, no markdown.
 
 GROUP MEMBERS (index 0 = CURRENT USER = "me"/"I"):

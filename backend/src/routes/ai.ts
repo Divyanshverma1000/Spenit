@@ -68,6 +68,7 @@ const orderReadLimit = strictLimitBy("ai", async (userId) => {
 import { buildGroupContext } from "../lib/groupAiContext";
 import { userGroqKeys } from "../lib/groqKeys";
 import { answerWithItems } from "../lib/chatItems";
+import { aliasesOf, categoryFromText, membersNamedIn, payerFromText, sharersFromText } from "../lib/expenseText";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
 import { getGroupBalance } from "./balance";
@@ -118,8 +119,9 @@ router.post(
       id: string;
       name: string;
       username: string;
+      realName: string;
     }>(
-      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username
+      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username, u.name AS "realName"
        FROM "GroupMember" gm
        JOIN "User" u ON u.id = gm.user_id
        WHERE gm.group_id = $1
@@ -129,19 +131,22 @@ router.post(
 
     const groupContext: GroupMember[] = membersRes.rows;
 
-    const apiKey = (await groqKeyFor(userId)).key ?? "";
-    
-    // ── 3. Call AI provider ────────────────────────────────────────────────────
+    // ── 3. Call AI provider: every key the person has, the next one if a key is busy ──
     const startMs = Date.now();
-    const ai = new GroqProvider(apiKey);
-    
-    let result;
-    try {
-      result = await ai.parseExpenseText(text.trim(), groupContext);
-      await bump({ ai_calls: 1, ...(result && "fallback" in result ? { ai_failures: 1 } : {}) }, userId);
-    } catch (e) {
-      result = { fallback: true, reason: "config_error", rawText: text.trim() };
+    const { keys } = await groqLanesFor(userId, Math.floor(Math.random() * 1000));
+    const tryKeys = keys.filter((k) => !isCoolingDown(k));
+    let result: Awaited<ReturnType<GroqProvider["parseExpenseText"]>> | { fallback: true; reason: string; rawText: string } =
+      { fallback: true, reason: "config_error", rawText: text.trim() };
+    for (const key of tryKeys.length ? tryKeys : keys) {
+      try {
+        result = await new GroqProvider(key).parseExpenseText(text.trim(), groupContext);
+      } catch {
+        result = { fallback: true, reason: "network", rawText: text.trim() };
+      }
+      if (!("fallback" in result) || !["rate_limit", "network", "timeout"].includes(String(result.reason))) break;
+      if (result.reason === "rate_limit") coolDown(key, 30_000);
     }
+    await bump({ ai_calls: 1, ...("fallback" in result ? { ai_failures: 1 } : {}) }, userId);
     const latencyMs = Date.now() - startMs;
 
     console.log(
@@ -157,7 +162,7 @@ router.post(
     // ── 4. Duplicate detection ─────────────────────────────────────────────────
     // Read-only. Checks recent expenses (last 24h) for amount + description match.
     // Never touches the write path.
-    const draft = result as ParsedExpenseDraft;
+    const draft = fixDraft(result as ParsedExpenseDraft, text.trim(), groupContext, userId);
     if (draft.amount !== null && draft.amount > 0) {
       try {
         const recentRes = await pool.query<{
@@ -195,6 +200,36 @@ router.post(
     res.json(draft);
   }
 );
+
+/**
+ * The plain facts of the sentence win over the model: anyone named (by nickname, real
+ * name, first name or username) is in the split, "X paid" sets the payer, a cab is Travel.
+ * Ambiguities about names that were in fact found are dropped.
+ */
+function fixDraft(d: ParsedExpenseDraft, text: string, members: GroupMember[], meId: string): ParsedExpenseDraft {
+  const named = members.map((m) => ({ id: m.id, name: m.name, realName: m.realName ?? null, username: m.username }));
+  const out: ParsedExpenseDraft = { ...d, payers: [...d.payers], participants: [...d.participants], ambiguities: [...d.ambiguities] };
+  const sharers = sharersFromText(text, named, meId);
+  if (sharers && out.splitType !== "exact") {
+    const keep = new Map(out.participants.map((p) => [p.userId, p]));
+    out.participants = sharers.map((id) => keep.get(id) ?? { userId: id });
+  }
+  const payer = payerFromText(text, named, meId);
+  if (payer && (out.payers.length !== 1 || out.payers[0].userId !== payer)) out.payers = [{ userId: payer, amountPaid: out.amount ?? 0 }];
+  if (out.payers.length === 0) out.payers = [{ userId: meId, amountPaid: out.amount ?? 0 }];
+  if (!out.category || out.category === "Misc") {
+    const c = categoryFromText(text);
+    if (c) out.category = c as ParsedExpenseDraft["category"];
+  }
+  // A name the model couldn't place but we found: not an ambiguity any more.
+  const found = new Set(membersNamedIn(text, named, meId));
+  out.ambiguities = out.ambiguities.filter((a) => {
+    const lower = a.toLowerCase();
+    return !named.some((m) => found.has(m.id) && aliasesOf(m).some((al) => lower.includes(al)));
+  }).filter((a) => !/unknown (payer|participant) userid/i.test(a));
+  if (out.description) out.description = out.description.charAt(0).toUpperCase() + out.description.slice(1);
+  return out;
+}
 
 // ─── Groq key ──────────────────────────────────────────────────────────────────
 

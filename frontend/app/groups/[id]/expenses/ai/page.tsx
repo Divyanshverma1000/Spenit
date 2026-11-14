@@ -1,7 +1,7 @@
 "use client";
 
 import { API_URL } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -10,7 +10,7 @@ import ExpenseConfirmCard from "@/components/ExpenseConfirmCard";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Mic, Camera, Send, Sparkles } from "lucide-react";
+import { Mic, Camera, Sparkles, Square, Loader2, ArrowRight } from "lucide-react";
 import type { ParsedExpenseDraft } from "@/hooks/types/ai";
 import { ask } from "@/lib/dialog";
 
@@ -22,18 +22,11 @@ interface Member {
   avatarUrl: string | null;
 }
 
-const PLACEHOLDER_EXAMPLES = [
-  "Dinner 900 Rahul paid",
-  "Hotel 8000 split equally",
-  "Cab 450 between Aman and me",
-  "Pizza 1400 everyone except Mohit",
-  "Coffee 300 exact: Riya 150, me 150",
-];
 
 export default function AIExpensePage() {
   const { id: groupId } = useParams<{ id: string }>();
   const authed = useRequireAuth();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const router = useRouter();
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -45,9 +38,21 @@ export default function AIExpensePage() {
 
   const ai = useAIExpense();
 
+  // Examples with this group's own names, so people see how to say it.
+  const examples = useMemo(() => {
+    const others = members.filter((m) => m.id !== user?.id).map((m) => m.name.split(" ")[0]);
+    const a = others[0] ?? "Rahul", b = others[1] ?? others[0] ?? "Aman";
+    return [
+      `Cab 450 between ${a} and me`,
+      `Dinner 1200 ${a} paid, split with everyone`,
+      `Groceries 860 everyone except ${b}`,
+      `Coffee 300 just me`,
+    ];
+  }, [members, user?.id]);
+
   useEffect(() => {
     const t = setInterval(() => {
-      setPlaceholderIdx((i) => (i + 1) % PLACEHOLDER_EXAMPLES.length);
+      setPlaceholderIdx((i) => i + 1);
     }, 3000);
     return () => clearInterval(t);
   }, []);
@@ -148,82 +153,89 @@ export default function AIExpensePage() {
         <div className="px-4 space-y-4">
           {!isReview && (
             <>
-              <Card padding="md">
-                <div className="relative">
-                  {isListening ? (
-                    <div className="min-h-[72px] flex flex-col gap-2">
-                      <div className="flex gap-1 items-end h-6">
-                        <span className="text-xs font-medium" style={{ color: "var(--negative)" }}>Listening...</span>
-                      </div>
-                      <p className="text-sm leading-relaxed min-h-[2.5rem]" style={{ color: "var(--text-primary)" }}>
-                        {ai.liveTranscript || <span style={{ color: "var(--text-muted)" }}>Speak now...</span>}
-                      </p>
-                    </div>
-                  ) : (
-                      <textarea
-                        rows={3}
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={`e.g. "${PLACEHOLDER_EXAMPLES[placeholderIdx]}"`}
-                        disabled={isParsing}
-                        className="input-field w-full resize-none p-3"
-                      />
-                  )}
-                </div>
+              <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] p-4">
+                {isListening ? (
+                  <div className="min-h-[132px] flex flex-col items-center justify-center text-center gap-3 py-2">
+                    <span className="relative flex w-16 h-16">
+                      <span className="absolute inset-0 rounded-full bg-[var(--negative)] opacity-30 motion-safe:animate-ping" />
+                      <button
+                        type="button"
+                        onClick={() => ai.stopVoice()}
+                        className="relative w-16 h-16 rounded-full bg-[var(--negative)] text-white flex items-center justify-center shadow-lg"
+                        aria-label="Stop listening"
+                      >
+                        <Square size={20} fill="currentColor" />
+                      </button>
+                    </span>
+                    <p className="text-[17px] font-semibold leading-snug min-h-[1.5em] px-2">
+                      {ai.liveTranscript || <span className="text-[var(--text-muted)]">Listening… say it like a sentence</span>}
+                    </p>
+                    <p className="text-[12px] text-[var(--text-muted)]">Stops by itself when you pause, or tap to stop.</p>
+                  </div>
+                ) : (
+                  <textarea
+                    rows={3}
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={`e.g. "${examples[placeholderIdx % examples.length]}"`}
+                    disabled={isParsing}
+                    className="w-full resize-none bg-transparent text-[18px] font-semibold leading-snug outline-none placeholder:text-[var(--text-muted)] placeholder:font-medium"
+                    aria-label="Describe the expense"
+                  />
+                )}
 
-                <div className="flex items-center gap-2 mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-                  {ai.voiceSupported && (
+                {!isListening && (
+                  <div className="flex items-center gap-2.5 mt-3 pt-3 border-t border-[var(--hairline)]">
+                    {ai.voiceSupported && (
+                      <button
+                        type="button"
+                        onClick={() => ai.startVoice(groupId, (heard) => setText(heard))}
+                        disabled={isParsing}
+                        className="w-12 h-12 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center flex-shrink-0 active:scale-95 transition-transform disabled:opacity-40"
+                        aria-label="Speak the expense"
+                      >
+                        <Mic size={20} strokeWidth={2.2} />
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => isListening ? ai.stopVoice() : ai.startVoice(groupId)}
-                      className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors"
-                      style={isListening ? { backgroundColor: "var(--negative)", color: "var(--paper)", borderColor: "var(--negative)" } : {}}
+                      onClick={() => router.push(`/groups/${groupId}/import`)}
+                      className="h-12 px-4 rounded-full border-2 border-[var(--hairline)] text-[13.5px] font-bold text-[var(--text-secondary)] flex items-center gap-1.5 flex-shrink-0"
                     >
-                      <Mic className="h-3.5 w-3.5" strokeWidth={1.5} />
-                      {isListening ? "Stop" : "Speak"}
+                      <Camera size={16} /> Scan
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      onClick={handleParse}
+                      disabled={!text.trim() || isParsing}
+                      className="ml-auto h-12 px-5 rounded-full bg-[var(--accent)] text-white text-[15px] font-extrabold flex items-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
+                    >
+                      {isParsing ? <><Loader2 size={17} className="animate-spin" /> Reading…</> : <>Split it <ArrowRight size={17} strokeWidth={2.6} /></>}
+                    </button>
+                  </div>
+                )}
+              </section>
 
-                  {/* Pictures go to the scanner: items, taxes and fees read properly, split item by item. */}
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/groups/${groupId}/import`)}
-                    className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-sm)]"
-                  >
-                    <Camera className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    Scan a bill
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleParse}
-                    disabled={!text.trim() || isParsing || isListening}
-                    className="btn-primary ml-auto flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-[var(--radius-sm)] disabled:opacity-40"
-                  >
-                    {isParsing ? <div className="spinner" style={{ width: "12px", height: "12px", borderWidth: "2px" }} /> : <Send className="h-3.5 w-3.5" strokeWidth={1.5} />}
-                    Parse
-                  </button>
-                </div>
-              </Card>
-
-              {!isParsing && text.length === 0 && (
-                <Card padding="md">
-                  <p className="text-xs font-medium mb-3" style={{ color: "var(--text-secondary)" }}>Try saying...</p>
-                  <div className="space-y-1">
-                    {PLACEHOLDER_EXAMPLES.map((ex, i) => (
+              {!isParsing && !isListening && text.length === 0 && (
+                <section>
+                  <p className="px-1 mb-2 text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Try saying</p>
+                  <div className="flex flex-wrap gap-2">
+                    {examples.map((ex) => (
                       <button
-                        key={i}
+                        key={ex}
                         type="button"
                         onClick={() => setText(ex)}
-                        className="w-full text-left text-xs py-2 px-2 rounded-[var(--radius-sm)] transition-colors"
-                        style={{ color: "var(--text-primary)", backgroundColor: "var(--paper-dim)" }}
+                        className="px-3.5 py-2.5 rounded-[14px] bg-[var(--paper)] border border-[var(--hairline)] text-[13.5px] font-semibold text-left text-[var(--text-primary)] active:scale-[0.98] transition-transform"
                       >
-                        "{ex}"
+                        {ex}
                       </button>
                     ))}
                   </div>
-                </Card>
+                  <p className="px-1 mt-3 text-[12px] text-[var(--text-muted)] leading-snug">
+                    Use any name people go by here, nickname or real name. Say who paid and who shares it; if you don&apos;t, it&apos;s you paying and everyone sharing.
+                  </p>
+                </section>
               )}
             </>
           )}
@@ -233,6 +245,7 @@ export default function AIExpensePage() {
               draft={ai.draft}
               members={members}
               groupId={groupId}
+              meId={user?.id}
               onConfirmed={() => {}}
               onManual={goManual}
               onCancel={() => ai.reset()}
@@ -245,7 +258,7 @@ export default function AIExpensePage() {
 
           {isReview && (
             <Card padding="md">
-              <p className="text-xs mb-2" style={{ color: "var(--text-secondary)" }}>Not right? Try rephrasing:</p>
+              <p className="text-[12.5px] font-semibold mb-2 text-[var(--text-secondary)]">Not quite right? Say it differently:</p>
               <div className="flex gap-2">
                 <input
                   type="text"

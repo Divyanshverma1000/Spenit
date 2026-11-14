@@ -26,7 +26,7 @@ export interface AIExpenseResult {
   liveTranscript: string;
   parse: (text: string, groupId: string) => Promise<void>;
   parseReceipt: (base64Urls: string[], groupId: string) => Promise<void>;
-  startVoice: (groupId: string) => void;
+  startVoice: (groupId: string, onHeard?: (text: string) => void) => void;
   stopVoice: () => void;
   reset: () => void;
   submitDraft: (draft: ParsedExpenseDraft, groupId: string) => Promise<void>;
@@ -160,76 +160,95 @@ export function useAIExpense(): AIExpenseResult {
   );
 
   // ── Voice input ────────────────────────────────────────────────────────────
-  // Voice transcript goes through the SAME parse() function — zero duplicate logic.
+  // One sentence at a time (Android's "continuous" mode repeats and drops words). The words
+  // arrive a moment AFTER stop(), so parsing happens when recognition ends, never on Stop.
+  // What was heard is handed to the page (it shows it in the box) and parsed straight away.
+
+  const heardRef = useRef("");
+  const onHeardRef = useRef<((t: string) => void) | null>(null);
 
   const startVoice = useCallback(
-    (groupId: string) => {
-      if (!voiceSupported) return;
+    (groupId: string, onHeard?: (text: string) => void) => {
+      if (!voiceSupported) {
+        toast("Voice isn't available in this browser. Type it instead.", "error");
+        return;
+      }
+      try { recognitionRef.current?.abort(); } catch { /* not running */ }
 
       const SpeechRecognitionClass =
         (window as any).webkitSpeechRecognition ||
         (window as any).SpeechRecognition;
-
       const rec = new SpeechRecognitionClass();
       rec.lang = "en-IN";
-      rec.interimResults = true;  // show live text
-      rec.continuous = true;      // don't stop on pauses
+      rec.interimResults = true;
+      rec.continuous = false;
       rec.maxAlternatives = 1;
 
       pendingGroupId.current = groupId;
       finalTranscriptRef.current = "";
+      heardRef.current = "";
+      onHeardRef.current = onHeard ?? null;
       recognitionRef.current = rec;
+      let failed = false;
 
       rec.onstart = () => {
         setState("listening");
         setIsListening(true);
+        setLiveTranscript("");
       };
 
       rec.onresult = (event: any) => {
+        let finalText = "";
         let interim = "";
-        let final = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        for (let i = 0; i < event.results.length; i++) {
           const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            final += t;
-          } else {
-            interim += t;
-          }
+          if (event.results[i].isFinal) finalText += t;
+          else interim += t;
         }
-        if (final) {
-          finalTranscriptRef.current += " " + final;
-        }
-        setLiveTranscript((finalTranscriptRef.current + " " + interim).trim());
+        finalTranscriptRef.current = finalText.trim();
+        heardRef.current = (finalText + " " + interim).trim();
+        setLiveTranscript(heardRef.current);
       };
 
       rec.onerror = (event: any) => {
-        console.warn("[voice] error:", event.error);
+        failed = true;
+        const why: Record<string, string> = {
+          "not-allowed": "Spenit can't use the microphone. Allow it in your browser's site settings, then try again.",
+          "service-not-allowed": "Voice typing is turned off on this phone. Type it instead.",
+          "no-speech": "Didn't hear anything. Tap Speak and say it again.",
+          "audio-capture": "No microphone found.",
+          network: "Voice needs an internet connection.",
+        };
+        if (event.error !== "aborted") toast(why[event.error] ?? "Voice stopped. Try again or type it.", "error");
         setIsListening(false);
         setState("idle");
       };
 
       rec.onend = () => {
-        // Don't auto-parse on end if continuous mode ends unexpectedly.
-        // Parsing is triggered only by explicit stopVoice() call.
         setIsListening(false);
+        recognitionRef.current = null;
+        const heard = (finalTranscriptRef.current || heardRef.current).trim();
+        setLiveTranscript("");
+        if (failed) return;
+        if (!heard) { setState("idle"); return; }
+        onHeardRef.current?.(heard);
+        if (pendingGroupId.current !== undefined) void parse(heard, pendingGroupId.current);
       };
 
-      rec.start();
+      try {
+        rec.start();
+      } catch {
+        toast("Couldn't start the microphone. Try again.", "error");
+        setState("idle");
+      }
     },
     [voiceSupported, parse]
   );
 
+  /** Stop listening; whatever was said is parsed when the phone finishes (onend). */
   const stopVoice = useCallback(() => {
-    recognitionRef.current?.stop();
-    setIsListening(false);
-    // Parse whatever was accumulated during the session
-    const transcript = finalTranscriptRef.current.trim();
-    if (transcript && pendingGroupId.current) {
-      parse(transcript, pendingGroupId.current);
-    }
-    finalTranscriptRef.current = "";
-    setLiveTranscript("");
-  }, [parse]);
+    try { recognitionRef.current?.stop(); } catch { /* already stopped */ }
+  }, []);
 
   // ── Submit: calls POST /expenses (Stage 3 endpoint) ───────────────────────
   // This is the ONLY write path. The AI never writes directly.
