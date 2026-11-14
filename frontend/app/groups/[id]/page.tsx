@@ -33,6 +33,7 @@ import {
   Undo2,
   Camera,
   Plus,
+  Lock,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
@@ -59,6 +60,8 @@ import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 import { ask } from "@/lib/dialog";
 import AddPeopleHelpButton from "@/components/PlaceholderHelp";
+import { showSpendBreakdown } from "@/components/SpendBreakdown";
+import { groupSpend, personalOwner, shortINR } from "@/lib/groupSpend";
 
 
 type Member = GroupMember;
@@ -155,6 +158,8 @@ export default function GroupDetailPage() {
   // Ask Spenit: a chat sheet; "Show N bills" from an answer filters the list below.
   const [chatOpen, setChatOpen] = useState(false);
   const [aiFilter, setAiFilter] = useState<string[] | null>(null);
+  /** hide bills that are one person's own (from the Spent breakdown) */
+  const [hidePersonal, setHidePersonal] = useState(false);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
@@ -311,11 +316,12 @@ export default function GroupDetailPage() {
     const only = aiFilter ? new Set(aiFilter) : null;
     const exp = expenses
       .filter((e) => !only || only.has(e.id))
+      .filter((e) => !hidePersonal || e.pending || !personalOwner(e))
       .map((e) => ({ type: 'expense' as const, data: e, createdAt: new Date(e.createdAt).getTime() }));
     // Settlements are hidden while showing bills from an answer.
     const set = only ? [] : settlements.map((s) => ({ type: 'settlement' as const, data: s, createdAt: new Date(s.createdAt).getTime() }));
     return [...exp, ...set].sort((a, b) => b.createdAt - a.createdAt);
-  }, [expenses, settlements, aiFilter]);
+  }, [expenses, settlements, aiFilter, hidePersonal]);
 
   if (!authed) return null;
   if (loading && !group) return (
@@ -330,6 +336,8 @@ export default function GroupDetailPage() {
 
   const inviteUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/g/${group.inviteToken}`;
   const totalSpend = expenses.reduce((a, e) => a + parseFloat(e.amount), 0);
+  const spend = groupSpend(expenses.filter((e) => !e.pending), Math.max(group.members.length, 1), user?.id ?? "");
+  const hiddenCount = hidePersonal ? expenses.filter((e) => !e.pending && personalOwner(e)).length : 0;
   const isAdmin = group.myRole === "admin";
   const notJoinedCount = group.members.filter((m) => m.isPlaceholder).length;
 
@@ -412,7 +420,12 @@ export default function GroupDetailPage() {
         <div className="px-5">
           <SummaryGrid 
             items={[
-              { label: "Spent", value: `₹${totalSpend.toLocaleString("en-IN", { maximumFractionDigits: 0 })}` },
+              {
+                label: "Spent",
+                value: `₹${totalSpend.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,
+                sub: spend.personal >= 1 ? `${shortINR(spend.personal)} personal ›` : spend.some >= 1 ? `${shortINR(spend.some)} not shared by all ›` : undefined,
+                onClick: expenses.length > 0 ? () => { void showSpendBreakdown(spend, hidePersonal).then((flip) => { if (flip) setHidePersonal((h) => !h); }); } : undefined,
+              },
               { label: "Expenses", value: expenses.length },
               { label: "Members", value: group.members.length },
               { 
@@ -461,6 +474,13 @@ export default function GroupDetailPage() {
             </div>
           </div>
 
+          {hidePersonal && (
+            <div className="mb-3 flex items-center gap-2 px-3.5 py-2.5 rounded-[14px] bg-[var(--paper-dim)]">
+              <Lock size={14} className="text-[var(--text-secondary)] flex-shrink-0" />
+              <p className="flex-1 text-[13px] font-semibold text-[var(--text-primary)]">{hiddenCount} personal {hiddenCount === 1 ? "bill" : "bills"} hidden</p>
+              <button onClick={() => setHidePersonal(false)} className="text-[12px] font-bold text-[var(--accent)] px-2">Show</button>
+            </div>
+          )}
           {feedItems.length === 0 ? (
             aiFilter ? (
               <EmptyState type="no-expenses" title="No matching bills" description="Nothing here matches your chat. Clear the filter to see every bill." />

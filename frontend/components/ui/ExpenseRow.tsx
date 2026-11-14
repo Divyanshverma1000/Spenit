@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
 import { billSummary, readBill } from "@/lib/billDetails";
+import { personalOwner } from "@/lib/groupSpend";
+import { Lock } from "lucide-react";
 
 export interface Expense {
   id: string;
@@ -29,6 +31,9 @@ export function ExpenseRow({ expense, onClick }: { expense: Expense; onClick?: (
   // Imported orders: a few words on what was in it, and how many items.
   const summary = billSummary(expense.receiptData);
   const itemCount = summary ? readBill(expense.receiptData)?.items.length ?? 0 : 0;
+  // One person's own bill: nobody else owes for it.
+  const owner = personalOwner(expense);
+  const ownerName = owner ? owner.name.split(" ")[0] : null;
 
   const handleTap = () => {
     if (onClick) {
@@ -65,7 +70,11 @@ export function ExpenseRow({ expense, onClick }: { expense: Expense; onClick?: (
               <span className="w-1 h-1 rounded-full bg-[var(--border-dark)]"></span>
               <span>{payerNames} paid</span>
             </div>
-            {summary ? (
+            {ownerName ? (
+              <span className="text-[11px] font-bold text-[var(--text-secondary)] px-2 py-0.5 rounded-[8px] bg-[var(--paper-dim)] whitespace-nowrap flex-shrink-0 flex items-center gap-1" title="Only this person's: nobody else owes for it">
+                <Lock size={10} strokeWidth={2.6} /> Just {ownerName}
+              </span>
+            ) : summary ? (
               <span className="text-[11px] font-semibold text-[var(--text-secondary)] px-2 py-0.5 rounded-[8px] bg-[var(--paper-dim)] whitespace-nowrap flex-shrink-0">
                 {itemCount} {itemCount === 1 ? "item" : "items"}
               </span>
