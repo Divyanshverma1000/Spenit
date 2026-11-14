@@ -646,7 +646,7 @@ ${ledger}`;
       model: GROQ_MODEL,
       messages: [
         { role: "system", content: system },
-        ...history.slice(-(opts.maxTurns ?? 6)).map((m) => ({ role: m.role, content: m.content.slice(0, 800) })),
+        ...history.slice(-(opts.maxTurns ?? 4)).map((m) => ({ role: m.role, content: m.content.slice(0, 600) })),
         { role: "user", content: question.slice(0, 500) },
       ],
       temperature: 0.2,
@@ -662,7 +662,7 @@ ${ledger}`;
       const status = call.kind === "http" ? call.status : 0;
       console.warn(`[ai] groupChat failed kind=${call.kind} status=${status} ms=${call.ms}`);
       // "Request too large ... tokens per minute": the question plus ledger is over the key's limit.
-      if (call.kind === "http" && (status === 413 || (status === 429 && /request too large/i.test(call.message))))
+      if (call.kind === "http" && (status === 413 || /request too large|context length|too many tokens/i.test(call.message)))
         return { ok: false, reason: "too_large", message: call.message, retryAfterMs: 0 };
       if (call.kind === "http" && status === 429)
         return { ok: false, reason: "rate_limit", message: call.message, retryAfterMs: call.retryAfterMs || 10_000 };

@@ -239,8 +239,9 @@ export function buildGroupContext(input: {
   if (kinds.size || privateRows) {
     L.push("", "ITEMS BOUGHT, grouped by what they are (total price · your part · times bought):");
     const sorted = [...kinds].sort((a, b) => b[1].total - a[1].total);
-    for (const [k, v] of sorted.slice(0, 80)) L.push(`- ${k}: ${inr(v.total)} · you ${inr(v.mine)} · ${v.rows}x`);
-    if (sorted.length > 80) L.push(`- …and ${sorted.length - 80} more kinds of items`);
+    const maxKinds = budget < 2000 ? 20 : budget < 4000 ? 40 : 70; // smaller asks keep the priciest kinds
+    for (const [k, v] of sorted.slice(0, maxKinds)) L.push(`- ${k}: ${inr(v.total)} · you ${inr(v.mine)} · ${v.rows}x`);
+    if (sorted.length > maxKinds) L.push(`- …and ${sorted.length - maxKinds} more kinds of items (cheaper ones; the TOTALS above include them)`);
     if (privateRows) L.push(`- private items (only the person who had them can see what they were): ${inr(privateTotal)} in ${privateRows} rows`);
   }
 

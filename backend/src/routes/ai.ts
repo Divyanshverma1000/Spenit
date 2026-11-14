@@ -228,6 +228,53 @@ function coolDown(k: string, retryAfterMs: number | undefined) {
   if (keyCooldown.size > 500) keyCooldown.clear();
 }
 
+type ChatResult = Awaited<ReturnType<GroqProvider["groupChat"]>>;
+type ChatFailure = Extract<ChatResult, { ok: false }>;
+
+/**
+ * Ask a chat question with every key the person has. Starts from a different key each
+ * time, skips keys Groq just called busy, and moves to the next key when one is busy or
+ * fails. `ask` gets a key and how small to make the ledger (0 = full, 1 = shorter, 2 = least),
+ * and is retried smaller on the same key when the question is too big for a free key.
+ */
+async function chatWithKeys(userId: string, ask: (ai: GroqProvider, size: 0 | 1 | 2) => Promise<ChatResult>): Promise<ChatResult | null> {
+  const { keys } = await groqLanesFor(userId, Math.floor(Math.random() * 1000));
+  if (keys.length === 0) return null;
+  const ready = keys.filter((k) => !isCoolingDown(k));
+  const order = ready.length > 0 ? ready : keys;
+  let size: 0 | 1 | 2 = 0;
+  let last: ChatResult | null = null;
+  let shortest: ChatFailure | null = null;
+  for (const key of order) {
+    const ai = new GroqProvider(key);
+    for (;;) {
+      last = await ask(ai, size);
+      if (!last.ok && last.reason === "too_large" && size < 2) { size = (size + 1) as 1 | 2; continue; }
+      break;
+    }
+    if (last.ok) return last;
+    if (last.reason === "too_large") return last; // the same size limit on every free key
+    if (last.reason === "rate_limit") {
+      coolDown(key, last.retryAfterMs);
+      if (!shortest || last.retryAfterMs < shortest.retryAfterMs) shortest = last;
+    }
+    console.warn(`[ai] chat key failed reason=${last.reason} keys=${order.length} msg=${last.message.slice(0, 140)}`);
+  }
+  return last && !last.ok && last.reason !== "rate_limit" && shortest ? shortest : last;
+}
+
+/** Plain words for a failed chat; Groq's own text (org ids, upgrade links) stays in the logs. */
+function chatError(f: ChatFailure, keys: number) {
+  const status = f.reason === "rate_limit" || f.reason === "too_large" ? 429 : f.reason === "config_error" ? 502 : 503;
+  const message =
+    f.reason === "too_large" ? "This question needs more than a free Groq key allows in a minute. Wait a minute and ask again, or start a new chat with the bin icon."
+    : f.reason === "rate_limit" ? (keys > 1 ? "All your Groq keys are busy for a moment. Try again in a few seconds." : "The AI is busy for a moment (your Groq key's per-minute limit). Try again in a few seconds, or add more keys in Profile.")
+    : f.reason === "timeout" ? "The AI took too long to answer. Try again."
+    : f.reason === "config_error" ? "Your Groq key didn't work. Check it in Profile."
+    : "Couldn't reach the AI right now. Try again in a moment.";
+  return { status, body: { error: f.reason, message, retryAfterMs: f.retryAfterMs } };
+}
+
 async function groqKeyFor(userId: string): Promise<{ key: string | null; source: "user" | "server" | null }> {
   const userRes = await pool.query('SELECT groq_api_key FROM "User" WHERE id = $1', [userId]);
   // Stored encrypted (lib/secretBox); decrypted only here, for the request at hand.
@@ -520,35 +567,26 @@ router.post(
       balance,
       budget,
     });
-    let ctx = build();
+    let ctx = build(5500);
 
     const turns = (Array.isArray(history) ? history : [])
       .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
       .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
-    const ai = new GroqProvider(key);
-    let result = await ai.groupChat(ctx.text, question.trim(), turns);
-    // Over the key's per-minute token limit (free Groq keys: 8,000): ask again with a shorter
-    // bill list and less chat history. Every total stays in; only bill-by-bill detail shrinks.
-    for (const [budget, maxTurns] of [[3500, 2], [1200, 0]] as const) {
-      if (result.ok || result.reason !== "too_large") break;
-      ctx = build(budget);
-      result = await ai.groupChat(ctx.text, question.trim(), turns, { maxTurns });
-    }
+    const BUDGETS = [5500, 3000, 1200] as const;
+    const TURNS = [4, 2, 0] as const;
+    const result = await chatWithKeys(userId, (ai, size) => {
+      ctx = build(BUDGETS[size]);
+      return ai.groupChat(ctx.text, question.trim(), turns, { maxTurns: TURNS[size] });
+    });
+    if (!result) { res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." }); return; }
     await bump(result.ok
       ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
       : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
     if (!result.ok) {
-      console.warn(`[ai] query failed reason=${result.reason} msg=${result.message.slice(0, 160)}`);
-      const status = result.reason === "rate_limit" || result.reason === "too_large" ? 429 : result.reason === "config_error" ? 502 : 503;
-      // Plain words for the chat; Groq's own text (org ids, upgrade links) stays in the logs.
-      const message =
-        result.reason === "too_large" ? "This group has too much to fit in one question on a free Groq key right now. Wait a minute and ask again, or start a new chat with the bin icon."
-        : result.reason === "rate_limit" ? "The AI is busy for a moment (your Groq key's per-minute limit). Try again in a few seconds."
-        : result.reason === "timeout" ? "The AI took too long to answer. Try again."
-        : result.reason === "config_error" ? "Your Groq key didn't work. Check it in Profile."
-        : "Couldn't reach the AI right now. Try again in a moment.";
-      res.status(status).json({ error: result.reason, message, retryAfterMs: result.retryAfterMs });
+      const { keys } = await groqLanesFor(userId, 0);
+      const e = chatError(result, keys.length);
+      res.status(e.status).json(e.body);
       return;
     }
     res.json({
@@ -645,13 +683,16 @@ router.post(
       .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
       .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
-    const result = await new GroqProvider(key).groupChat(ledger, question.trim(), turns, { system: PERSONAL_SYSTEM });
+    const result = await chatWithKeys(userId, (ai, size) =>
+      ai.groupChat(ledger, question.trim(), turns, { system: PERSONAL_SYSTEM, maxTurns: [6, 2, 0][size] }));
+    if (!result) { res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." }); return; }
     await bump(result.ok
       ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
       : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
     if (!result.ok) {
-      const status = result.reason === "rate_limit" ? 429 : result.reason === "config_error" ? 502 : 503;
-      res.status(status).json({ error: result.reason, message: result.message, retryAfterMs: result.retryAfterMs });
+      const { keys } = await groqLanesFor(userId, 0);
+      const e = chatError(result, keys.length);
+      res.status(e.status).json(e.body);
       return;
     }
 
