@@ -495,6 +495,61 @@ If there are items, you MUST include them in the "items" array.`;
     }
   }
 
+  /**
+   * A whole day told as a story → several bills (lib/storyParse checks the result).
+   * Never throws: the raw JSON, or why there is none.
+   */
+  async parseStory(story: string, members: GroupMember[]): Promise<
+    { ok: true; raw: unknown } | { ok: false; reason: "rate_limit" | "too_large" | "timeout" | "config_error" | "unavailable" | "parse_error"; message: string; retryAfterMs: number }
+  > {
+    if (!this.apiKey) return { ok: false, reason: "config_error", message: "No Groq API key", retryAfterMs: 0 };
+    const list = members
+      .map((m, i) => `- id "${m.id}": ${m.name}${m.realName && m.realName !== m.name ? ` (also called ${m.realName})` : ""}, @${m.username}${i === 0 ? "  <- the speaker: I, me, my, myself" : ""}`)
+      .join("\n");
+    const system = `You turn a person's spoken or typed story about a day of group spending into separate bills for a bill-splitting app.
+
+GROUP MEMBERS (use ONLY these ids):
+${list}
+
+RULES
+1. One bill per separate purchase or payment, in the order told. Never merge two purchases; never invent one. Amounts exactly as said ("5.5k" = 5500, "five hundred" = 500).
+2. paidBy = id of who paid. "I paid" / "I bought" / "paid by me" = the speaker. "X paid" / "X bought" = X. If the story doesn't say who paid (e.g. "Ankit and I bought a carpet"), paidBy = null and question = a short question naming the likely people ("Who paid for the carpet, you or Ankit?").
+3. sharedBy = ids of everyone who shares the cost.
+   - Something one person bought for themselves ("I bought a jacket", "Suryansh bought a heater") = only that person.
+   - "shared among us two", "X and I" = those people.
+   - Things the whole group did together ("we went to the movies", "our dinner", "cab for us", "we all") = everyone.
+4. extras = one person's own add-on INSIDE a shared bill, already included in its amount: "in the dinner Suryansh had an extra ice cream for 120" -> extras [{userId: Suryansh, amount: 120, what: "ice cream"}]. The rest is split equally.
+5. A person may be named by any of their names, any case, misspelled a little. Match them. If a name matches nobody, add a line to unclear.
+6. category: Food | Travel | Shopping | Stay | Fuel | Medical | Utilities | Entertainment | Misc (movie = Entertainment, cab = Travel, dinner = Food, mall purchases = Shopping).
+7. description: 1-4 words, Title Case ("Leather Jacket", "Movie Tickets", "Cab Home").
+8. quote: the exact words from the story this bill came from (short).
+
+Return JSON only:
+{"bills": [{"description": string, "amount": number, "category": string, "paidBy": string|null, "question": string|null, "sharedBy": [string], "extras": [{"userId": string, "amount": number, "what": string}], "quote": string}], "unclear": [string]}`;
+
+    const call = await groqChat(this.apiKey, {
+      model: GROQ_MODEL,
+      messages: [{ role: "system", content: system }, { role: "user", content: story.slice(0, 4000) }],
+      temperature: 0.1,
+      max_completion_tokens: 3500,
+      response_format: { type: "json_object" },
+      ...textModelOptions(),
+    }, 45_000);
+    if (call.kind !== "ok") {
+      const status = call.kind === "http" ? call.status : 0;
+      console.warn(`[ai] parseStory failed kind=${call.kind} status=${status}`);
+      if (call.kind === "http" && (status === 413 || /request too large/i.test(call.message))) return { ok: false, reason: "too_large", message: call.message, retryAfterMs: 0 };
+      if (call.kind === "http" && status === 429) return { ok: false, reason: "rate_limit", message: call.message, retryAfterMs: call.retryAfterMs || 10_000 };
+      if (call.kind === "timeout") return { ok: false, reason: "timeout", message: "The AI took too long", retryAfterMs: 0 };
+      if (call.kind === "http" && (status === 401 || status === 403)) return { ok: false, reason: "config_error", message: call.message, retryAfterMs: 0 };
+      return { ok: false, reason: "unavailable", message: call.kind === "http" ? call.message : "Couldn't reach the AI", retryAfterMs: 0 };
+    }
+    const content = (call.json as any)?.choices?.[0]?.message?.content ?? "";
+    const parsed = parseModelJson(content);
+    if (parsed === undefined) return { ok: false, reason: "parse_error", message: "The AI answer was not valid JSON", retryAfterMs: 0 };
+    return { ok: true, raw: parsed };
+  }
+
   /** Tiny real requests to both models — proves the key, the network and the model names. */
   async ping(): Promise<{ text: PingResult; vision: PingResult }> {
     const one = async (model: string, content: unknown): Promise<PingResult> => {

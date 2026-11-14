@@ -68,6 +68,7 @@ const orderReadLimit = strictLimitBy("ai", async (userId) => {
 import { buildGroupContext } from "../lib/groupAiContext";
 import { userGroqKeys } from "../lib/groqKeys";
 import { answerWithItems } from "../lib/chatItems";
+import { cleanStory } from "../lib/storyParse";
 import { aliasesOf, categoryFromText, membersNamedIn, payerFromText, sharersFromText } from "../lib/expenseText";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
@@ -508,6 +509,63 @@ router.post(
       `[ai] stage=EXTRACT_COMPLETED model=${result.model} items=${order.items.length} totals=${totals.status} confidence=${order.confidence} tokens=${result.usage.promptTokens ?? "?"}+${result.usage.completionTokens ?? "?"} ms=${result.latencyMs}`
     );
     res.json({ order, totals, model: result.model, latencyMs: result.latencyMs, attempts: result.attempts, usage: result.usage });
+  }
+);
+
+// ─── POST /ai/parse-story ──────────────────────────────────────────────────────
+/**
+ * A whole day told in one go ("we went to the mall, I bought a jacket for 5500…") →
+ * separate bills for review. Read-only: nothing is saved here; the app shows every bill,
+ * asks who paid where the story didn't say, and saves them with POST /expenses/batch.
+ *
+ * Body: { text, groupId } → { bills: StoryBill[], unclear: string[] }
+ */
+router.post(
+  "/parse-story",
+  requireAuth,
+  aiLimit,
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const { text, groupId } = (req.body ?? {}) as { text?: string; groupId?: string };
+    if (typeof text !== "string" || text.trim().length < 3 || typeof groupId !== "string") {
+      res.status(400).json({ error: "text and groupId are required" });
+      return;
+    }
+    const memberCheck = await pool.query('SELECT 1 FROM "GroupMember" WHERE group_id = $1 AND user_id = $2', [groupId, userId]);
+    if (memberCheck.rows.length === 0) { res.status(403).json({ error: "You are not a member of this group" }); return; }
+
+    const membersRes = await pool.query<GroupMember & { realName: string }>(
+      `SELECT u.id, COALESCE(gm.nickname, u.name) AS name, u.username, u.name AS "realName"
+       FROM "GroupMember" gm JOIN "User" u ON u.id = gm.user_id
+       WHERE gm.group_id = $1
+       ORDER BY (gm.user_id = $2) DESC, COALESCE(gm.nickname, u.name) ASC`,
+      [groupId, userId]
+    );
+    const members: GroupMember[] = membersRes.rows;
+
+    const { keys } = await groqLanesFor(userId, Math.floor(Math.random() * 1000));
+    if (keys.length === 0) { res.status(403).json({ error: "missing_key", message: "Groq API Key required. Please set it in your Profile." }); return; }
+    const ready = keys.filter((k) => !isCoolingDown(k));
+    let result: Awaited<ReturnType<GroqProvider["parseStory"]>> = { ok: false, reason: "unavailable", message: "", retryAfterMs: 0 };
+    for (const key of ready.length ? ready : keys) {
+      result = await new GroqProvider(key).parseStory(text.trim(), members);
+      if (result.ok || !["rate_limit", "timeout", "unavailable", "parse_error"].includes(result.reason)) break;
+      if (result.reason === "rate_limit") coolDown(key, result.retryAfterMs);
+    }
+    await bump({ ai_calls: 1, ...(result.ok ? {} : { ai_failures: 1 }) }, userId);
+    if (!result.ok) {
+      const status = result.reason === "rate_limit" || result.reason === "too_large" ? 429 : result.reason === "config_error" ? 502 : 503;
+      const message =
+        result.reason === "too_large" ? "That story is too long for one go on a free Groq key. Split it in two."
+        : result.reason === "rate_limit" ? "The AI is busy for a moment. Try again in a few seconds."
+        : result.reason === "config_error" ? "Your Groq key didn't work. Check it in Profile."
+        : "Couldn't read that story right now. Try again.";
+      res.status(status).json({ error: result.reason, message });
+      return;
+    }
+    const story = cleanStory(result.raw, members.map((m) => m.id));
+    console.log(`[ai] parse-story bills=${story.bills.length} unclear=${story.unclear.length}`);
+    res.json(story);
   }
 );
 

@@ -1,19 +1,23 @@
 "use client";
 
 import { API_URL } from "@/lib/api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useAIExpense } from "@/hooks/useAIExpense";
 import ExpenseConfirmCard from "@/components/ExpenseConfirmCard";
 import ListeningSheet from "@/components/ListeningSheet";
+import StoryReview from "@/components/StoryReview";
+import { looksLikeStory, toExpenseBody, type StoryBill } from "@/lib/story";
+import { groupKey } from "@/lib/queries";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Mic, Camera, Sparkles, Loader2, ArrowRight } from "lucide-react";
 import type { ParsedExpenseDraft } from "@/hooks/types/ai";
-import { ask } from "@/lib/dialog";
+import { ask, toast } from "@/lib/dialog";
 
 
 interface Member {
@@ -27,7 +31,71 @@ interface Member {
 export default function AIExpensePage() {
   const { id: groupId } = useParams<{ id: string }>();
   const authed = useRequireAuth();
-  const { accessToken, user } = useAuth();
+  const { accessToken, user, authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  // ── Story mode: a whole day in one go → several bills to review ─────────────
+  const [story, setStory] = useState<{ bills: StoryBill[]; unclear: string[] } | null>(null);
+  const [storyBusy, setStoryBusy] = useState(false);
+  const [storySaving, setStorySaving] = useState(false);
+  const [storyError, setStoryError] = useState<string | null>(null);
+  const storyKey = useRef<string>("");
+
+  async function readStory(said: string) {
+    setStoryBusy(true);
+    setStoryError(null);
+    try {
+      const res = await authFetch("/ai/parse-story", { method: "POST", body: JSON.stringify({ text: said, groupId }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.error === "missing_key") { router.push("/profile"); return; }
+        toast(data.message || "Couldn't read that story. Try again.", "error");
+        return;
+      }
+      if (!data.bills?.length) { toast("Couldn't find any amounts in that. Try saying what each thing cost.", "error"); return; }
+      storyKey.current = crypto.randomUUID();
+      setStory({ bills: data.bills, unclear: data.unclear ?? [] });
+      window.scrollTo({ top: 0 });
+    } catch {
+      toast("Couldn't reach Spenit. Check your connection.", "error");
+    } finally {
+      setStoryBusy(false);
+    }
+  }
+
+  async function saveStory() {
+    if (!story) return;
+    setStorySaving(true);
+    setStoryError(null);
+    const live = story.bills.filter((b) => !b.skip);
+    const group = live.filter((b) => !b.toPersonal);
+    const mine = live.filter((b) => b.toPersonal);
+    try {
+      if (group.length) {
+        const res = await authFetch("/expenses/batch", {
+          method: "POST",
+          headers: { "Idempotency-Key": storyKey.current },
+          body: JSON.stringify({ groupId, expenses: group.map(toExpenseBody) }),
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          const which = typeof e.index === "number" && group[e.index] ? `${group[e.index].description}: ` : "";
+          throw new Error(`${which}${e.error || "Couldn't save the bills"}`);
+        }
+      }
+      for (const b of mine) {
+        await authFetch("/personal_expenses", { method: "POST", body: JSON.stringify({ description: b.description, amount: b.amount, category: b.category }) });
+      }
+      queryClient.invalidateQueries({ queryKey: groupKey(groupId) });
+      queryClient.invalidateQueries({ queryKey: ["balance"] });
+      toast(`Saved ${live.length} ${live.length === 1 ? "bill" : "bills"} from your day`);
+      router.push(`/groups/${groupId}`);
+    } catch (err) {
+      setStoryError((err as Error).message);
+    } finally {
+      setStorySaving(false);
+    }
+  }
   const router = useRouter();
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -98,8 +166,10 @@ export default function AIExpensePage() {
   }, [ai.state, groupId, router]);
 
   async function handleParse() {
-    if (!text.trim() || ai.state === "parsing") return;
-    await ai.parse(text, groupId);
+    if (!text.trim() || ai.state === "parsing" || storyBusy) return;
+    // Two or more amounts: a story of several bills; otherwise one bill.
+    if (looksLikeStory(text)) await readStory(text.trim());
+    else await ai.parse(text, groupId);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -152,7 +222,31 @@ export default function AIExpensePage() {
         )}
 
         <div className="px-4 space-y-4">
-          {!isReview && (
+          {story && user && (
+            <StoryReview
+              bills={story.bills}
+              setBills={(fn) => setStory((st) => (st ? { ...st, bills: fn(st.bills) } : st))}
+              members={members}
+              meId={user.id}
+              unclear={story.unclear}
+              saving={storySaving}
+              error={storyError}
+              onSave={() => void saveStory()}
+              onStartOver={() => { setStory(null); setStoryError(null); }}
+            />
+          )}
+
+          {storyBusy && (
+            <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] p-5 flex items-center gap-3">
+              <Loader2 size={20} className="animate-spin text-[var(--accent)]" />
+              <div>
+                <p className="font-bold text-[15px]">Reading your day…</p>
+                <p className="text-[12.5px] text-[var(--text-secondary)]">Finding each bill, who paid and who shares it.</p>
+              </div>
+            </section>
+          )}
+
+          {!isReview && !story && !storyBusy && (
             <>
               <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] shadow-[var(--shadow-card)] p-4">
                 {(
@@ -173,7 +267,12 @@ export default function AIExpensePage() {
                     {ai.voiceSupported && (
                       <button
                         type="button"
-                        onClick={() => ai.startVoice(groupId, (heard) => setText(heard))}
+                        onClick={() => ai.startVoice(groupId, (heard) => {
+                          setText(heard);
+                          if (!looksLikeStory(heard)) return false;
+                          void readStory(heard);
+                          return true;
+                        })}
                         disabled={isParsing}
                         className="w-12 h-12 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center flex-shrink-0 active:scale-95 transition-transform disabled:opacity-40"
                         aria-label="Speak the expense"
@@ -228,6 +327,16 @@ export default function AIExpensePage() {
                   <p className="px-1 mt-3 text-[12px] text-[var(--text-muted)] leading-snug">
                     Use any name people go by here, nickname or real name. Say who paid and who shares it; if you don&apos;t, it&apos;s you paying and everyone sharing.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setText(`We went to the mall, I bought a jacket for 2500. Then movies, I paid 900 for all of us. ${examples[0].includes("between") ? examples[0].split(" between ")[1].split(" and ")[0] : "Rahul"} paid 2400 for dinner, and the cab home was 380, I paid.`)}
+                    className="mt-3 w-full p-4 rounded-[18px] bg-[var(--accent-subtle)] text-left active:scale-[0.99] transition-transform"
+                  >
+                    <p className="text-[13.5px] font-extrabold text-[var(--text-primary)] flex items-center gap-1.5"><Sparkles size={15} className="text-[var(--accent)]" /> Tell your whole day in one go</p>
+                    <p className="mt-0.5 text-[12.5px] text-[var(--text-secondary)] leading-snug">
+                      Tap the mic and talk through it: what you bought, who paid, who shared, extras like &ldquo;Shan had an extra ice cream&rdquo;. Spenit makes each bill for you to check. Tap here for an example.
+                    </p>
+                  </button>
                 </section>
               )}
             </>
@@ -276,7 +385,7 @@ export default function AIExpensePage() {
           )}
         </div>
       </main>
-      <BottomNav />
+      {!story && <BottomNav />}
     </>
   );
 }
