@@ -62,7 +62,7 @@ import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 import { ask } from "@/lib/dialog";
 import AddPeopleHelpButton from "@/components/PlaceholderHelp";
 import SpendSheet from "@/components/SpendBreakdown";
-import { groupSpend, personalOwner, shortINR } from "@/lib/groupSpend";
+import { groupSpend, personalOwner, shortINR, type SpendKind } from "@/lib/groupSpend";
 
 
 type Member = GroupMember;
@@ -163,7 +163,7 @@ export default function GroupDetailPage() {
   const [hidePersonal, setHidePersonal] = useState(false);
   const [spendOpen, setSpendOpen] = useState(false);
   /** bills picked from the Spent breakdown ("Personal · since 2 Nov") */
-  const [spendFilter, setSpendFilter] = useState<{ ids: string[]; label: string } | null>(null);
+  const [spendFilter, setSpendFilter] = useState<{ ids: string[]; label: string; kind?: SpendKind } | null>(null);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
@@ -809,8 +809,8 @@ export default function GroupDetailPage() {
           hidingPersonal={hidePersonal}
           onClose={() => setSpendOpen(false)}
           onToggleHide={() => setHidePersonal((h) => !h)}
-          onShowBills={(ids, label) => {
-            setSpendFilter({ ids, label });
+          onShowBills={(ids, label, kind) => {
+            setSpendFilter({ ids, label, kind });
             setAiFilter(null);
             setSpendOpen(false);
             setTimeout(() => document.getElementById("group-bills")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -843,6 +843,7 @@ export default function GroupDetailPage() {
           groupId={id}
           currentUserId={user?.id}
           isAdmin={isAdmin}
+          highlight={spendFilter?.kind && spendFilter.ids.includes(selectedExpense.id) ? { kind: spendFilter.kind, memberCount: Math.max(group.members.length, 1) } : undefined}
           onEdit={(e) =>
             router.push(
               e.splitType === "itemized"

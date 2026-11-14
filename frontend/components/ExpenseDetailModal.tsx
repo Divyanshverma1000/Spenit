@@ -8,6 +8,14 @@ import { readJson } from "@/lib/api";
 import { groupKey } from "@/lib/queries";
 import { FEE_POLICY_TEXT, myPart, readBill, type Bill, type BillItem } from "@/lib/billDetails";
 import { useBackClose } from "@/lib/backClose";
+import { kindFor, type SpendKind } from "@/lib/groupSpend";
+
+/** How each kind from the Spent breakdown is pointed out on a bill. */
+const KIND_LOOK: Record<SpendKind, { label: string; color: string; why: string }> = {
+  everyone: { label: "Whole group", color: "var(--positive)", why: "Shared by everyone in the group." },
+  some: { label: "Some of you", color: "var(--info)", why: "Shared by more than one person, but not the whole group." },
+  personal: { label: "Personal", color: "var(--text-muted)", why: "Only one person had it, so nobody else owes for it." },
+};
 
 interface ExpenseDetailModalProps {
   expense: any;
@@ -21,6 +29,8 @@ interface ExpenseDetailModalProps {
   /** Change this expense in place (creator or group admin) */
   onEdit?: (expense: any) => void;
   isDeleting?: boolean;
+  /** opened from the Spent breakdown: point out the items counted as this kind */
+  highlight?: { kind: SpendKind; memberCount: number };
 }
 
 const money = (n: number) => `₹${n.toFixed(2)}`;
@@ -38,11 +48,12 @@ const PLATFORM: Record<string, string> = {
  * its owner chooses to show it.
  */
 export function ExpenseDetailModal({
-  expense, groupId, currentUserId, isAdmin, onClose, onDelete, onRepeat, onEdit, isDeleting,
+  expense, groupId, currentUserId, isAdmin, onClose, onDelete, onRepeat, onEdit, isDeleting, highlight,
 }: ExpenseDetailModalProps) {
   useBackClose(onClose);
   const modalRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<"summary" | "items">("summary");
+  // From the Spent breakdown on an itemised bill: go straight to the items that explain it.
+  const [view, setView] = useState<"summary" | "items">(() => (highlight && readBill(expense?.receiptData) ? "items" : "summary"));
 
   // Close on Escape or outside click
   useEffect(() => {
@@ -156,7 +167,7 @@ export function ExpenseDetailModal({
               )}
             </>
           ) : bill ? (
-            <BillItems expense={expense} bill={bill} me={me} myShare={myShare} inBill={inBill} groupId={groupId} />
+            <BillItems expense={expense} bill={bill} me={me} myShare={myShare} inBill={inBill} groupId={groupId} highlight={highlight} />
           ) : null}
         </div>
 
@@ -264,9 +275,18 @@ function YourPart({
 
 /** The saved item list in two modes: the items you're in, and the whole bill. */
 function BillItems({
-  expense, bill, me, myShare, inBill, groupId,
-}: { expense: any; bill: Bill; me: string; myShare: number; inBill: boolean; groupId?: string }) {
-  const [mode, setMode] = useState<"mine" | "all">(inBill ? "mine" : "all");
+  expense, bill, me, myShare, inBill, groupId, highlight,
+}: { expense: any; bill: Bill; me: string; myShare: number; inBill: boolean; groupId?: string; highlight?: { kind: SpendKind; memberCount: number } }) {
+  const [mode, setMode] = useState<"mine" | "all">(highlight || !inBill ? "all" : "mine");
+  // Items counted under the kind picked in the Spent breakdown, with their share of fees.
+  const lit = useMemo(() => {
+    if (!highlight) return null;
+    const scale = bill.itemsTotal > 0 ? num(expense.amount) / bill.itemsTotal : 1;
+    const items = bill.items.filter((i) => kindFor(i.sharedBy.length, highlight.memberCount) === highlight.kind);
+    return { set: new Set(items.map((i) => i.index)), items, total: Math.round(items.reduce((a, i) => a + i.lineTotal, 0) * scale * 100) / 100, scale };
+  }, [highlight, bill, expense.amount]);
+  const firstLit = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (lit && lit.items.length > 0) firstLit.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [lit]);
   const [busy, setBusy] = useState<number | "all" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { authFetch } = useAuth();
@@ -349,6 +369,22 @@ function BillItems({
         ))}
       </div>
 
+      {lit && highlight && (
+        <div className="p-3.5 rounded-2xl border-2 text-[13px] leading-snug" style={{ borderColor: KIND_LOOK[highlight.kind].color, background: `color-mix(in srgb, ${KIND_LOOK[highlight.kind].color} 10%, var(--paper))` }}>
+          <p className="font-bold text-[var(--text-primary)]">
+            {lit.items.length === 0
+              ? `Nothing on this bill counts as "${KIND_LOOK[highlight.kind].label}"`
+              : `${lit.items.length} ${lit.items.length === 1 ? "item counts" : "items count"} as "${KIND_LOOK[highlight.kind].label}": ${money(lit.total)}`}
+          </p>
+          {lit.items.length > 0 && (
+            <p className="mt-0.5 text-[var(--text-secondary)]">
+              {KIND_LOOK[highlight.kind].why}
+              {Math.abs(lit.scale - 1) > 0.0005 ? ` Includes ${lit.scale > 1 ? "its part of the fees" : "its part of the discounts"}, spread by price.` : ""}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Your private items: who can see them */}
       {mineSolo.length > 0 && (
         <div className="flex items-center gap-3 p-3 rounded-2xl bg-[var(--paper)] border border-[var(--hairline)]">
@@ -414,7 +450,15 @@ function BillItems({
         <>
           <Section title={`${bill.items.length} items`}>
             {bill.items.map((it) => (
-              <div key={it.index} className="p-3.5 flex items-start justify-between gap-3">
+              <div
+                key={it.index}
+                ref={lit?.set.has(it.index) && lit.items[0]?.index === it.index ? firstLit : undefined}
+                className="p-3.5 flex items-start justify-between gap-3"
+                style={lit?.set.has(it.index) && highlight ? {
+                  background: `color-mix(in srgb, ${KIND_LOOK[highlight.kind].color} 12%, var(--paper))`,
+                  boxShadow: `inset 4px 0 0 ${KIND_LOOK[highlight.kind].color}`,
+                } : lit ? { opacity: 0.55 } : undefined}
+              >
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-[15px] text-[var(--text-primary)] leading-snug">{itemTitle(it)}</div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--text-secondary)]">

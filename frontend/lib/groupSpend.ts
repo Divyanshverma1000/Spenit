@@ -37,7 +37,7 @@ const num = (v: unknown) => {
 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-function kindFor(people: number, memberCount: number): SpendKind {
+export function kindFor(people: number, memberCount: number): SpendKind {
   if (people <= 1) return "personal";
   return people >= memberCount ? "everyone" : "some";
 }

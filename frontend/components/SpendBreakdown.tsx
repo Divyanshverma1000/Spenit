@@ -34,7 +34,7 @@ export default function SpendSheet({
   hidingPersonal: boolean;
   onClose: () => void;
   onToggleHide: () => void;
-  onShowBills: (ids: string[], label: string) => void;
+  onShowBills: (ids: string[], label: string, kind?: SpendKind) => void;
 }) {
   const settledAt = useMemo(() => lastSettledAt(expenses, settlements), [expenses, settlements]);
   const months = useMemo(() => monthlyTotals(expenses), [expenses]);
@@ -60,7 +60,7 @@ export default function SpendSheet({
   const show = (kind?: SpendKind) => {
     const list = billsOfKind(inP, memberCount, kind);
     const what = kind ? KINDS.find((k) => k.key === kind)!.label : "All bills";
-    onShowBills(list.map((e) => e.id), `${what} · ${label.toLowerCase() === "all time" ? "all time" : label}`);
+    onShowBills(list.map((e) => e.id), `${what} · ${label.toLowerCase() === "all time" ? "all time" : label}`, kind);
   };
 
   return (
