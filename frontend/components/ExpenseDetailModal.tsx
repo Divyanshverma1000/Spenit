@@ -83,10 +83,10 @@ export function ExpenseDetailModal({
   const inBill = !!bill?.items.some((i) => i.sharedBy.includes(me));
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center p-0 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div
         ref={modalRef}
-        className="w-full sm:max-w-lg bg-[var(--paper)] sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200"
+        className="w-full max-w-[480px] bg-[var(--paper)] rounded-t-2xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-10 duration-200"
         style={{ maxHeight: "90vh", minHeight: view === "items" ? "70vh" : undefined }}
       >
         {/* Header */}

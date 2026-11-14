@@ -115,7 +115,7 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
             <>
               <section>
                 <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">People</h2>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
                   <Tile label="Live now" value={n(s.people.live)} sub="active in the last 5 min" live />
                   <Tile label="Today" value={n(s.people.dau)} sub="used Spenit today" />
                   <Tile label="This week" value={n(s.people.wau)} sub="last 7 days" />
@@ -131,7 +131,7 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
   
               <section>
                 <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">What people do</h2>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
                   <Tile label="Groups" value={n(s.product.groups)} sub={`${n(s.product.active_groups_7d)} active this week`} />
                   <Tile label="Bills" value={n(s.product.expenses)} sub={`${n(s.product.imported_orders)} imported orders`} />
                   <Tile label="Payments" value={n(s.product.payments_confirmed)} sub="confirmed settle-ups" />
@@ -141,7 +141,7 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
                 </div>
               </section>
   
-              <section className="grid sm:grid-cols-2 gap-2.5">
+              <section className="grid gap-2.5">
                 <Bars title="Active people" days={s.series} pick={(d) => d.active} />
                 <Bars title="New sign-ups" days={s.series} pick={(d) => d.signups} />
                 <Bars title="Bills added" days={s.series} pick={(d) => d.expenses} />
@@ -154,7 +154,7 @@ export function AdminDashboard({ s, onFeedbackDone }: { s: Stats; onFeedbackDone
                 <h2 className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">AI</h2>
                 <div className="rounded-[18px] bg-[var(--paper)] border border-[var(--hairline)] p-4">
                   <div className="flex items-center gap-2"><Bot size={18} className="text-[var(--text-secondary)]" /><span className="font-bold">Last 30 days</span></div>
-                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[13px]">
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
                     <div><p className="text-[var(--text-muted)]">Calls</p><p className="text-[18px] font-black tabular-nums">{n(s.ai.calls30d)}</p></div>
                     <div>
                       <p className="text-[var(--text-muted)]">Failed</p>

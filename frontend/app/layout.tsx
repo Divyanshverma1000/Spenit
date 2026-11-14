@@ -65,9 +65,11 @@ export default function RootLayout({
       </head>
       <body className="min-h-full">
         <Providers>
-          <PageTransition>
-            {children}
-          </PageTransition>
+          <div className="app-frame">
+            <PageTransition>
+              {children}
+            </PageTransition>
+          </div>
         </Providers>
         <script
           dangerouslySetInnerHTML={{

@@ -368,3 +368,21 @@ body {
 @media (prefers-reduced-motion: reduce) {
   [style*="spenit-eq"] { animation: none !important; }
 }
+
+/* ── Same app on every screen size ─────────────────────────────────────────
+   On a computer or tablet, Spenit is the phone app: one centred column, never stretched.
+   Bars pinned to the bottom (.app-fixed-x) stay inside that column too. */
+.app-frame { min-height: 100dvh; }
+.app-fixed-x { left: 50% !important; right: auto !important; width: 100%; max-width: 480px; transform: translateX(-50%); }
+@media (min-width: 560px) {
+  body { background-color: var(--app-backdrop, #E9EBEF); }
+  .app-frame {
+    max-width: 480px;
+    margin: 0 auto;
+    background-color: var(--ink);
+    box-shadow: 0 0 0 1px var(--hairline), 0 24px 80px -20px rgba(15, 23, 42, 0.18);
+  }
+  .app-fixed-x { border-left: 1px solid var(--hairline); border-right: 1px solid var(--hairline); }
+}
+:root[data-theme="dark"] { --app-backdrop: #07080B; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --app-backdrop: #07080B; } }

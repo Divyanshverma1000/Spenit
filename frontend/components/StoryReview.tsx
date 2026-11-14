@@ -227,7 +227,7 @@ export default function StoryReview({
       {error && <p className="text-[13px] font-semibold text-[var(--negative)] p-3 rounded-[14px] bg-[var(--negative)]/10">{error}</p>}
 
       {/* Save */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-[var(--ink)]/95 backdrop-blur-md border-t border-[var(--hairline)] px-4 pt-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+      <div className="app-fixed-x fixed bottom-0 inset-x-0 z-30 bg-[var(--ink)]/95 backdrop-blur-md border-t border-[var(--hairline)] px-4 pt-3 pb-[max(14px,env(safe-area-inset-bottom))]">
         <div className="max-w-md mx-auto">
           <button
             onClick={onSave}

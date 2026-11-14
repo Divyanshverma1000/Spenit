@@ -128,7 +128,7 @@ export default function AuthPage() {
       </div>
 
       {/* Sticky Bottom CTA Section */}
-      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[var(--ink)] via-[var(--ink)] to-transparent pt-12 pb-6 px-6 sm:px-8 flex flex-col items-center justify-end z-50">
+      <div className="app-fixed-x fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[var(--ink)] via-[var(--ink)] to-transparent pt-12 pb-6 px-6 sm:px-8 flex flex-col items-center justify-end z-50">
         <div className="w-full max-w-md flex flex-col items-center space-y-4">
           <div className="w-full overflow-hidden rounded-2xl relative shadow-xl shadow-orange-500/20 group hover:shadow-orange-500/30 transition-shadow">
             {/* We overlay the invisible GoogleLogin button over a custom beautiful button to match the mockup perfectly */}

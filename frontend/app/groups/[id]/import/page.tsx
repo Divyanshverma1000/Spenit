@@ -582,7 +582,7 @@ export default function ImportOrdersPage() {
 
 function BottomBar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed bottom-0 inset-x-0 z-30 bg-[var(--ink)]/95 backdrop-blur-md border-t border-[var(--hairline)] px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+    <div className="app-fixed-x fixed bottom-0 inset-x-0 z-30 bg-[var(--ink)]/95 backdrop-blur-md border-t border-[var(--hairline)] px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
       <div className="max-w-md mx-auto">{children}</div>
     </div>
   );
