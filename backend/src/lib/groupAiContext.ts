@@ -110,7 +110,7 @@ function legacyItems(rd: unknown): Item[] {
 const SYNONYMS: Record<string, string[]> = {
   icecream: ["ice cream", "icecream", "cornetto", "cone", "kulfi", "frozen dessert", "sundae", "gelato", "magnum", "tub", "kwality", "havmor", "baskin", "hocco", "vadilal", "amul ice"],
   chips: ["chips", "crisps", "kurkure", "lays", "lay s", "bingo", "pringles", "nachos", "doritos", "uncle chips", "wafer"],
-  snack: ["snack", "namkeen", "bhujia", "mixture", "biscuit", "cookie", "chips", "crisps", "kurkure", "nachos", "popcorn", "wafer", "chakli", "makhana", "puffs", "chocolate", "noodles", "maggi"],
+  snack: ["snack", "namkeen", "bhujia", "mixture", "biscuit", "cookie", "chips", "crisps", "kurkure", "nachos", "popcorn", "wafer", "chakli", "makhana", "puffs", "chocolate", "instant noodles"],
   chocolate: ["chocolate", "dairy milk", "kitkat", "kit kat", "5 star", "snickers", "munch", "perk", "silk", "ferrero", "kinder", "bournville", "cadbury"],
   drink: ["cola", "coke", "pepsi", "sprite", "thums up", "fanta", "juice", "soda", "red bull", "energy drink", "lassi", "buttermilk", "chaas"],
   milk: ["milk", "toned", "doodh"],
@@ -119,11 +119,22 @@ const SYNONYMS: Record<string, string[]> = {
   print: ["print", "file", "poster", "page"],
   stationery: ["glue", "fevistik", "scissors", "pen", "pencil", "notebook", "tape", "stapler"],
 };
-// "unhealthy" / "junk": everything that is usually that (the assistant then leaves out what isn't)
-SYNONYMS.unhealthy = Array.from(new Set([...SYNONYMS.icecream, ...SYNONYMS.chips, ...SYNONYMS.snack, ...SYNONYMS.chocolate, ...SYNONYMS.drink,
-  "cold drink", "soft drink", "sweet", "candy", "cake", "pastry", "donut", "fries", "burger", "pizza", "noodles", "pasta", "maggi", "puff", "wafers", "nachos", "soda"]));
+// "unhealthy" / "junk": junk food, sweets, fried snacks, ice cream, chocolate, fizzy drinks.
+const FIZZY = ["cola", "coke", "pepsi", "sprite", "fanta", "thums up", "mountain dew", "7up", "mirinda", "limca", "red bull", "energy drink", "soft drink", "cold drink", "soda"];
+SYNONYMS.unhealthy = Array.from(new Set([...SYNONYMS.icecream, ...SYNONYMS.chips, ...SYNONYMS.snack, ...SYNONYMS.chocolate, ...FIZZY,
+  "candy", "cake", "pastry", "donut", "doughnut", "fries", "burger", "pizza", "instant noodles", "noodles", "pasta", "puff", "wafers", "nachos", "gulab jamun", "rasgulla", "jalebi", "mithai"]));
 SYNONYMS.junk = SYNONYMS.unhealthy;
-SYNONYMS.colddrink = SYNONYMS.drink;
+SYNONYMS.colddrink = FIZZY;
+
+/** Never counted as junk, whatever else their name says ("Dark Chocolate Peanut Butter", "Masala Magic Cubes"). */
+const NOT_JUNK = ["buttermilk", "chaas", "lassi", "curd", "dahi", "yogurt", "ketchup", "sauce", "peanut butter", "oats", "protein", "muesli",
+  "magic cubes", "masala cubes", "bournvita", "horlicks", "nutrition", "milk powder", "atta", "rice", "dal", "spice"];
+
+/** Words in the question that ask about junk food, so NOT_JUNK applies. */
+export function wantsJunk(question: string): boolean {
+  const q = ` ${norm(question)} `;
+  return [" unhealthy ", " junk ", " junk food ", " cold drink", " cold drinks "].some((w) => q.includes(w));
+}
 const STOP = new Set(["how", "much", "many", "what", "did", "do", "i", "we", "me", "my", "on", "for", "the", "a", "an", "and", "or", "of", "in", "spent", "spend", "spending", "bought", "buy", "items", "item", "like", "other", "all", "total", "is", "are", "was", "were", "have", "has", "you", "your", "this", "that", "month", "week", "breakdown", "each", "type", "want", "by", "give", "show", "list", "with", "from", "to", "it", "its", "also", "packed", "food", "things", "stuff", "cost", "price", "prices", "exact", "bills", "bill", "check", "these", "those"]);
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -175,6 +186,8 @@ export function buildGroupContext(input: {
   const refs: Record<string, string> = {};
   const matched: Record<string, MatchRow> = {};
   const terms = input.focus ? searchTerms(input.focus) : [];
+  const typed = input.focus ? norm(input.focus) : "";
+  const junkOnly = input.focus ? wantsJunk(input.focus) : false;
   let matchedAny = false;
   if (terms.length) {
     const rows: string[] = [];
@@ -186,6 +199,8 @@ export function buildGroupContext(input: {
         const hay = ` ${norm(`${it.name} ${it.short ?? ""}`)} `;
         const squashed = hay.replace(/ /g, "");
         if (!terms.some((t) => hay.includes(` ${t}`) || (t.length >= 5 && squashed.includes(t.replace(/ /g, ""))))) continue;
+        // "unhealthy": leave out staples and healthy items, unless the question names them
+        if (junkOnly && NOT_JUNK.some((w) => hay.includes(` ${w}`) && !typed.includes(w))) continue;
         const ref = `E${i + 1}`;
         refs[ref] = e.id;
         const part = it.sharedBy.includes(viewerId) && it.sharedBy.length ? it.lineTotal / it.sharedBy.length : 0;

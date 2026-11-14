@@ -149,6 +149,31 @@ describe("items matching the question", () => {
 describe("unhealthy / junk questions", () => {
   it("cover snacks, chips, ice cream, chocolate and cold drinks", () => {
     const t = searchTerms("List all the unhealthy items I have been eating, snacks like chips kurkure tedhe medhe icecream chocolates and cold drinks");
-    expect(t).toEqual(expect.arrayContaining(["kurkure", "tedhe", "medhe", "cornetto", "munch", "coke", "maggi", "nachos"]));
+    expect(t).toEqual(expect.arrayContaining(["kurkure", "tedhe", "medhe", "cornetto", "munch", "coke", "instant noodles", "nachos"]));
+  });
+});
+
+describe("unhealthy leaves out staples and healthy items", () => {
+  it("matches junk, not buttermilk, ketchup, peanut butter, oats or masala cubes", () => {
+    const members = [{ id: "a", name: "Divyansh" }];
+    const names = [
+      "Karkure Chilli Chatka Crisps", "Mother Dairy Probiotic Tadka Salted Buttermilk", "Kissan Sweet & Spicy Chilli Ketchup",
+      "Maggi Magic Cubes-Vegetarian Masala", "Pintola High Protein Dark Chocolate Crunchy Peanut Butter", "Only Earth Protein Oats Chocolate High Protein Instant",
+      "Bournvita Chocolate Nutrition Drink Pouch", "NOICE Fresh Malai Lassi", "Diet Coke Can - Cola Sparkling Soft Drink",
+      "MAGGI Double Masala Noodles", "Munch King Size Chocolate Coated Wafer Bar", "Kwalitty Wall's Cornetto Butterscotch Frozen Dessert Cone",
+    ];
+    const e = { id: "x", description: "Instamart", amount: 100, createdAt: "2026-11-10T10:00:00Z", payers: [], splits: [],
+      receiptData: { items: names.map((name) => ({ name, lineTotal: 10, sharedBy: ["a"] })) } };
+    const { items } = buildGroupContext({ groupName: "F", viewerId: "a", members, expenses: [e], settlements: [], balance: null, focus: "How much on unhealthy items" });
+    const got = Object.values(items).map((r) => r.name);
+    expect(got).toEqual(["Karkure Chilli Chatka Crisps", "Diet Coke Can - Cola Sparkling Soft Drink", "MAGGI Double Masala Noodles",
+      "Munch King Size Chocolate Coated Wafer Bar", "Kwalitty Wall's Cornetto Butterscotch Frozen Dessert Cone"]);
+  });
+  it("still finds buttermilk when you ask for it", () => {
+    const members = [{ id: "a", name: "Divyansh" }];
+    const e = { id: "x", description: "Instamart", amount: 10, createdAt: "2026-11-10T10:00:00Z", payers: [], splits: [],
+      receiptData: { items: [{ name: "Mother Dairy Probiotic Tadka Salted Buttermilk", lineTotal: 10, sharedBy: ["a"] }] } };
+    const { items } = buildGroupContext({ groupName: "F", viewerId: "a", members, expenses: [e], settlements: [], balance: null, focus: "how much on buttermilk" });
+    expect(Object.keys(items)).toHaveLength(1);
   });
 });
