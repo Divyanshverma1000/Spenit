@@ -85,3 +85,24 @@ describe("itemKind", () => {
     expect(itemKind({ name: "Lay's Magic Masala Potato Chips (52 g)" })).toBe("potato chips");
   });
 });
+
+describe("why shares differ", () => {
+  it("splits each share into whole group, some and own items, never by who paid", () => {
+    const members = [{ id: "a", name: "Divyansh" }, { id: "b", name: "Suryansh" }, { id: "c", name: "Ankit" }];
+    const order = {
+      id: "e1", description: "Instamart order", amount: 330, createdAt: "2026-11-10T10:00:00Z",
+      payers: [{ userId: "a", name: "Divyansh", amountPaid: 330 }],
+      splits: [{ userId: "a", name: "Divyansh", shareAmount: 230 }, { userId: "b", name: "Suryansh", shareAmount: 50 }, { userId: "c", name: "Ankit", shareAmount: 50 }],
+      receiptData: { items: [
+        { name: "Dove Shampoo", short: "shampoo", lineTotal: 200, sharedBy: ["a"] },
+        { name: "Bread", short: "bread", lineTotal: 100, sharedBy: ["a", "b", "c"] },
+      ] },
+    };
+    const { text } = buildGroupContext({ groupName: "Flat", viewerId: "a", members, expenses: [order], settlements: [], balance: null });
+    expect(text).toContain("WHY SHARES DIFFER");
+    expect(text).toContain("Who PAID never changes anyone's share");
+    // 330 paid for 300 of items: fees follow the items (x1.1)
+    expect(text).toMatch(/Divyansh \(you\): share ₹256\.67 = whole group ₹36\.67 \+ shared with some ₹0\.00 \+ own items ₹220\.00 \(biggest own: shampoo ₹220\.00\)/);
+    expect(text).toMatch(/Suryansh: share ₹36\.67 = whole group ₹36\.67/);
+  });
+});

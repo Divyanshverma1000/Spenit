@@ -614,10 +614,10 @@ No markdown fences, just the raw JSON.`;
     question: string,
     history: { role: "user" | "assistant"; content: string }[],
     /** another assistant (e.g. personal spending) with its own instructions; the ledger is appended */
-    opts: { system?: string } = {}
+    opts: { system?: string; maxTurns?: number } = {}
   ): Promise<
     | { ok: true; answer: string; refs: string[]; followUps: string[]; usage: { in: number; out: number }; extra: Record<string, unknown> }
-    | { ok: false; reason: "rate_limit" | "timeout" | "config_error" | "unavailable"; message: string; retryAfterMs: number }
+    | { ok: false; reason: "rate_limit" | "too_large" | "timeout" | "config_error" | "unavailable"; message: string; retryAfterMs: number }
   > {
     const system = opts.system ? `${opts.system}
 
@@ -632,6 +632,7 @@ How to answer:
 - Owing and pending: use BALANCES NOW and "payments still due". A payment that is waiting for confirmation is not counted yet — say so when it matters.
 - Items ("how much on milk", "vegetables", "snacks"): use ITEMS BOUGHT. Group kinds sensibly yourself (vegetables = onion, tomato, potato, lady's finger, coriander…; dairy = milk, curd, paneer, butter…). Give the total price and the asker's part, and mention which bills if useful.
 - Private items have no name on purpose. Never guess what they were.
+- "Why is my share high / compare shares": use WHY SHARES DIFFER. A share is only what someone is in; who paid NEVER changes a share (it only changes balances). Explain differences by own items vs shared items, naming the biggest own items.
 - If the ledger can't answer, say what is missing and what they could do in the app.
 - Talk naturally; follow on from earlier messages.
 
@@ -645,7 +646,7 @@ ${ledger}`;
       model: GROQ_MODEL,
       messages: [
         { role: "system", content: system },
-        ...history.slice(-6).map((m) => ({ role: m.role, content: m.content.slice(0, 800) })),
+        ...history.slice(-(opts.maxTurns ?? 6)).map((m) => ({ role: m.role, content: m.content.slice(0, 800) })),
         { role: "user", content: question.slice(0, 500) },
       ],
       temperature: 0.2,
@@ -660,6 +661,9 @@ ${ledger}`;
     if (call.kind !== "ok") {
       const status = call.kind === "http" ? call.status : 0;
       console.warn(`[ai] groupChat failed kind=${call.kind} status=${status} ms=${call.ms}`);
+      // "Request too large ... tokens per minute": the question plus ledger is over the key's limit.
+      if (call.kind === "http" && (status === 413 || (status === 429 && /request too large/i.test(call.message))))
+        return { ok: false, reason: "too_large", message: call.message, retryAfterMs: 0 };
       if (call.kind === "http" && status === 429)
         return { ok: false, reason: "rate_limit", message: call.message, retryAfterMs: call.retryAfterMs || 10_000 };
       if (call.kind === "timeout") return { ok: false, reason: "timeout", message: "The AI took too long", retryAfterMs: 0 };

@@ -511,26 +511,44 @@ router.post(
       getGroupBalance(groupId, userId),
     ]);
 
-    const ctx = buildGroupContext({
+    const build = (budget?: number) => buildGroupContext({
       groupName: membersRes.rows[0]?.group_name ?? "this group",
       viewerId: userId,
       members: membersRes.rows.map((m: { id: string; name: string; is_placeholder: boolean }) => ({ id: m.id, name: m.name, isPlaceholder: m.is_placeholder })),
       expenses,
       settlements,
       balance,
+      budget,
     });
+    let ctx = build();
 
     const turns = (Array.isArray(history) ? history : [])
       .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
       .map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content) }));
 
-    const result = await new GroqProvider(key).groupChat(ctx.text, question.trim(), turns);
+    const ai = new GroqProvider(key);
+    let result = await ai.groupChat(ctx.text, question.trim(), turns);
+    // Over the key's per-minute token limit (free Groq keys: 8,000): ask again with a shorter
+    // bill list and less chat history. Every total stays in; only bill-by-bill detail shrinks.
+    for (const [budget, maxTurns] of [[3500, 2], [1200, 0]] as const) {
+      if (result.ok || result.reason !== "too_large") break;
+      ctx = build(budget);
+      result = await ai.groupChat(ctx.text, question.trim(), turns, { maxTurns });
+    }
     await bump(result.ok
       ? { ai_calls: 1, chat_questions: 1, ai_tokens_in: result.usage.in, ai_tokens_out: result.usage.out }
       : { ai_calls: 1, ai_failures: 1, chat_questions: 1 });
     if (!result.ok) {
-      const status = result.reason === "rate_limit" ? 429 : result.reason === "config_error" ? 502 : 503;
-      res.status(status).json({ error: result.reason, message: result.message, retryAfterMs: result.retryAfterMs });
+      console.warn(`[ai] query failed reason=${result.reason} msg=${result.message.slice(0, 160)}`);
+      const status = result.reason === "rate_limit" || result.reason === "too_large" ? 429 : result.reason === "config_error" ? 502 : 503;
+      // Plain words for the chat; Groq's own text (org ids, upgrade links) stays in the logs.
+      const message =
+        result.reason === "too_large" ? "This group has too much to fit in one question on a free Groq key right now. Wait a minute and ask again, or start a new chat with the bin icon."
+        : result.reason === "rate_limit" ? "The AI is busy for a moment (your Groq key's per-minute limit). Try again in a few seconds."
+        : result.reason === "timeout" ? "The AI took too long to answer. Try again."
+        : result.reason === "config_error" ? "Your Groq key didn't work. Check it in Profile."
+        : "Couldn't reach the AI right now. Try again in a moment.";
+      res.status(status).json({ error: result.reason, message, retryAfterMs: result.retryAfterMs });
       return;
     }
     res.json({

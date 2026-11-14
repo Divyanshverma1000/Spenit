@@ -157,6 +157,23 @@ export function buildGroupContext(input: {
   const byPerson = new Map<string, { paid: number; share: number }>();
   const kinds = new Map<string, { total: number; mine: number; rows: number }>();
   let privateTotal = 0, privateRows = 0;
+  // Why shares differ: each person's share split into whole-group, some-of-you and own-only money.
+  const memberCount = Math.max(members.length, 1);
+  const parts = new Map<string, { everyone: number; some: number; own: number; ownItems: Map<string, number>; ownPrivate: number }>();
+  const part = (u: string) => {
+    let x = parts.get(u);
+    if (!x) { x = { everyone: 0, some: 0, own: 0, ownItems: new Map(), ownPrivate: 0 }; parts.set(u, x); }
+    return x;
+  };
+  const addPart = (u: string, people: number, v: number, label?: string | null, masked?: boolean) => {
+    const x = part(u);
+    if (people <= 1) {
+      x.own += v;
+      if (masked) x.ownPrivate += v;
+      else if (label) x.ownItems.set(label, (x.ownItems.get(label) ?? 0) + v);
+    } else if (people >= memberCount) x.everyone += v;
+    else x.some += v;
+  };
 
   for (const e of expenses) {
     const amt = num(e.amount);
@@ -174,6 +191,18 @@ export function buildGroupContext(input: {
     for (const s of e.splits) { const x = byPerson.get(s.userId) ?? { paid: 0, share: 0 }; x.share += num(s.shareAmount); byPerson.set(s.userId, x); }
 
     const items = readBill(e.receiptData)?.items ?? legacyItems(e.receiptData);
+    const itemsSum = items.reduce((a, it) => a + it.lineTotal, 0);
+    if (items.length && itemsSum > 0) {
+      const scale = amt / itemsSum; // fees and discounts follow the items
+      for (const it of items) {
+        const n = it.sharedBy.length;
+        if (!n) continue;
+        for (const u of it.sharedBy) addPart(u, n, (it.lineTotal * scale) / n, itemKind(it) ?? it.name, it.masked);
+      }
+    } else {
+      const inIt = e.splits.filter((x) => num(x.shareAmount) > 0.004);
+      for (const x of inIt) addPart(x.userId, inIt.length, num(x.shareAmount), clip(e.description, 30));
+    }
     for (const it of items) {
       if (it.masked) { privateTotal += it.lineTotal; privateRows++; continue; }
       const k = itemKind(it);
@@ -192,6 +221,17 @@ export function buildGroupContext(input: {
     L.push(`- ${expenses.length} expenses, ${inr(total)} in all, from ${first} to ${last}`);
     L.push(`- You paid ${inr(myPaid)} and your share is ${inr(myShare)}`);
     for (const [id, x] of byPerson) L.push(`- ${nameOf(id)}: paid ${inr(x.paid)}, share ${inr(x.share)}`);
+    L.push("", "WHY SHARES DIFFER (each person's share = whole-group items + items shared by some + their OWN items; fees follow the items; about, to the rupee):");
+    L.push("A share depends ONLY on what a person is in. Who PAID never changes anyone's share; paying only changes balances.");
+    for (const m of members) {
+      const x = parts.get(m.id);
+      if (!x) continue;
+      const tot = x.everyone + x.some + x.own;
+      if (tot < 0.5) continue;
+      const top = [...x.ownItems].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} ${inr(v)}`).join(", ");
+      L.push(`- ${nameOf(m.id)}: share ${inr(tot)} = whole group ${inr(x.everyone)} + shared with some ${inr(x.some)} + own items ${inr(x.own)}` +
+        (top ? ` (biggest own: ${top}${x.ownPrivate >= 0.5 ? `, private items ${inr(x.ownPrivate)}` : ""})` : x.ownPrivate >= 0.5 ? ` (private items ${inr(x.ownPrivate)})` : ""));
+    }
     L.push("BY CATEGORY: " + [...byCat].sort((a, b) => b[1].total - a[1].total).map(([k, v]) => `${k} ${inr(v.total)} (${v.n}, your share ${inr(v.mine)})`).join("; "));
     if (byMonth.size > 1) L.push("BY MONTH: " + [...byMonth].sort().map(([k, v]) => `${k} ${inr(v.total)} (your share ${inr(v.mine)})`).join("; "));
   }
