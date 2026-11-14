@@ -13,6 +13,7 @@ import { readBill } from "./billDetails";
 export interface SpendExpense {
   id: string;
   amount: string;
+  createdAt?: string;
   receiptData?: unknown;
   payers: { userId: string; amountPaid: string }[];
   splits: { userId: string; name?: string; shareAmount: string }[];
@@ -25,7 +26,7 @@ export interface SpendBreakdown {
   everyone: number;
   some: number;
   personal: number;
-  /** bills by what most of their money was */
+  /** how many bills have any money of each kind (a shared order with a private item counts in both) */
   bills: Record<SpendKind, number>;
   me: { paid: number; share: number };
 }
@@ -69,6 +70,104 @@ export function personalOwner(e: SpendExpense): { userId: string; name: string }
   return shares.length === 1 ? { userId: shares[0].userId, name: shares[0].name ?? "" } : null;
 }
 
+export const KIND_KEYS: SpendKind[] = ["everyone", "some", "personal"];
+
+/** The bills with any money of `kind` (all bills when no kind). */
+export function billsOfKind<E extends SpendExpense>(expenses: E[], memberCount: number, kind?: SpendKind): E[] {
+  return kind ? expenses.filter((e) => billSpend(e, memberCount)[kind] >= 0.5) : expenses;
+}
+
+// ── Time: since everyone settled, by month, all time ───────────────────────────
+
+export interface SpendSettlement {
+  amount: string;
+  status: string;
+  createdAt: string;
+  confirmedAt?: string | null;
+  fromUser: { id?: string };
+  toUser: { id?: string };
+}
+
+/**
+ * The last moment everyone in the group was square (every balance under ₹1), found by
+ * replaying bills and confirmed payments in time order. null if that never happened after
+ * the first bill. Spending after it is what the group is still sorting out.
+ */
+export function lastSettledAt(expenses: SpendExpense[], settlements: SpendSettlement[]): Date | null {
+  type Ev = { at: number; apply: (b: Map<string, number>) => void };
+  const add = (b: Map<string, number>, u: string | undefined, v: number) => { if (u) b.set(u, (b.get(u) ?? 0) + v); };
+  const events: Ev[] = [
+    ...expenses.filter((e) => e.createdAt).map((e) => ({
+      at: new Date(e.createdAt!).getTime(),
+      apply: (b: Map<string, number>) => {
+        e.payers.forEach((p) => add(b, p.userId, num(p.amountPaid)));
+        e.splits.forEach((x) => add(b, x.userId, -num(x.shareAmount)));
+      },
+    })),
+    ...settlements.filter((s) => s.status === "confirmed").map((s) => ({
+      at: new Date(s.confirmedAt || s.createdAt).getTime(),
+      apply: (b: Map<string, number>) => { add(b, s.fromUser.id, num(s.amount)); add(b, s.toUser.id, -num(s.amount)); },
+    })),
+  ].sort((a, b) => a.at - b.at);
+  const bal = new Map<string, number>();
+  let last: number | null = null;
+  let any = false;
+  for (const ev of events) {
+    ev.apply(bal);
+    if ([...bal.values()].some((v) => Math.abs(v) >= 1)) { any = true; continue; }
+    if (any) last = ev.at;
+  }
+  return last === null ? null : new Date(last);
+}
+
+/** "2026-11" for a bill's date, in India time. */
+export function monthKey(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 330 * 60_000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function monthLabel(key: string, long = false): string {
+  const [y, m] = key.split("-").map(Number);
+  const name = new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString("en-IN", { month: long ? "long" : "short", timeZone: "UTC" });
+  return y === new Date().getFullYear() ? name : `${name} ${String(y).slice(2)}`;
+}
+
+/** Total per month, oldest first, every month from the first bill to now (empty ones too). */
+export function monthlyTotals(expenses: SpendExpense[]): { key: string; total: number; bills: number }[] {
+  const by = new Map<string, { total: number; bills: number }>();
+  for (const e of expenses) {
+    if (!e.createdAt) continue;
+    const k = monthKey(e.createdAt);
+    const cur = by.get(k) ?? { total: 0, bills: 0 };
+    by.set(k, { total: cur.total + num(e.amount), bills: cur.bills + 1 });
+  }
+  if (by.size === 0) return [];
+  const keys = [...by.keys()].sort();
+  const out: { key: string; total: number; bills: number }[] = [];
+  let [y, m] = keys[0].split("-").map(Number);
+  const [ly, lm] = monthKey(new Date().toISOString()).split("-").map(Number);
+  while (y < ly || (y === ly && m <= lm)) {
+    const k = `${y}-${String(m).padStart(2, "0")}`;
+    out.push({ key: k, total: r2(by.get(k)?.total ?? 0), bills: by.get(k)?.bills ?? 0 });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+export type SpendPeriod = { kind: "all" } | { kind: "since"; at: Date } | { kind: "month"; key: string };
+
+export function inPeriod(e: SpendExpense, p: SpendPeriod): boolean {
+  if (p.kind === "all" || !e.createdAt) return true;
+  if (p.kind === "since") return new Date(e.createdAt).getTime() > p.at.getTime();
+  return monthKey(e.createdAt) === p.key;
+}
+
+export function periodLabel(p: SpendPeriod): string {
+  if (p.kind === "all") return "All time";
+  if (p.kind === "since") return `Since ${p.at.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
+  return monthLabel(p.key, true);
+}
+
 export function groupSpend(expenses: SpendExpense[], memberCount: number, me: string): SpendBreakdown {
   const res: SpendBreakdown = {
     total: 0, everyone: 0, some: 0, personal: 0,
@@ -81,8 +180,7 @@ export function groupSpend(expenses: SpendExpense[], memberCount: number, me: st
     res.everyone += part.everyone;
     res.some += part.some;
     res.personal += part.personal;
-    const main = (Object.keys(part) as SpendKind[]).reduce((a, b) => (part[b] > part[a] ? b : a), "everyone");
-    res.bills[main]++;
+    for (const k of KIND_KEYS) if (part[k] >= 0.5) res.bills[k]++;
     res.me.paid += e.payers.filter((p) => p.userId === me).reduce((a, p) => a + num(p.amountPaid), 0);
     res.me.share += e.splits.filter((s) => s.userId === me).reduce((a, s) => a + num(s.shareAmount), 0);
   }

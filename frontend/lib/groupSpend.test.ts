@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billSpend, groupSpend, personalOwner, shortINR } from "./groupSpend";
+import { billSpend, billsOfKind, groupSpend, inPeriod, lastSettledAt, monthlyTotals, personalOwner, shortINR } from "./groupSpend";
 
 const bill = (amount: number, split: Record<string, number>, payer = "a", receiptData?: unknown) => ({
   id: Math.random().toString(36),
@@ -47,5 +47,43 @@ describe("groupSpend", () => {
     expect(shortINR(8400)).toBe("₹8.4k");
     expect(shortINR(123456)).toBe("₹1.2L");
     expect(shortINR(950)).toBe("₹950");
+  });
+});
+
+describe("spending over time", () => {
+  const at = (iso: string, amount: number, split: Record<string, number>, payer = "a") => ({
+    id: iso, amount: String(amount), createdAt: iso,
+    payers: [{ userId: payer, amountPaid: String(amount) }],
+    splits: Object.entries(split).map(([userId, v]) => ({ userId, shareAmount: String(v) })),
+  });
+  const oct = at("2026-10-05T10:00:00Z", 1000, { a: 500, b: 500 });
+  const nov = at("2026-11-03T10:00:00Z", 600, { a: 300, b: 300 });
+  const paidBack = { amount: "500", status: "confirmed", createdAt: "2026-10-20T10:00:00Z", confirmedAt: "2026-10-21T10:00:00Z", fromUser: { id: "b" }, toUser: { id: "a" } };
+
+  it("finds when everyone was last square", () => {
+    expect(lastSettledAt([oct, nov], [paidBack])?.toISOString()).toBe("2026-10-21T10:00:00.000Z");
+    expect(lastSettledAt([oct, nov], [])).toBeNull();
+    expect(lastSettledAt([oct], [{ ...paidBack, status: "pending" }])).toBeNull();
+  });
+
+  it("filters bills to a period", () => {
+    const since = { kind: "since" as const, at: new Date("2026-10-21T10:00:00Z") };
+    expect([oct, nov].filter((e) => inPeriod(e, since)).map((e) => e.id)).toEqual([nov.id]);
+    expect([oct, nov].filter((e) => inPeriod(e, { kind: "month", key: "2026-10" })).map((e) => e.id)).toEqual([oct.id]);
+  });
+
+  it("totals each month, empty months included", () => {
+    const m = monthlyTotals([oct, nov]);
+    expect(m[0]).toEqual({ key: "2026-10", total: 1000, bills: 1 });
+    expect(m[1]).toEqual({ key: "2026-11", total: 600, bills: 1 });
+  });
+
+  it("counts a bill in every kind it has money in, and lists them", () => {
+    const order = { ...at("2026-11-05T10:00:00Z", 300, { a: 200, b: 100 }), receiptData: { items: [
+      { name: "Shampoo", lineTotal: 200, sharedBy: ["a"] }, { name: "Bread", lineTotal: 100, sharedBy: ["a", "b"] },
+    ] } };
+    const s = groupSpend([order], 3, "a");
+    expect(s.bills).toEqual({ everyone: 0, some: 1, personal: 1 });
+    expect(billsOfKind([order, nov], 3, "personal").map((e) => e.id)).toEqual([order.id]);
   });
 });

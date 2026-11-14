@@ -34,6 +34,7 @@ import {
   Camera,
   Plus,
   Lock,
+  Wallet,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
@@ -60,7 +61,7 @@ import { SummaryGrid } from "@/components/ui/SummaryGrid";
 import { ExpenseRow, Expense } from "@/components/ui/ExpenseRow";
 import { ask } from "@/lib/dialog";
 import AddPeopleHelpButton from "@/components/PlaceholderHelp";
-import { showSpendBreakdown } from "@/components/SpendBreakdown";
+import SpendSheet from "@/components/SpendBreakdown";
 import { groupSpend, personalOwner, shortINR } from "@/lib/groupSpend";
 
 
@@ -160,6 +161,9 @@ export default function GroupDetailPage() {
   const [aiFilter, setAiFilter] = useState<string[] | null>(null);
   /** hide bills that are one person's own (from the Spent breakdown) */
   const [hidePersonal, setHidePersonal] = useState(false);
+  const [spendOpen, setSpendOpen] = useState(false);
+  /** bills picked from the Spent breakdown ("Personal · since 2 Nov") */
+  const [spendFilter, setSpendFilter] = useState<{ ids: string[]; label: string } | null>(null);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
@@ -313,15 +317,15 @@ export default function GroupDetailPage() {
   }
 
   const feedItems = useMemo(() => {
-    const only = aiFilter ? new Set(aiFilter) : null;
+    const only = spendFilter ? new Set(spendFilter.ids) : aiFilter ? new Set(aiFilter) : null;
     const exp = expenses
       .filter((e) => !only || only.has(e.id))
-      .filter((e) => !hidePersonal || e.pending || !personalOwner(e))
+      .filter((e) => spendFilter || !hidePersonal || e.pending || !personalOwner(e))
       .map((e) => ({ type: 'expense' as const, data: e, createdAt: new Date(e.createdAt).getTime() }));
     // Settlements are hidden while showing bills from an answer.
     const set = only ? [] : settlements.map((s) => ({ type: 'settlement' as const, data: s, createdAt: new Date(s.createdAt).getTime() }));
     return [...exp, ...set].sort((a, b) => b.createdAt - a.createdAt);
-  }, [expenses, settlements, aiFilter, hidePersonal]);
+  }, [expenses, settlements, aiFilter, hidePersonal, spendFilter]);
 
   if (!authed) return null;
   if (loading && !group) return (
@@ -424,7 +428,7 @@ export default function GroupDetailPage() {
                 label: "Spent",
                 value: `₹${totalSpend.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,
                 sub: spend.personal >= 1 ? `${shortINR(spend.personal)} personal ›` : spend.some >= 1 ? `${shortINR(spend.some)} not shared by all ›` : undefined,
-                onClick: expenses.length > 0 ? () => { void showSpendBreakdown(spend, hidePersonal).then((flip) => { if (flip) setHidePersonal((h) => !h); }); } : undefined,
+                onClick: expenses.length > 0 ? () => setSpendOpen(true) : undefined,
               },
               { label: "Expenses", value: expenses.length },
               { label: "Members", value: group.members.length },
@@ -460,7 +464,7 @@ export default function GroupDetailPage() {
         </div>
 
         {/* ── Expenses ────────────────────────────────────────── */}
-        <div className="px-5 mb-8">
+        <div id="group-bills" className="px-5 mb-8 scroll-mt-[150px]">
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>EXPENSES</SectionLabel>
             <div className="flex items-center gap-2">
@@ -474,7 +478,15 @@ export default function GroupDetailPage() {
             </div>
           </div>
 
-          {hidePersonal && (
+          {spendFilter && (
+            <div className="mb-3 flex items-center gap-2 px-3.5 py-2.5 rounded-[14px] bg-[var(--accent-subtle)]">
+              <Wallet size={15} className="text-[var(--accent)] flex-shrink-0" />
+              <p className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--text-primary)] truncate">{spendFilter.label} · {spendFilter.ids.length} {spendFilter.ids.length === 1 ? "bill" : "bills"}</p>
+              <button onClick={() => setSpendOpen(true)} className="text-[12px] font-bold text-[var(--accent)] px-2">Breakdown</button>
+              <button onClick={() => setSpendFilter(null)} className="p-1 text-[var(--accent)]" aria-label="Show all bills"><X size={16} /></button>
+            </div>
+          )}
+          {hidePersonal && !spendFilter && (
             <div className="mb-3 flex items-center gap-2 px-3.5 py-2.5 rounded-[14px] bg-[var(--paper-dim)]">
               <Lock size={14} className="text-[var(--text-secondary)] flex-shrink-0" />
               <p className="flex-1 text-[13px] font-semibold text-[var(--text-primary)]">{hiddenCount} personal {hiddenCount === 1 ? "bill" : "bills"} hidden</p>
@@ -788,12 +800,29 @@ export default function GroupDetailPage() {
         />
       )}
 
+      {spendOpen && (
+        <SpendSheet
+          expenses={expenses.filter((e) => !e.pending)}
+          settlements={settlements}
+          memberCount={Math.max(group.members.length, 1)}
+          me={user?.id ?? ""}
+          hidingPersonal={hidePersonal}
+          onClose={() => setSpendOpen(false)}
+          onToggleHide={() => setHidePersonal((h) => !h)}
+          onShowBills={(ids, label) => {
+            setSpendFilter({ ids, label });
+            setAiFilter(null);
+            setSpendOpen(false);
+            setTimeout(() => document.getElementById("group-bills")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+          }}
+        />
+      )}
       {chatOpen && (
         <GroupChat
           groupId={id}
           groupName={group.name}
           onClose={() => setChatOpen(false)}
-          onShowExpenses={(ids) => { setAiFilter(ids); setChatOpen(false); }}
+          onShowExpenses={(ids) => { setAiFilter(ids); setSpendFilter(null); setChatOpen(false); }}
         />
       )}
 
