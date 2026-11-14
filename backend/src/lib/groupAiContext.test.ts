@@ -145,3 +145,10 @@ describe("items matching the question", () => {
     expect(text).toContain("No matching items on any bill.");
   });
 });
+
+describe("unhealthy / junk questions", () => {
+  it("cover snacks, chips, ice cream, chocolate and cold drinks", () => {
+    const t = searchTerms("List all the unhealthy items I have been eating, snacks like chips kurkure tedhe medhe icecream chocolates and cold drinks");
+    expect(t).toEqual(expect.arrayContaining(["kurkure", "tedhe", "medhe", "cornetto", "munch", "coke", "maggi", "nachos"]));
+  });
+});

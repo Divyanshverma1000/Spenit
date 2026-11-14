@@ -36,10 +36,13 @@ export interface CtxBalance {
   simplifiedTransfers: { from: string; to: string; amount: string; fromName: string; toName: string }[];
 }
 
+export interface MatchRow { id: string; expenseId: string; name: string; qty: number | null; price: number; mine: number }
 export interface GroupContext {
   text: string;
   /** "E1" → expense id, for answers that point at bills */
   refs: Record<string, string>;
+  /** "I1" → one item matching the question, for answers the server writes out exactly */
+  items: Record<string, MatchRow>;
 }
 
 const num = (v: unknown) => {
@@ -116,6 +119,11 @@ const SYNONYMS: Record<string, string[]> = {
   print: ["print", "file", "poster", "page"],
   stationery: ["glue", "fevistik", "scissors", "pen", "pencil", "notebook", "tape", "stapler"],
 };
+// "unhealthy" / "junk": everything that is usually that (the assistant then leaves out what isn't)
+SYNONYMS.unhealthy = Array.from(new Set([...SYNONYMS.icecream, ...SYNONYMS.chips, ...SYNONYMS.snack, ...SYNONYMS.chocolate, ...SYNONYMS.drink,
+  "cold drink", "soft drink", "sweet", "candy", "cake", "pastry", "donut", "fries", "burger", "pizza", "noodles", "pasta", "maggi", "puff", "wafers", "nachos", "soda"]));
+SYNONYMS.junk = SYNONYMS.unhealthy;
+SYNONYMS.colddrink = SYNONYMS.drink;
 const STOP = new Set(["how", "much", "many", "what", "did", "do", "i", "we", "me", "my", "on", "for", "the", "a", "an", "and", "or", "of", "in", "spent", "spend", "spending", "bought", "buy", "items", "item", "like", "other", "all", "total", "is", "are", "was", "were", "have", "has", "you", "your", "this", "that", "month", "week", "breakdown", "each", "type", "want", "by", "give", "show", "list", "with", "from", "to", "it", "its", "also", "packed", "food", "things", "stuff", "cost", "price", "prices", "exact", "bills", "bill", "check", "these", "those"]);
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -124,8 +132,11 @@ export function searchTerms(question: string): string[] {
   const q = ` ${norm(question)} `;
   const out = new Set<string>();
   for (const [key, list] of Object.entries(SYNONYMS)) {
-    const forms = [key, `${key}s`, key === "icecream" ? "ice cream" : key, key === "icecream" ? "ice creams" : key];
-    if (forms.some((f) => q.includes(` ${f} `)) || list.some((w) => q.includes(` ${w} `))) list.forEach((w) => out.add(w));
+    const spaced = key === "icecream" ? "ice cream" : key === "colddrink" ? "cold drink" : key;
+    const forms = [key, `${key}s`, spaced, `${spaced}s`, key === "junk" ? "junk food" : key];
+    // Only the group's own name switches it on ("snacks", "ice cream", "unhealthy"); a brand
+    // in the question ("kurkure") is searched as itself below.
+    if (forms.some((f) => q.includes(` ${f} `))) list.forEach((w) => out.add(w));
   }
   for (const w of norm(question).split(" ")) {
     if (w.length < 3 || STOP.has(w) || /^\d+$/.test(w)) continue;
@@ -162,7 +173,9 @@ export function buildGroupContext(input: {
 
   // ── Items the question asks about, from EVERY bill (nothing left out) ─────
   const refs: Record<string, string> = {};
+  const matched: Record<string, MatchRow> = {};
   const terms = input.focus ? searchTerms(input.focus) : [];
+  let matchedAny = false;
   if (terms.length) {
     const rows: string[] = [];
     let price = 0, mine = 0, n = 0;
@@ -177,8 +190,10 @@ export function buildGroupContext(input: {
         refs[ref] = e.id;
         const part = it.sharedBy.includes(viewerId) && it.sharedBy.length ? it.lineTotal / it.sharedBy.length : 0;
         price += it.lineTotal; mine += part; n++;
-        if (rows.length < 60) {
-          rows.push(`- [${ref}] ${day(e.createdAt)} "${clip(e.description, 30)}": ${clip(it.name, 60)}${it.qty && it.qty > 1 ? ` x${it.qty}` : ""} ${inr(it.lineTotal)} [${it.sharedBy.map((u) => nameOf(u).split(" ")[0]).join("+")}] · your part ${inr(part)}`);
+        if (rows.length < 80) {
+          const id = `I${rows.length + 1}`;
+          matched[id] = { id, expenseId: e.id, name: it.name, qty: it.qty, price: r2(it.lineTotal), mine: r2(part) };
+          rows.push(`- ${id} [${ref}] ${day(e.createdAt)}: ${clip(it.name, 60)}${it.qty && it.qty > 1 ? ` x${it.qty}` : ""} ${inr(it.lineTotal)} [${it.sharedBy.map((u) => nameOf(u).split(" ")[0]).join("+")}] · your part ${inr(part)}`);
         }
       }
     });
@@ -188,6 +203,7 @@ export function buildGroupContext(input: {
       L.push(...rows);
       if (n > rows.length) L.push(`- …${n - rows.length} more matching rows (included in the totals below)`);
       L.push(`MATCHING TOTAL: ${n} items, ${inr(price)} in all, your part ${inr(mine)} (item prices, before fees)`);
+      matchedAny = true;
     }
   }
 
@@ -302,7 +318,8 @@ export function buildGroupContext(input: {
     if (byMonth.size > 1) L.push("BY MONTH: " + [...byMonth].sort().map(([k, v]) => `${k} ${inr(v.total)} (your share ${inr(v.mine)})`).join("; "));
   }
 
-  if (kinds.size || privateRows) {
+  // When the question is about items, the exact matching list above replaces this rough summary.
+  if (!matchedAny && (kinds.size || privateRows)) {
     L.push("", "ITEMS BOUGHT, grouped by what they are (total price · your part · times bought):");
     const sorted = [...kinds].sort((a, b) => b[1].total - a[1].total);
     const maxKinds = budget < 2000 ? 20 : budget < 4000 ? 40 : 70; // smaller asks keep the priciest kinds
@@ -343,5 +360,5 @@ export function buildGroupContext(input: {
   }
   if (shown < expenses.length) L.push(`…and ${expenses.length - shown} older expenses not listed one by one (they ARE included in every total above).`);
 
-  return { text: L.join("\n"), refs };
+  return { text: L.join("\n"), refs, items: matched };
 }

@@ -67,6 +67,7 @@ const orderReadLimit = strictLimitBy("ai", async (userId) => {
 });
 import { buildGroupContext } from "../lib/groupAiContext";
 import { userGroqKeys } from "../lib/groqKeys";
+import { answerWithItems } from "../lib/chatItems";
 import { listGroupExpenses } from "./expenses";
 import { listGroupSettlements } from "./settlements";
 import { getGroupBalance } from "./balance";
@@ -591,11 +592,19 @@ router.post(
       res.status(e.status).json(e.body);
       return;
     }
-    res.json({
-      answer: result.answer,
-      expenseIds: result.refs.map((r) => ctx.refs[r]).filter(Boolean),
-      followUps: result.followUps,
-    });
+    // Item questions: the model picks rows, the server writes the list and the total, so no
+    // price or sum is ever made up.
+    const picked = (Array.isArray(result.extra.items) ? result.extra.items : [])
+      .filter((x): x is string => typeof x === "string")
+      .map((id) => ctx.items[id.trim().toUpperCase()])
+      .filter((r, i, all): r is NonNullable<typeof r> => !!r && all.indexOf(r) === i);
+    let answer = result.answer;
+    let expenseIds = result.refs.map((r) => ctx.refs[r]).filter(Boolean);
+    if (picked.length) {
+      answer = answerWithItems(answer, picked);
+      expenseIds = [...new Set(picked.map((r) => r.expenseId))];
+    }
+    res.json({ answer, expenseIds, followUps: result.followUps });
   }
 );
 
