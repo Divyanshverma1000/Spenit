@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Camera, ChevronLeft, ChevronRight, CornerDownLeft, Loader2, Plus, Sparkles, Target, Users } from "lucide-react";
+import { ArrowRight, Camera, ChevronLeft, ChevronRight, CornerDownLeft, Loader2, Plus, Target, Users } from "lucide-react";
 import { parseQuickAdd, type QuickEntry } from "@/lib/quickAdd";
-import { PERSONAL_SUGGESTIONS } from "@/components/GroupChat";
 import { budgetPace, dayOf, dayTitle, inr, metaFor, monthLabel, shiftMonth, type SpendEntry, type SpendingOverview } from "@/lib/spending";
 
 /** Bars: one colour that passes the palette checks on the light and dark surfaces. */
@@ -21,48 +20,9 @@ function CatTile({ category, size = 40 }: { category: string; size?: number }) {
   );
 }
 
-/** The AI colour, same violet as "Ask AI" on Home. */
-export const AI_GRADIENT = "linear-gradient(135deg, #7C3AED 0%, #8B5CF6 55%, #A855F7 100%)";
+const EXAMPLES = ["chai 20", "auto 60 yesterday", "groceries 450", "movie 300"];
 
-/** A big, obvious way into the spending assistant, with one-tap starter questions. */
-function AskCard({ onAsk }: { onAsk: (question?: string) => void }) {
-  return (
-    <section
-      className="relative overflow-hidden rounded-[24px] p-4 text-white shadow-[0_14px_32px_-16px_rgba(124,58,237,0.65)]"
-      style={{ background: AI_GRADIENT }}
-    >
-      <div className="pointer-events-none absolute -top-12 -right-8 w-40 h-40 rounded-full bg-white opacity-15 blur-2xl" />
-      <div className="relative flex items-center gap-2.5">
-        <span className="w-9 h-9 rounded-[12px] bg-white/20 flex items-center justify-center"><Sparkles size={18} /></span>
-        <div>
-          <p className="text-[15px] font-bold leading-tight">Ask AI about your money</p>
-          <p className="text-[12px] text-white/80">Knows every expense, item and group share</p>
-        </div>
-      </div>
-      <button
-        onClick={() => onAsk()}
-        className="relative mt-3 w-full flex items-center gap-2 rounded-[16px] px-3.5 py-2.5 text-left active:scale-[0.99] transition-transform"
-        style={{ backgroundColor: "#FFFFFF" }}
-      >
-        <span className="flex-1 min-w-0 truncate text-[14px] font-medium" style={{ color: "#6D5A93" }}>Ask anything about your spending</span>
-        <span className="w-8 h-8 rounded-full flex items-center justify-center text-white" style={{ background: AI_GRADIENT }}><ArrowRight size={16} /></span>
-      </button>
-      <div className="relative mt-2.5 flex gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1">
-        {PERSONAL_SUGGESTIONS.slice(0, 4).map((q) => (
-          <button
-            key={q}
-            onClick={() => onAsk(q)}
-            className="flex-shrink-0 px-3 py-1.5 rounded-full bg-white/15 border border-white/25 text-[12.5px] font-semibold active:scale-95 transition-transform"
-          >
-            {q}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-const whenLabel =(daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 ? "Yesterday" : `${daysAgo} days ago`);
+const whenLabel = (daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 ? "Yesterday" : `${daysAgo} days ago`);
 
 /**
  * The Spending tab: this month at a glance (with budget pace), a two-second quick add,
@@ -70,13 +30,11 @@ const whenLabel =(daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 ?
  * of group bills appears next to what you logged yourself.
  */
 export function SpendingView({
-  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, onAsk, onScan, scanning = false, quickBusy,
+  o, month, onMonth, onQuickAdd, onOpenAdd, onEdit, onBudget, onScan, scanning = false, quickBusy,
 }: {
   /** read a bill or payment picture into a prefilled entry */
   onScan?: () => void;
   scanning?: boolean;
-  /** open the spending assistant, optionally with a question to ask straight away */
-  onAsk: (question?: string) => void;
   o: SpendingOverview | undefined;
   month: string;
   onMonth: (m: string) => void;
@@ -87,6 +45,12 @@ export function SpendingView({
   quickBusy: boolean;
 }) {
   const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  /** Put an example in the box (not saved) so people see the "what + amount" pattern. */
+  function tryExample(ex: string) {
+    setText(ex);
+    inputRef.current?.focus();
+  }
   const [dayFocus, setDayFocus] = useState<number | null>(null);
   const parsed = useMemo(() => parseQuickAdd(text), [text]);
   const pace = o ? budgetPace(o) : null;
@@ -180,15 +144,23 @@ export function SpendingView({
 
       {/* ── Quick add ──────────────────────────────────────── */}
       <section>
+        <div className="flex items-baseline justify-between mb-2 px-1">
+          <h2 className="text-[13px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">Add an expense</h2>
+          <span className="text-[12px] text-[var(--text-muted)]">Type it or scan a bill</span>
+        </div>
         <form
           onSubmit={(e) => { e.preventDefault(); void submitQuick(); }}
-          className="flex items-center gap-2 rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] pl-4 pr-2 py-2 focus-within:ring-2 focus-within:ring-[var(--accent-subtle)]"
+          className="flex items-center gap-2 rounded-[20px] bg-[var(--paper)] border-[1.5px] pl-2 pr-2 py-2 shadow-[0_8px_24px_-14px_rgba(245,158,11,0.55)] focus-within:ring-4 focus-within:ring-[var(--accent-subtle)]"
+          style={{ borderColor: "rgba(245,158,11,0.55)" }}
         >
-          <Plus size={18} className="text-[var(--accent)] flex-shrink-0" />
+          <span className="w-9 h-9 rounded-[12px] bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center flex-shrink-0">
+            <Plus size={19} strokeWidth={2.6} />
+          </span>
           <input
+            ref={inputRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="chai 20, auto 60 yesterday…"
+            placeholder="Like chai 20"
             aria-label="Quick add an expense"
             enterKeyHint="done"
             className="flex-1 min-w-0 bg-transparent py-2 text-[15px] font-medium text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
@@ -254,13 +226,27 @@ export function SpendingView({
             })}
           </div>
         )}
+        {/* No history yet: show the pattern with examples that fill the box */}
+        {!text.trim() && o && o.frequent.length === 0 && (
+          <div className="mt-2.5 flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+            <span className="flex-shrink-0 text-[12.5px] font-semibold text-[var(--text-muted)]">Try</span>
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => tryExample(ex)}
+                className="flex-shrink-0 px-3 py-1.5 rounded-full border border-dashed text-[13px] font-semibold text-[var(--text-secondary)] active:scale-95 transition-transform"
+                style={{ borderColor: "rgba(245,158,11,0.6)" }}
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
         <button onClick={() => onOpenAdd()} className="mt-2 px-1 text-[12.5px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
           More options <ArrowRight size={13} />
         </button>
       </section>
-
-      {/* ── Ask AI: up top, where it's seen before the long list ── */}
-      {o && <AskCard onAsk={onAsk} />}
 
       {o && o.total === 0 ? (
         <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] p-6 text-center">

@@ -23,7 +23,7 @@ const GROUP_SUGGESTIONS = [
   "Biggest expense this month?",
 ];
 
-export const PERSONAL_SUGGESTIONS = [
+const PERSONAL_SUGGESTIONS = [
   "How much did I spend this month?",
   "How much on milk?",
   "What did I spend on groceries?",
@@ -269,7 +269,7 @@ export default function GroupChat({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void ask(input); } }}
             rows={1}
-            placeholder={last?.role === "assistant" ? "Ask a follow-up…" : "Ask about this group…"}
+            placeholder={last?.role === "assistant" ? "Ask a follow-up…" : personal ? "Ask about your spending…" : "Ask about this group…"}
             className="flex-1 resize-none max-h-28 px-4 py-3 rounded-[20px] bg-[var(--paper-dim)] text-[15px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-subtle)]"
           />
           <button
