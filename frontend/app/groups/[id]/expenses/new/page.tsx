@@ -12,7 +12,9 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Plus, X, Receipt, Search, Repeat } from "lucide-react";
+import { Search, Repeat } from "lucide-react";
+import ItemsOnTop from "@/components/ItemsOnTop";
+import { splitWithItems } from "@/lib/itemSplit";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 
 
@@ -119,48 +121,12 @@ export default function UniversalExpensePage() {
 
   const amountNum = parseFloat(totalAmount) || 0;
 
-  // --- Math Engine ---
-  const itemTotal = items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
-  const sharedPool = Math.max(0, amountNum - itemTotal);
-
-  // Calculate EXACT shares per person
-  const exactShares = useMemo(() => {
-    const shares: Record<string, number> = {};
-    members.forEach(m => shares[m.id] = 0);
-
-    // 1. Distribute Specific Items
-    items.forEach(item => {
-      const itemAmt = parseFloat(item.amount) || 0;
-      if (itemAmt > 0 && item.sharedBy.length > 0) {
-        // We do precise integer math internally to prevent 1/3 rounding bugs
-        const cents = Math.round(itemAmt * 100);
-        const baseCents = Math.floor(cents / item.sharedBy.length);
-        let remainderCents = cents - (baseCents * item.sharedBy.length);
-        
-        item.sharedBy.forEach((uid) => {
-          const extra = remainderCents > 0 ? 1 : 0;
-          remainderCents--;
-          shares[uid] += (baseCents + extra) / 100;
-        });
-      }
-    });
-
-    // 2. Distribute Shared Pool
-    if (sharedPool > 0 && sharedPoolParticipants.size > 0) {
-      const cents = Math.round(sharedPool * 100);
-      const poolArray = Array.from(sharedPoolParticipants);
-      const baseCents = Math.floor(cents / poolArray.length);
-      let remainderCents = cents - (baseCents * poolArray.length);
-
-      poolArray.forEach((uid) => {
-        const extra = remainderCents > 0 ? 1 : 0;
-        remainderCents--;
-        shares[uid] += (baseCents + extra) / 100;
-      });
-    }
-
-    return shares;
-  }, [members, items, sharedPool, sharedPoolParticipants]);
+  // --- Math engine: items first (split between whoever had them), the rest equally, in paise ---
+  const split = useMemo(() => splitWithItems(amountNum, items, Array.from(sharedPoolParticipants)), [amountNum, items, sharedPoolParticipants]);
+  const exactShares = split.shares;
+  const itemTotal = split.itemsTotal;
+  const sharedPool = split.rest;
+  const nameOf = (id: string) => (id === user?.id ? "You" : members.find((m) => m.id === id)?.name.split(" ")[0] ?? "Someone");
 
   const toggleSharedPool = (uid: string) => {
     setSharedPoolParticipants(prev => {
@@ -193,41 +159,6 @@ export default function UniversalExpensePage() {
     if (user) setSharedPoolParticipants(new Set([user.id]));
   };
 
-  const toggleAllForItem = (itemId: string) => {
-    setItems((prev) =>
-      prev.map((it) =>
-        it.id !== itemId
-          ? it
-          : { ...it, sharedBy: it.sharedBy.length === members.length ? [] : members.map((m) => m.id) }
-      )
-    );
-  };
-
-  const addItem = () => {
-    setItems(prev => [
-      ...prev,
-      { id: crypto.randomUUID(), label: "", amount: "", sharedBy: Array.from(sharedPoolParticipants) }
-    ]);
-  };
-
-  const removeItem = (id: string) => {
-    setItems(prev => prev.filter(it => it.id !== id));
-  };
-
-  const updateItem = (id: string, field: keyof SpecificItem, value: any) => {
-    setItems(prev => prev.map(it => it.id === id ? { ...it, [field]: value } : it));
-  };
-
-  const toggleItemSharer = (itemId: string, uid: string) => {
-    setItems(prev => prev.map(it => {
-      if (it.id !== itemId) return it;
-      const newSharedBy = it.sharedBy.includes(uid) 
-        ? it.sharedBy.filter(u => u !== uid) 
-        : [...it.sharedBy, uid];
-      return { ...it, sharedBy: newSharedBy };
-    }));
-  };
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -235,8 +166,13 @@ export default function UniversalExpensePage() {
     if (!description.trim()) { setError("Description is required"); return; }
     if (!amountNum || amountNum <= 0) { setError("Enter a valid total amount"); return; }
     if (!payerId) { setError("Select who paid"); return; }
-    if (itemTotal > amountNum) {
-      setError(`Specific items (${fmt(itemTotal)}) cannot exceed the total bill (${fmt(amountNum)})`);
+    if (split.over) {
+      setError(`The items (${fmt(itemTotal)}) cost more than the whole bill (${fmt(amountNum)})`);
+      return;
+    }
+    const nobody = items.find((it) => (parseFloat(it.amount) || 0) > 0 && it.sharedBy.length === 0);
+    if (nobody) {
+      setError(`Pick who had ${nobody.label.trim() || "each item"}`);
       return;
     }
     
@@ -448,11 +384,23 @@ export default function UniversalExpensePage() {
               </div>
             </Card>
 
+            {/* Items only some people had: taken off first, so nobody does it on a calculator */}
+            <Card padding="lg" className="shadow-sm border-gray-100">
+              <ItemsOnTop
+                items={items}
+                onChange={setItems}
+                people={members}
+                first={nameOf}
+                split={split}
+                restCount={sharedPoolParticipants.size}
+              />
+            </Card>
+
             {/* Middle Card: Group (Equal Split Foundation) */}
             <Card padding="lg" className="shadow-sm border-gray-100">
               <div className="flex items-center justify-between mb-3 gap-2">
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
-                  Split Among
+                  {itemTotal > 0 ? "Split the rest between" : "Split Among"}
                 </label>
                 <span className="text-xs font-bold text-[var(--text-secondary)]">
                   {sharedPoolParticipants.size} of {members.length} selected
@@ -538,88 +486,6 @@ export default function UniversalExpensePage() {
                 })}
               </div>
             </Card>
-
-            {/* Bottom Card: Specific Items */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <Receipt size={14} />
-                  Specific Items
-                </label>
-              </div>
-
-              {items.map((item, idx) => (
-                <Card key={item.id} padding="md" className="shadow-sm border-gray-100 border-l-4 border-l-[var(--accent)] relative overflow-hidden group">
-                  <button 
-                    type="button" 
-                    onClick={() => removeItem(item.id)}
-                    className="absolute top-3 right-3 text-gray-400 hover:text-red-500 transition-colors p-1"
-                  >
-                    <X size={16} />
-                  </button>
-                  
-                  <div className="space-y-4 pr-6">
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={item.label}
-                          onChange={(e) => updateItem(item.id, "label", e.target.value)}
-                          placeholder="Item name (e.g. Wine)"
-                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--accent)] py-1 text-sm font-medium outline-none transition-colors"
-                        />
-                      </div>
-                      <div className="w-24 relative">
-                        <span className="absolute left-0 top-1 text-sm font-semibold text-gray-400">₹</span>
-                        <input
-                          type="number"
-                          value={item.amount}
-                          onChange={(e) => updateItem(item.id, "amount", e.target.value)}
-                          placeholder="0.00"
-                          className="w-full bg-transparent border-b border-gray-200 focus:border-[var(--accent)] py-1 pl-3 text-sm font-bold text-right outline-none transition-colors tabular-nums"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => toggleAllForItem(item.id)}
-                        className="h-8 px-3 rounded-full text-xs font-bold bg-[var(--accent-subtle)] text-[var(--accent)]"
-                      >
-                        {item.sharedBy.length === members.length ? "None" : "All"}
-                      </button>
-                      {members.map(m => {
-                        const sharesThis = item.sharedBy.includes(m.id);
-                        return (
-                          <button
-                            key={`item-${item.id}-${m.id}`}
-                            type="button"
-                            onClick={() => toggleItemSharer(item.id, m.id)}
-                            className={`h-8 px-3 rounded-full text-xs font-bold transition-all ${
-                              sharesThis 
-                                ? "bg-orange-100 text-[var(--accent)] ring-1 ring-orange-200" 
-                                : "bg-gray-100 text-gray-400 hover:bg-gray-200"
-                            }`}
-                          >
-                            {m.name.split(" ")[0]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </Card>
-              ))}
-
-              <button
-                type="button"
-                onClick={addItem}
-                className="w-full py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 font-semibold text-sm flex items-center justify-center gap-2 hover:border-[var(--accent)] hover:text-[var(--accent)] hover:bg-orange-50/50 transition-all"
-              >
-                <Plus size={18} strokeWidth={2.5} />
-                Add specific item
-              </button>
-            </div>
 
             {/* Save Button */}
             <div className="pt-6">

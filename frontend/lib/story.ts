@@ -3,6 +3,7 @@
  * Shares per bill, what the whole day means for each person, and the bodies to save.
  * Pure; tested in story.test.ts.
  */
+import { splitWithItems, type SpecificItem } from "./itemSplit";
 
 export interface StoryBill {
   key: string;
@@ -12,7 +13,8 @@ export interface StoryBill {
   paidBy: string | null;
   question: string | null;
   sharedBy: string[];
-  extras: { userId: string; amount: number; what: string }[];
+  /** items only some people had (taken off first, the rest is split): an extra dessert, a heater for two */
+  extras: SpecificItem[];
   quote: string;
   /** set on the review screen */
   skip?: boolean;
@@ -28,16 +30,20 @@ export function looksLikeStory(text: string): boolean {
   return amounts.length >= 2;
 }
 
-function exactShares(b: Pick<StoryBill, "amount" | "sharedBy" | "extras">): Record<string, number> {
-  const extra = (u: string) => b.extras.filter((e) => e.userId === u).reduce((a, e) => a + e.amount, 0);
-  const pool = b.amount - b.extras.reduce((a, e) => a + e.amount, 0);
-  const each = b.sharedBy.length ? pool / b.sharedBy.length : 0;
-  return Object.fromEntries(b.sharedBy.map((u) => [u, extra(u) + each]));
+/** What /ai/parse-story returns per bill: extras are one person each. */
+export type ServerStoryBill = Omit<StoryBill, "extras"> & { extras?: { userId: string; amount: number; what: string }[] };
+
+/** Server bills in the review screen's shape (each extra becomes an editable item). */
+export function fromServer(bills: ServerStoryBill[]): StoryBill[] {
+  return bills.map((b) => ({
+    ...b,
+    extras: (b.extras ?? []).map((e, i) => ({ id: `${b.key}-x${i}`, label: e.what, amount: String(e.amount), sharedBy: [e.userId] })),
+  }));
 }
 
-/** Each sharer's part: their extras, plus an equal slice of the rest. */
+/** Each person's part: the items they had, plus an equal slice of the rest. Adds up to the bill. */
 export function sharesOf(b: Pick<StoryBill, "amount" | "sharedBy" | "extras">): Record<string, number> {
-  return Object.fromEntries(Object.entries(exactShares(b)).map(([u, v]) => [u, r2(v)]));
+  return splitWithItems(b.amount, b.extras, b.sharedBy).shares;
 }
 
 /**
@@ -54,22 +60,26 @@ export function dayTotals(bills: StoryBill[]) {
     total += b.amount;
     if (!b.paidBy) continue;
     get(b.paidBy).paid += b.amount;
-    for (const [u, s] of Object.entries(exactShares(b))) get(u).share += s;
+    for (const [u, s] of Object.entries(sharesOf(b))) get(u).share += s;
   }
   for (const p of Object.values(people)) { p.paid = r2(p.paid); p.share = r2(p.share); p.net = r2(p.paid - p.share); }
   return { total: r2(total), people };
 }
 
-/** Body for POST /expenses/batch: personal amounts first, the rest split equally ("fairshare"). */
+/**
+ * Body for POST /expenses/batch: exact shares (items first, the rest equally), with the
+ * items kept as the bill's record so the detail view and "Repeat" show them.
+ */
 export function toExpenseBody(b: StoryBill) {
-  const extra = (u: string) => r2(b.extras.filter((e) => e.userId === u).reduce((a, e) => a + e.amount, 0));
+  const items = b.extras.filter((e) => (parseFloat(e.amount) || 0) > 0 && e.sharedBy.length > 0);
   return {
     description: b.description,
     amount: b.amount,
     currency: "INR",
-    splitType: "fairshare" as const,
+    splitType: "exact" as const,
     category: b.category,
     payers: [{ userId: b.paidBy!, amountPaid: b.amount }],
-    participants: b.sharedBy.map((u) => ({ userId: u, ...(extra(u) > 0 ? { personalAmount: extra(u) } : {}) })),
+    participants: Object.entries(sharesOf(b)).filter(([, v]) => v > 0).map(([userId, shareAmount]) => ({ userId, shareAmount })),
+    ...(items.length ? { receiptData: items } : {}),
   };
 }

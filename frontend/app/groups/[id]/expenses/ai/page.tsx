@@ -10,7 +10,7 @@ import { useAIExpense } from "@/hooks/useAIExpense";
 import ExpenseConfirmCard from "@/components/ExpenseConfirmCard";
 import ListeningSheet from "@/components/ListeningSheet";
 import StoryReview from "@/components/StoryReview";
-import { looksLikeStory, toExpenseBody, type StoryBill } from "@/lib/story";
+import { fromServer, looksLikeStory, toExpenseBody, type StoryBill } from "@/lib/story";
 import { groupKey } from "@/lib/queries";
 import BottomNav from "@/components/BottomNav";
 import { Card } from "@/components/ui/Card";
@@ -54,7 +54,7 @@ export default function AIExpensePage() {
       }
       if (!data.bills?.length) { toast("Couldn't find any amounts in that. Try saying what each thing cost.", "error"); return; }
       storyKey.current = crypto.randomUUID();
-      setStory({ bills: data.bills, unclear: data.unclear ?? [] });
+      setStory({ bills: fromServer(data.bills), unclear: data.unclear ?? [] });
       window.scrollTo({ top: 0 });
     } catch {
       toast("Couldn't reach Spenit. Check your connection.", "error");

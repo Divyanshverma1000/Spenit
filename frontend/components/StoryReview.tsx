@@ -3,7 +3,9 @@
 import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Check, CheckCircle2, Loader2, Undo2, Wallet } from "lucide-react";
 import MemberAvatar from "@/components/ui/MemberAvatar";
 import { CategoryIcon } from "@/components/ui/CategoryIcon";
+import ItemsOnTop from "@/components/ItemsOnTop";
 import { dayTotals, sharesOf, type StoryBill } from "@/lib/story";
+import { splitWithItems } from "@/lib/itemSplit";
 
 interface Member { id: string; name: string; username?: string; avatarUrl: string | null; avatarKey?: string | null }
 
@@ -36,11 +38,15 @@ export default function StoryReview({
   const toGroup = live.filter((b) => !b.toPersonal);
   const toMine = live.filter((b) => b.toPersonal);
   const waiting = toGroup.filter((b) => !b.paidBy).length;
+  // Items that cost more than their bill: fix before saving.
+  const overBills = toGroup.filter((b) => splitWithItems(b.amount, b.extras, b.sharedBy).over).length;
+  // Items with a price but nobody picked: ask, don't guess.
+  const unpicked = toGroup.reduce((n, b) => n + splitWithItems(b.amount, b.extras, b.sharedBy).unassigned, 0);
   const day = dayTotals(bills);
   const order = people.map((m) => m.id).filter((id) => day.people[id] && Math.abs(day.people[id].net) >= 0.01);
 
   const sentence = (b: StoryBill) => {
-    if (b.sharedBy.length === 1) {
+    if (b.sharedBy.length === 1 && b.extras.length === 0) {
       const who = first(b.sharedBy[0]);
       return b.paidBy && b.paidBy !== b.sharedBy[0]
         ? `${first(b.paidBy)} paid for ${who === "You" ? "your" : `${who}'s`} own buy`
@@ -49,8 +55,9 @@ export default function StoryReview({
     const s = sharesOf(b);
     const everyone = b.sharedBy.length === members.length;
     const split = everyone ? "split between everyone" : `split between ${b.sharedBy.map(first).join(", ").replace(/, ([^,]*)$/, " and $1")}`;
-    const extra = b.extras.length
-      ? ` · ${b.extras.map((e) => `${first(e.userId)} +${money(e.amount)}${e.what ? ` ${e.what}` : ""}`).join(", ")}`
+    const items = b.extras.filter((e) => (parseFloat(e.amount) || 0) > 0 && e.sharedBy.length > 0);
+    const extra = items.length
+      ? ` · ${items.map((e) => `${e.sharedBy.map(first).join(" & ")} +${money(parseFloat(e.amount))}${e.label ? ` ${e.label}` : ""}`).join(", ")}`
       : ` · ${money(s[b.sharedBy[0]])} each`;
     return `${b.paidBy ? `${first(b.paidBy)} paid` : "Who paid?"} · ${split}${extra}`;
   };
@@ -99,8 +106,9 @@ export default function StoryReview({
 
       {bills.map((b, i) => {
         const needsPayer = !b.paidBy && !b.toPersonal && !b.skip;
-        const ownMine = b.sharedBy.length === 1 && b.sharedBy[0] === meId && (b.paidBy === meId || !b.paidBy);
-        const s = sharesOf(b);
+        const ownMine = b.sharedBy.length === 1 && b.sharedBy[0] === meId && (b.paidBy === meId || !b.paidBy) && b.extras.length === 0;
+        const split = splitWithItems(b.amount, b.extras, b.sharedBy);
+        const s = split.shares;
         return (
           <section
             key={b.key}
@@ -185,7 +193,7 @@ export default function StoryReview({
 
                     {/* Who shares */}
                     <div>
-                      <p className="text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Shared by</p>
+                      <p className="text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">{b.extras.length ? "Split the rest between" : "Shared by"}</p>
                       <div className="flex flex-wrap gap-1.5">
                         {people.map((m) => {
                           const on = b.sharedBy.includes(m.id);
@@ -194,19 +202,30 @@ export default function StoryReview({
                               key={m.id}
                               onClick={() => update(b.key, (x) => {
                                 const sharedBy = on ? x.sharedBy.filter((u) => u !== m.id) : [...x.sharedBy, m.id];
-                                return sharedBy.length === 0 ? x : { ...x, sharedBy, extras: x.extras.filter((e) => sharedBy.includes(e.userId)) };
+                                return sharedBy.length === 0 ? x : { ...x, sharedBy };
                               })}
                               aria-pressed={on}
                               className={`h-9 pl-1 pr-3 rounded-full flex items-center gap-1.5 text-[13px] font-bold border-2 ${on ? "border-[var(--positive)] bg-[var(--positive)]/10" : "border-[var(--hairline)] text-[var(--text-muted)]"}`}
                             >
                               <span className="w-7 h-7 flex-shrink-0 flex items-center justify-center"><MemberAvatar person={m} size={28} dim={!on} /></span>
                               {first(m.id)}
-                              {on && <span className="tabular-nums text-[12px] text-[var(--text-secondary)]">{money(s[m.id] ?? 0)}</span>}
+                              {(s[m.id] ?? 0) > 0 && <span className="tabular-nums text-[12px] text-[var(--text-secondary)]">{money(s[m.id])}</span>}
                             </button>
                           );
                         })}
                       </div>
                     </div>
+
+                    {/* Extras on top: typed here, no calculator */}
+                    <ItemsOnTop
+                      compact
+                      items={b.extras}
+                      onChange={(extras) => update(b.key, (x) => ({ ...x, extras }))}
+                      people={people}
+                      first={first}
+                      split={split}
+                      restCount={b.sharedBy.length}
+                    />
                   </>
                 )}
               </div>
@@ -231,11 +250,13 @@ export default function StoryReview({
         <div className="max-w-md mx-auto">
           <button
             onClick={onSave}
-            disabled={saving || waiting > 0 || live.length === 0}
+            disabled={saving || waiting > 0 || overBills > 0 || unpicked > 0 || live.length === 0}
             className="w-full h-14 rounded-[16px] bg-[var(--accent)] text-white text-[16px] font-extrabold flex items-center justify-center gap-2 disabled:opacity-45 active:scale-[0.99] transition-transform"
           >
             {saving ? <><Loader2 size={18} className="animate-spin" /> Saving…</>
               : waiting > 0 ? `Answer ${waiting} ${waiting === 1 ? "question" : "questions"} to save`
+              : overBills > 0 ? "Items cost more than the bill"
+              : unpicked > 0 ? `Pick who had ${unpicked === 1 ? "the item" : `${unpicked} items`}`
               : <><CheckCircle2 size={18} /> Save {live.length === 1 ? "it" : `all ${live.length}`}</>}
           </button>
           <button onClick={onStartOver} className="w-full h-9 mt-1 text-[13px] font-bold text-[var(--text-secondary)]">Start over</button>
