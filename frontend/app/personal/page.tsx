@@ -1,12 +1,12 @@
 "use client";
 
-import { Suspense, useCallback, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import BottomNav from "@/components/BottomNav";
-import { SpendingView } from "@/components/spending/SpendingView";
+import { SpendingView, AI_GRADIENT } from "@/components/spending/SpendingView";
 import EntrySheet, { draftFrom, type EntryDraft } from "@/components/spending/EntrySheet";
 import BudgetSheet from "@/components/spending/BudgetSheet";
 import GroupChat from "@/components/GroupChat";
@@ -50,7 +50,19 @@ function SpendingPage() {
     params?.get("add") ? { mode: "add" } : null
   );
   const [budgetOpen, setBudgetOpen] = useState(false);
-  const [askOpen, setAskOpen] = useState(false);
+  // null = closed; "" = open with no question; otherwise the starter question to ask.
+  const [ask, setAsk] = useState<string | null>(null);
+  const openAsk = (q?: string) => setAsk(q ?? "");
+  // The header's Ask AI scrolls away; a floating one takes over below it.
+  const askBtnRef = useRef<HTMLButtonElement>(null);
+  const [askFloat, setAskFloat] = useState(false);
+  useEffect(() => {
+    const el = askBtnRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setAskFloat(!e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, [authed]);
   const queryClient = useQueryClient();
   const [quickBusy, setQuickBusy] = useState(false);
   const { authFetch } = useAuth();
@@ -120,8 +132,13 @@ function SpendingPage() {
             <p className="text-[13px] font-semibold text-[var(--text-secondary)]">Personal</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-tight">Your spending</h1>
           </div>
-          <button onClick={() => setAskOpen(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-[var(--paper)] border border-[var(--hairline)] text-[13px] font-bold">
-            <Sparkles size={15} className="text-[var(--accent)]" /> Ask
+          <button
+            ref={askBtnRef}
+            onClick={() => openAsk()}
+            className="flex items-center gap-1.5 pl-3 pr-3.5 py-2.5 rounded-full text-white text-[14px] font-bold shadow-[0_8px_20px_-8px_rgba(124,58,237,0.8)] active:scale-95 transition-transform"
+            style={{ background: AI_GRADIENT }}
+          >
+            <Sparkles size={16} /> Ask AI
           </button>
         </header>
 
@@ -134,7 +151,7 @@ function SpendingPage() {
             onOpenAdd={(prefill) => setSheet({ mode: "add", prefill: prefill as Partial<EntryDraft> })}
             onEdit={(entry) => setSheet({ mode: "edit", entry })}
             onBudget={() => setBudgetOpen(true)}
-            onAsk={() => setAskOpen(true)}
+            onAsk={openAsk}
             onScan={() => setScanAsk(true)}
             scanning={scanning}
             quickBusy={quickBusy}
@@ -190,12 +207,29 @@ function SpendingPage() {
         </div>
       )}
 
-      {askOpen && (
+      <AnimatePresence>
+        {askFloat && ask === null && !sheet && !toast && !scanAsk && !budgetOpen && (
+          <motion.button
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.8, opacity: 0 }}
+            onClick={() => openAsk()}
+            className="fixed z-[80] bottom-[92px] right-[max(16px,calc(50%-208px))] flex items-center gap-2 pl-4 pr-5 py-3.5 rounded-full text-white text-[15px] font-bold shadow-[0_12px_28px_-8px_rgba(124,58,237,0.85)]"
+            style={{ background: AI_GRADIENT }}
+            aria-label="Ask AI about your spending"
+          >
+            <Sparkles size={18} /> Ask AI
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {ask !== null && (
         <GroupChat
           personal
           groupId="personal"
           groupName="your spending"
-          onClose={() => setAskOpen(false)}
+          initialQuestion={ask || undefined}
+          onClose={() => setAsk(null)}
           onLogged={() => queryClient.invalidateQueries({ queryKey: ["spending"] })}
         />
       )}

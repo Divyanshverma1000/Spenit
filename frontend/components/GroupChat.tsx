@@ -23,7 +23,7 @@ const GROUP_SUGGESTIONS = [
   "Biggest expense this month?",
 ];
 
-const PERSONAL_SUGGESTIONS = [
+export const PERSONAL_SUGGESTIONS = [
   "How much did I spend this month?",
   "How much on milk?",
   "What did I spend on groceries?",

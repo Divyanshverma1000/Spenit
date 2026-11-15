@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Camera, ChevronLeft, ChevronRight, CornerDownLeft, Loader2, Plus, Sparkles, Target, Users } from "lucide-react";
 import { parseQuickAdd, type QuickEntry } from "@/lib/quickAdd";
+import { PERSONAL_SUGGESTIONS } from "@/components/GroupChat";
 import { budgetPace, dayOf, dayTitle, inr, metaFor, monthLabel, shiftMonth, type SpendEntry, type SpendingOverview } from "@/lib/spending";
 
 /** Bars: one colour that passes the palette checks on the light and dark surfaces. */
@@ -20,7 +21,48 @@ function CatTile({ category, size = 40 }: { category: string; size?: number }) {
   );
 }
 
-const whenLabel = (daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 ? "Yesterday" : `${daysAgo} days ago`);
+/** The AI colour, same violet as "Ask AI" on Home. */
+export const AI_GRADIENT = "linear-gradient(135deg, #7C3AED 0%, #8B5CF6 55%, #A855F7 100%)";
+
+/** A big, obvious way into the spending assistant, with one-tap starter questions. */
+function AskCard({ onAsk }: { onAsk: (question?: string) => void }) {
+  return (
+    <section
+      className="relative overflow-hidden rounded-[24px] p-4 text-white shadow-[0_14px_32px_-16px_rgba(124,58,237,0.65)]"
+      style={{ background: AI_GRADIENT }}
+    >
+      <div className="pointer-events-none absolute -top-12 -right-8 w-40 h-40 rounded-full bg-white opacity-15 blur-2xl" />
+      <div className="relative flex items-center gap-2.5">
+        <span className="w-9 h-9 rounded-[12px] bg-white/20 flex items-center justify-center"><Sparkles size={18} /></span>
+        <div>
+          <p className="text-[15px] font-bold leading-tight">Ask AI about your money</p>
+          <p className="text-[12px] text-white/80">Knows every expense, item and group share</p>
+        </div>
+      </div>
+      <button
+        onClick={() => onAsk()}
+        className="relative mt-3 w-full flex items-center gap-2 rounded-[16px] px-3.5 py-2.5 text-left active:scale-[0.99] transition-transform"
+        style={{ backgroundColor: "#FFFFFF" }}
+      >
+        <span className="flex-1 min-w-0 truncate text-[14px] font-medium" style={{ color: "#6D5A93" }}>Ask anything about your spending</span>
+        <span className="w-8 h-8 rounded-full flex items-center justify-center text-white" style={{ background: AI_GRADIENT }}><ArrowRight size={16} /></span>
+      </button>
+      <div className="relative mt-2.5 flex gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1">
+        {PERSONAL_SUGGESTIONS.slice(0, 4).map((q) => (
+          <button
+            key={q}
+            onClick={() => onAsk(q)}
+            className="flex-shrink-0 px-3 py-1.5 rounded-full bg-white/15 border border-white/25 text-[12.5px] font-semibold active:scale-95 transition-transform"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const whenLabel =(daysAgo: number) => (daysAgo === 0 ? "Today" : daysAgo === 1 ? "Yesterday" : `${daysAgo} days ago`);
 
 /**
  * The Spending tab: this month at a glance (with budget pace), a two-second quick add,
@@ -33,7 +75,8 @@ export function SpendingView({
   /** read a bill or payment picture into a prefilled entry */
   onScan?: () => void;
   scanning?: boolean;
-  onAsk: () => void;
+  /** open the spending assistant, optionally with a question to ask straight away */
+  onAsk: (question?: string) => void;
   o: SpendingOverview | undefined;
   month: string;
   onMonth: (m: string) => void;
@@ -216,6 +259,9 @@ export function SpendingView({
         </button>
       </section>
 
+      {/* ── Ask AI: up top, where it's seen before the long list ── */}
+      {o && <AskCard onAsk={onAsk} />}
+
       {o && o.total === 0 ? (
         <section className="rounded-[24px] bg-[var(--paper)] border border-[var(--hairline)] p-6 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -338,14 +384,6 @@ export function SpendingView({
             </div>
           </section>
 
-          <button onClick={onAsk} className="w-full text-left flex items-center gap-3 rounded-[20px] bg-[var(--paper)] border border-[var(--hairline)] p-4">
-            <span className="w-10 h-10 rounded-[13px] bg-[var(--accent-subtle)] text-[var(--accent)] flex items-center justify-center"><Sparkles size={18} /></span>
-            <span className="flex-1">
-              <span className="block text-[14px] font-bold">Ask about your spending</span>
-              <span className="block text-[12px] text-[var(--text-secondary)]">&quot;How much on milk this month?&quot;</span>
-            </span>
-            <ChevronRight size={18} className="text-[var(--text-muted)]" />
-          </button>
         </>
       ) : (
         <div className="flex justify-center py-12"><Loader2 className="animate-spin text-[var(--text-muted)]" /></div>
