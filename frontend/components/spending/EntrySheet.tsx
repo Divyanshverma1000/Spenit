@@ -7,6 +7,8 @@ import { Calendar, Loader2, Trash2, X } from "lucide-react";
 import { CATEGORIES, dayStart, guessCategory, type Category } from "@/lib/quickAdd";
 import { CATEGORY_META, dayOf } from "@/lib/spending";
 import { useBackClose } from "@/lib/backClose";
+import SeenBefore from "@/components/SeenBefore";
+import type { SeenMatch } from "@/lib/billPrint";
 
 const noSubscribe = () => () => {};
 
@@ -26,11 +28,13 @@ const isoDay = (d: Date) => d.toLocaleDateString("en-CA");
  * for (the category follows the name until you pick one yourself), then when.
  */
 export default function EntrySheet({
-  initial, onClose, onSave, onDelete,
+  initial, onClose, onSave, onDelete, seen = null,
 }: {
   initial?: Partial<EntryDraft>;
+  /** a scanned bill that looks like one added before: remind, and wait for an answer */
+  seen?: SeenMatch | null;
   onClose: () => void;
-  onSave: (d: { description: string; amount: number; category: Category; spentAt: string }) => Promise<void>;
+  onSave: (d: { description: string; amount: number; category: Category; spentAt: string; repeatOf?: string }) => Promise<void>;
   onDelete?: () => Promise<void>;
 }) {
   useBackClose(onClose);
@@ -53,8 +57,9 @@ export default function EntrySheet({
 
   useEffect(() => { if (!editing) setTimeout(() => amountRef.current?.focus(), 150); }, [editing]);
 
+  const [keepRepeat, setKeepRepeat] = useState(false);
   const n = Number(amount.replace(/,/g, ""));
-  const valid = n > 0 && n <= 10_000_000 && description.trim().length > 0;
+  const valid = n > 0 && n <= 10_000_000 && description.trim().length > 0 && (!seen || keepRepeat);
 
   async function save() {
     if (!valid) return;
@@ -62,7 +67,7 @@ export default function EntrySheet({
     setError(null);
     try {
       // Noon on the chosen day, so the date never flips with time zones.
-      await onSave({ description: description.trim(), amount: Math.round(n * 100) / 100, category, spentAt: new Date(`${day}T12:00:00`).toISOString() });
+      await onSave({ description: description.trim(), amount: Math.round(n * 100) / 100, category, spentAt: new Date(`${day}T12:00:00`).toISOString(), ...(seen && keepRepeat ? { repeatOf: seen.expenseId } : {}) });
     } catch (err) {
       setError((err as Error).message || "Couldn't save. Check your connection.");
       setBusy(null);
@@ -87,6 +92,17 @@ export default function EntrySheet({
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); void save(); }} className="px-5 pb-3 overflow-y-auto flex-1">
+          {seen && (
+            <SeenBefore
+              match={seen}
+              decision={keepRepeat ? "keep" : null}
+              onSkip={onClose}
+              onKeep={() => setKeepRepeat(true)}
+              skipLabel="Don't add it"
+              keepLabel="It's a new one"
+              className="mt-1"
+            />
+          )}
           {/* Amount, big */}
           <label className="flex items-baseline justify-center gap-1 py-4">
             <span className="text-[34px] font-bold text-[var(--text-muted)]">₹</span>
@@ -191,7 +207,7 @@ export default function EntrySheet({
             className="flex-1 py-3.5 rounded-[16px] bg-[var(--accent)] text-white font-bold text-[15px] disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {busy === "save" && <Loader2 size={16} className="animate-spin" />}
-            {editing ? "Save changes" : n > 0 ? `Add ₹${n.toLocaleString("en-IN")}` : "Add"}
+            {editing ? "Save changes" : seen && !keepRepeat ? "Answer the reminder first" : n > 0 ? `Add ₹${n.toLocaleString("en-IN")}` : "Add"}
           </button>
         </div>
       </motion.div>

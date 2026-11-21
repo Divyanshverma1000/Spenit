@@ -22,6 +22,7 @@ import { maskReceipt, restoreMasked, setItemVisibility, repairSharedBy } from ".
 import { logActivity, logActivitySafe, expenseSnapshot } from "../lib/groupSafety";
 import { MAX_AMOUNT, MAX_DESCRIPTION, MAX_RECEIPT_JSON, amountError } from "../lib/limits";
 import type { PoolClient } from "pg";
+import { cleanCandidates, findSeenBills } from "../lib/seenBills";
 
 const router = Router();
 
@@ -65,6 +66,8 @@ interface ItemizedReceiptData {
   discounts?: { label?: string; amount: number }[];
   feePolicy?: FeePolicy;
   orderKey?: string; // "platform:orderId" — used to spot double imports
+  /** the person saw "you added this before" and said it's a new order (a reorder) */
+  repeatOf?: string;
 }
 
 /** Where prepareExpense reports a validation failure (an Express Response, or a collector for batches). */
@@ -522,7 +525,9 @@ router.post("/batch", requireAuth, async (req: Request, res: Response): Promise<
   }
 
   // The same order can't be imported twice into a group (even from another phone).
+  // A bill the person confirmed as a reorder ("It's a new order") is let through.
   const orderKeys = prepared
+    .filter((p) => !(p.receiptData as ItemizedReceiptData | null)?.repeatOf)
     .map((p) => (p.receiptData as ItemizedReceiptData | null)?.orderKey)
     .filter((k): k is string => typeof k === "string" && k.length > 0);
   if (orderKeys.length > 0) {
@@ -606,6 +611,28 @@ router.post("/batch", requireAuth, async (req: Request, res: Response): Promise<
   })();
 
   res.status(201).json(response);
+});
+
+// ─── POST /expenses/seen-bills ────────────────────────────────────────────────
+/**
+ * "You may have added this already": for each scanned bill, the earlier bill with the
+ * same screenshot, order number or contents, in any of your groups or your own spending.
+ * Never blocks anything; the screen reminds and the person decides (it may be a reorder).
+ * Body: { groupId?, excludeExpenseId?, bills: { ref, imageHashes?, orderKey?, contentsHash? }[] }
+ *   → { matches: SeenMatch[] }   (see lib/seenBills.ts)
+ */
+router.post("/seen-bills", requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user!.userId;
+  const body = (req.body ?? {}) as { groupId?: unknown; excludeExpenseId?: unknown; bills?: unknown };
+  const uuid = (v: unknown) => (typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null);
+  const cands = cleanCandidates(body.bills);
+  try {
+    const matches = await findSeenBills(userId, cands, uuid(body.groupId), uuid(body.excludeExpenseId));
+    res.json({ matches });
+  } catch (err) {
+    console.error("POST /expenses/seen-bills error:", err);
+    res.status(500).json({ error: "Couldn't check for earlier bills" });
+  }
 });
 
 // ─── POST /expenses/order-keys ────────────────────────────────────────────────

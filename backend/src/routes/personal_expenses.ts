@@ -3,7 +3,9 @@
  * by month (India time). See PERSONAL_SPENDING_PLAN.md.
  *
  *   GET    /personal_expenses/overview?month=YYYY-MM   everything the Spending tab shows
- *   POST   /personal_expenses                          { description, amount, category?, spentAt? }
+ *   POST   /personal_expenses                          { description, amount, category?, spentAt?, bill? }
+ *          bill: { imageHashes, orderKey, contentsHash, orderDate?, repeatOf? } from a scan, so
+ *          scanning the same bill again can say when it was added (lib/seenBills.ts)
  *   PUT    /personal_expenses/:id                      same fields
  *   DELETE /personal_expenses/:id                      (soft) · POST /:id/restore undoes it
  *   PUT    /personal_expenses/budget                   { amount | null }
@@ -13,6 +15,7 @@ import { Router, Request, Response } from "express";
 import pool from "../db/pool";
 import { requireAuth } from "../middleware/auth";
 import { parseAmount, amountError } from "../lib/limits";
+import { cleanPrint } from "../lib/seenBills";
 
 const router = Router();
 
@@ -148,10 +151,34 @@ router.get("/", requireAuth, async (req: Request, res: Response): Promise<void> 
 router.post("/", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const b = readBody(req.body ?? {});
   if (!b.ok) { res.status(400).json({ error: b.error }); return; }
-  const result = await pool.query(
+  const raw = (req.body ?? {}).bill as Record<string, unknown> | undefined;
+  const print = cleanPrint(raw);
+  const meta = print
+    ? {
+        ...print,
+        ...(typeof raw?.orderDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.orderDate) ? { orderDate: raw.orderDate } : {}),
+        ...(typeof raw?.repeatOf === "string" && raw.repeatOf.length <= 40 ? { repeatOf: raw.repeatOf } : {}),
+      }
+    : null;
+  const args = [req.user!.userId, b.description, b.amount, b.category, b.spentAt];
+  let result;
+  try {
+    result = meta
+      ? await pool.query(
+          `insert into "PersonalExpense" (user_id, description, amount, category, spent_at, bill_meta)
+           values ($1, $2, $3, $4, coalesce($5, now()), $6) returning ${ROW}`,
+          [...args, JSON.stringify(meta)]
+        )
+      : null;
+  } catch (err) {
+    // bill_meta arrives with migration 021; save the expense without it until then.
+    if ((err as { code?: string }).code !== "42703") throw err;
+    result = null;
+  }
+  result ??= await pool.query(
     `insert into "PersonalExpense" (user_id, description, amount, category, spent_at)
      values ($1, $2, $3, $4, coalesce($5, now())) returning ${ROW}`,
-    [req.user!.userId, b.description, b.amount, b.category, b.spentAt]
+    args
   );
   res.status(201).json(result.rows[0]);
 });

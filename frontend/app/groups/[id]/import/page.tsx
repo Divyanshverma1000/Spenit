@@ -30,6 +30,8 @@ import {
   previewShares, toDraft, toExpenseBody, draftFromExpense,
   type CardState, type Piece, type DraftItem, type DraftLine, type DraftOrder, type ExtractFailure, type ExtractResponse, type FeePolicy,
 } from "@/lib/orderImport";
+import { contentsHash, hashBytes, type SeenMatch } from "@/lib/billPrint";
+import SeenBefore from "@/components/SeenBefore";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -89,10 +91,6 @@ function longWaitMessage(f: ExtractFailure): string {
   return `${many ? "All your keys reached" : "Your key reached"} ${what}. Tap retry in ${roughWait(f.retryAfterMs ?? 0)}${many ? "" : ", or add keys from other Groq accounts in Profile"}.`;
 }
 
-async function hashBytes(buf: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(digest).slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -146,6 +144,8 @@ export default function ImportOrdersPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const hashes = useRef(new Set<string>());
+  /** piece index → its screenshot's print, saved with the bill so a later scan can spot it */
+  const pieceHash = useRef(new Map<number, string>());
   const nextIndex = useRef(0);
   const idempotencyKey = useRef<string>(crypto.randomUUID());
 
@@ -306,6 +306,7 @@ export default function ImportOrdersPage() {
         }
         if (hashes.current.has(c.hash)) return; // exact duplicate image
         hashes.current.add(c.hash);
+        pieceHash.current.set(nextIndex.current, c.hash);
         added.push({ index: nextIndex.current++, file: c.file, thumb: URL.createObjectURL(c.file), status: "queued" });
       });
       if (added.length === 0) return;
@@ -339,18 +340,20 @@ export default function ImportOrdersPage() {
   const startSorting = useCallback(async () => {
     const everyone = members.map((m) => m.id);
     const next = liveOrders.map(({ order, sources }) => toDraft(order, sources, me, everyone, members));
-    const keys = next.map((d) => orderKey(d)).filter((k): k is string => !!k);
-    if (keys.length > 0) {
-      try {
-        const res = await authFetch("/expenses/order-keys", { method: "POST", body: JSON.stringify({ groupId, keys }) });
-        const { existing } = await readJson<{ existing: { key: string; expenseId: string; createdAt: string }[] }>(res);
-        for (const d of next) {
-          const hit = existing.find((e) => e.key === orderKey(d));
-          if (hit) { d.alreadyAdded = { expenseId: hit.expenseId, createdAt: hit.createdAt }; d.skipped = true; }
-        }
-      } catch {
-        // best effort — the batch endpoint still refuses duplicates
-      }
+    // Prints of each order: its screenshots and what it says. Saved with the bill, and
+    // looked up now, so a bill added before (here, in another group, or as your own
+    // spending) is pointed out. It's not dropped: the person says skip or "new order".
+    await Promise.all(next.map(async (d) => {
+      d.imageHashes = d.sources.map((i) => pieceHash.current.get(i)).filter((h): h is string => !!h);
+      d.contentsHash = await contentsHash(d).catch(() => null);
+    }));
+    try {
+      const bills = next.map((d) => ({ ref: d.id, imageHashes: d.imageHashes, orderKey: orderKey(d), contentsHash: d.contentsHash }));
+      const res = await authFetch("/expenses/seen-bills", { method: "POST", body: JSON.stringify({ groupId, bills }) });
+      const { matches } = await readJson<{ matches: SeenMatch[] }>(res);
+      for (const d of next) d.alreadyAdded = matches.find((m) => m.ref === d.id) ?? null;
+    } catch {
+      // best effort: the batch endpoint still refuses the same order number twice
     }
     setDrafts(next);
     setStep("sort");
@@ -363,6 +366,8 @@ export default function ImportOrdersPage() {
   const save = useCallback(async () => {
     setSaveError(null);
     setStep("saving");
+    // Cards joined by hand lost their contents print; take it again from what they say now.
+    await Promise.all(toSave.map(async (d) => { if (!d.contentsHash) d.contentsHash = await contentsHash(d).catch(() => null); }));
     if (editId) {
       try {
         const body = { ...toExpenseBody(toSave[0]), groupId };
@@ -861,9 +866,9 @@ function SortStep({
     const out: Record<string, { fromId: string; shot: number; fromLabel: string }> = {};
     const ctx = { me, everyone: members.map((m) => m.id), members };
     for (const d of drafts) {
-      if (cardState(d) !== "short" || d.alreadyAdded) continue;
+      if (cardState(d) !== "short" || (d.alreadyAdded && !d.reorder)) continue;
       search: for (const other of drafts) {
-        if (other.id === d.id || other.alreadyAdded || other.skipped) continue;
+        if (other.id === d.id || (other.alreadyAdded && !other.reorder) || other.skipped) continue;
         for (const shot of other.sources) {
           const after = moveShot(drafts, other.id, shot, d.id, pieceList, ctx).find((x) => x.id === d.id);
           if (after && cardState(after) === "ok") {
@@ -927,7 +932,7 @@ function SortStep({
           <OrderCard
             key={o.id}
             o={o}
-            others={drafts.filter((d) => d.id !== o.id && !d.alreadyAdded)}
+            others={drafts.filter((d) => d.id !== o.id && !(d.alreadyAdded && !d.reorder))}
             members={members}
             me={me}
             brush={brush}
@@ -962,7 +967,9 @@ function OrderCard({
     others: others.map((d) => ({ id: d.id, label: `${d.title?.trim() || orderTitle(d)} · ${formatINR(d.grandTotal ?? draftTotals(d).computed)}` })),
     onMove: onMoveShot,
   };
-  const partial = looksPartial(o) && !o.alreadyAdded;
+  /** "added before" and not yet answered: hold the card until skip / "new order" */
+  const held = !!o.alreadyAdded && !o.reorder;
+  const partial = looksPartial(o) && !held;
   const [open, setOpen] = useState(!o.skipped && !isReady(o) ? true : !o.skipped);
   const t = draftTotals(o);
   const everyone = members.map((m) => m.id);
@@ -980,7 +987,7 @@ function OrderCard({
       : "custom";
 
   const state = cardState(o);
-  const look = CARD_LOOK[o.alreadyAdded ? "skipped" : state];
+  const look = CARD_LOOK[held && !o.skipped ? "short" : state];
 
   // Removed by mistake? Undo for a few seconds.
   const [removed, setRemoved] = useState<{ label: string; restore: () => void } | null>(null);
@@ -1039,15 +1046,25 @@ function OrderCard({
             <TotalsBadge o={o} />
           </div>
           {o.alreadyAdded && (
-            <div className="text-[11px] text-[var(--accent)] font-bold mt-0.5">
-              Already added on {new Date(o.alreadyAdded.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            <div className="text-[11px] text-[var(--warn)] font-bold mt-0.5">
+              Added before on {new Date(o.alreadyAdded.addedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              {o.reorder ? " · saving as a new order" : o.skipped ? " · skipped" : ""}
             </div>
           )}
         </div>
         <div className="font-extrabold tabular-nums">{formatINR(o.grandTotal ?? t.computed)}</div>
         <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      <ShotsStrip sources={o.sources} className="mx-4 mb-3 -mt-1" manage={o.alreadyAdded ? undefined : manage} />
+      <ShotsStrip sources={o.sources} className="mx-4 mb-3 -mt-1" manage={held ? undefined : manage} />
+      {o.alreadyAdded && (
+        <SeenBefore
+          match={o.alreadyAdded}
+          decision={o.skipped ? "skip" : o.reorder ? "keep" : null}
+          onSkip={() => { update((d) => ({ ...d, skipped: true, reorder: false })); setOpen(false); }}
+          onKeep={() => { update((d) => ({ ...d, skipped: false, reorder: true })); setOpen(true); }}
+          className="mx-4 mb-3"
+        />
+      )}
 
       {o.kind === "payment" && (
         <div className="mx-4 mb-3 -mt-1 rounded-[14px] bg-[var(--paper-dim)] p-3 text-[13px]">
@@ -1085,7 +1102,7 @@ function OrderCard({
 
       {open && !o.settleWith && (
         <div className="border-t border-[var(--hairline)]">
-          {!o.skipped && !o.alreadyAdded && (
+          {!o.skipped && !held && (
             <StatusPanel
               o={o}
               state={state}
@@ -1139,7 +1156,7 @@ function OrderCard({
           </div>
 
           {/* Join by hand: e.g. the middle screenshot of a long order is missing, so nothing overlapped. */}
-          {others.length > 0 && !o.alreadyAdded && (
+          {others.length > 0 && !held && (
             <div className="mx-4 mb-3">
               <label className={`relative flex items-center gap-2 h-10 px-3.5 rounded-full border-2 text-[12.5px] font-bold bg-[var(--paper)] ${
                 partial ? "border-[var(--warn)] text-[var(--warn)]" : "border-[var(--hairline)] text-[var(--text-secondary)]"

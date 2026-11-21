@@ -7,6 +7,8 @@
  *   - previewShares:  who owes what — a PREVIEW; the server computes the real shares
  */
 
+import type { SeenMatch } from "./billPrint";
+
 export type Platform =
   | "blinkit" | "zepto" | "instamart" | "bigbasket" | "swiggy" | "zomato"
   | "amazon" | "flipkart" | "jiomart" | "dmart" | "other";
@@ -127,7 +129,15 @@ export interface DraftOrder {
   sources: number[];
   /** the "N items" the app printed on the order, if the AI saw it */
   itemCount?: number | null;
-  alreadyAdded: { expenseId: string; createdAt: string } | null;
+  /** an earlier bill this looks like (same screenshot / order number / items and total) */
+  alreadyAdded: SeenMatch | null;
+  /** the person answered the reminder: "It's a new order", so save it anyway */
+  reorder?: boolean;
+  /** an edited bill that was saved as a reorder: which bill it repeats */
+  repeatOf?: string;
+  /** prints of the screenshots and contents, saved so a later scan can find this bill */
+  imageHashes?: string[];
+  contentsHash?: string | null;
 }
 
 export const PLATFORM_LABEL: Record<Platform, string> = {
@@ -315,6 +325,7 @@ export function itemCountCheck(o: Pick<ExtractedOrder, "itemCount" | "items">): 
 /** An order can be saved once its totals add up, or the user accepted the items total. */
 export function isReady(o: DraftOrder): boolean {
   if (o.skipped) return true;
+  if (o.alreadyAdded && !o.reorder) return false; // "added before": skip it or say it's a new order
   if (o.settleWith) return (o.grandTotal ?? draftTotals(o).computed) > 0;
   const t = draftTotals(o);
   if (t.status === "no_items") return false;
@@ -602,6 +613,9 @@ export function mergeDrafts(into: DraftOrder, from: DraftOrder): DraftOrder {
     sources: [...into.sources, ...from.sources].sort((a, b) => a - b),
     itemCount: into.itemCount ?? from.itemCount ?? null,
     alreadyAdded: into.alreadyAdded ?? from.alreadyAdded,
+    reorder: into.reorder || from.reorder,
+    imageHashes: Array.from(new Set([...(into.imageHashes ?? []), ...(from.imageHashes ?? [])])),
+    contentsHash: null, // two pieces joined: the contents changed; save() prints them again
   };
 }
 
@@ -658,6 +672,10 @@ export function draftFromExpense(e: {
     platform,
     orderId: typeof r.orderId === "string" ? r.orderId : null,
     orderDate: typeof r.orderDate === "string" ? r.orderDate : null,
+    // keep the prints, so the edited bill can still be found by a later scan
+    imageHashes: Array.isArray(r.imageHashes) ? (r.imageHashes as unknown[]).filter((h): h is string => typeof h === "string") : [],
+    contentsHash: typeof r.contentsHash === "string" ? r.contentsHash : null,
+    ...(typeof r.repeatOf === "string" ? { reorder: true, repeatOf: r.repeatOf } : {}),
     items: items.map((i) => ({
       id: uid(),
       name: String(i.name ?? ""),
@@ -720,6 +738,9 @@ export function toExpenseBody(o: DraftOrder) {
       fees: o.fees.filter((f) => f.amount > 0).map((f) => ({ label: f.label.trim() || "Fee", amount: f.amount })),
       discounts: o.discounts.map((d) => ({ label: d.label, amount: d.amount })),
       feePolicy: o.feePolicy,
+      ...(o.imageHashes?.length ? { imageHashes: o.imageHashes } : {}),
+      ...(o.contentsHash ? { contentsHash: o.contentsHash } : {}),
+      ...(o.reorder && (o.alreadyAdded?.expenseId || o.repeatOf) ? { repeatOf: o.alreadyAdded?.expenseId ?? o.repeatOf } : {}),
     },
   };
 }

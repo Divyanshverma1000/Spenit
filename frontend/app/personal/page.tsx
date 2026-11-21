@@ -21,7 +21,14 @@ import { BackClose } from "@/lib/backClose";
 import { readJson } from "@/lib/api";
 import { fileToCompressedDataUrl } from "@/lib/image";
 import { guessCategory, CATEGORIES, type Category } from "@/lib/quickAdd";
-import { PLATFORM_LABEL, type ExtractResponse } from "@/lib/orderImport";
+import { PLATFORM_LABEL, orderKey, type ExtractResponse } from "@/lib/orderImport";
+import { contentsHash, hashBytes, type SeenMatch } from "@/lib/billPrint";
+
+/** A scanned bill's prints and, if it looks like one added before, that bill. */
+interface Scanned {
+  bill: { imageHashes: string[]; orderKey: string | null; contentsHash: string | null; orderDate: string | null };
+  seen: SeenMatch | null;
+}
 import { Camera, ImagePlus, X } from "lucide-react";
 
 const thisMonth = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
@@ -49,7 +56,7 @@ function SpendingPage() {
   const { data } = useSpending(month);
   const actions = useSpendingActions();
   // /personal?add=1 (old "Add Log" links) opens the sheet straight away.
-  const [sheet, setSheet] = useState<{ mode: "add"; prefill?: Partial<EntryDraft> } | { mode: "edit"; entry: SpendEntry } | null>(() =>
+  const [sheet, setSheet] = useState<{ mode: "add"; prefill?: Partial<EntryDraft>; scanned?: Scanned } | { mode: "edit"; entry: SpendEntry } | null>(() =>
     params?.get("add") ? { mode: "add" } : null
   );
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -80,6 +87,8 @@ function SpendingPage() {
     setScanning(true);
     show({ text: "Reading the bill…" });
     try {
+      // The original file's print (before shrinking), so the same screenshot is recognised.
+      const imageHash = await file.arrayBuffer().then(hashBytes).catch(() => null);
       const imageBase64 = await fileToCompressedDataUrl(file, 2000, 0.85);
       const res = await authFetch("/ai/extract-order", { method: "POST", body: JSON.stringify({ imageBase64 }) });
       const data = await readJson<ExtractResponse & { fallback?: boolean; message?: string }>(res);
@@ -88,10 +97,25 @@ function SpendingPage() {
       const amount = o.grandTotal ?? o.itemTotal ?? o.items.reduce((a, i) => a + i.lineTotal, 0);
       const name = o.merchant || o.payee || (o.platform !== "other" ? `${PLATFORM_LABEL[o.platform]} order` : o.items[0]?.name) || "";
       const cat = (CATEGORIES as readonly string[]).includes(o.category ?? "") ? (o.category as Category) : guessCategory(name);
+      const bill: Scanned["bill"] = {
+        imageHashes: imageHash ? [imageHash] : [],
+        orderKey: orderKey(o),
+        contentsHash: await contentsHash(o).catch(() => null),
+        orderDate: o.orderDate,
+      };
+      // Added before (in your spending or any of your groups)? Remind, don't drop it.
+      let seen: SeenMatch | null = null;
+      try {
+        const r = await authFetch("/expenses/seen-bills", { method: "POST", body: JSON.stringify({ bills: [{ ref: "scan", ...bill }] }) });
+        seen = (await readJson<{ matches: SeenMatch[] }>(r)).matches[0] ?? null;
+      } catch {
+        // best effort
+      }
       setToast(null);
       setSheet({
         mode: "add",
         prefill: { description: name, amount: amount ? String(amount) : "", category: cat, ...(o.orderDate ? { day: o.orderDate } : {}) },
+        scanned: { bill, seen },
       });
     } catch (err) {
       show({ text: (err as Error).message || "Couldn't read that picture. Try a clearer one or add it by hand." });
@@ -162,13 +186,16 @@ function SpendingPage() {
       {sheet && (
         <EntrySheet
           initial={sheet.mode === "edit" ? draftFrom(sheet.entry) : sheet.prefill}
+          seen={sheet.mode === "add" ? sheet.scanned?.seen ?? null : null}
           onClose={() => { setSheet(null); if (params?.get("add")) router.replace("/personal"); }}
           onSave={async (d) => {
             if (sheet.mode === "edit") {
               await actions.update(sheet.entry.id, d);
               show({ text: "Saved" });
             } else {
-              const created = await actions.add(d);
+              const { repeatOf, ...entry } = d;
+              const scanned = sheet.scanned;
+              const created = await actions.add(scanned ? { ...entry, bill: { ...scanned.bill, ...(repeatOf ? { repeatOf } : {}) } } : entry);
               show({ text: `Added ${d.description} · ${inr(d.amount)}`, undo: () => actions.remove(created.id) });
             }
             setSheet(null);

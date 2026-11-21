@@ -106,7 +106,8 @@ export function useSpendingActions() {
     return out;
   };
   return {
-    add: (b: { description: string; amount: number; category: string; spentAt?: string }) => send<{ id: string }>("/personal_expenses", "POST", b),
+    /** `bill`: prints of a scanned bill (lib/billPrint.ts), so scanning it again is noticed */
+    add: (b: { description: string; amount: number; category: string; spentAt?: string; bill?: Record<string, unknown> }) => send<{ id: string }>("/personal_expenses", "POST", b),
     update: (id: string, b: { description: string; amount: number; category: string; spentAt?: string }) => send(`/personal_expenses/${id}`, "PUT", b),
     remove: (id: string) => send(`/personal_expenses/${id}`, "DELETE"),
     restore: (id: string) => send(`/personal_expenses/${id}/restore`, "POST"),
